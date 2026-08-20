@@ -1,0 +1,50 @@
+{
+  "version": "0.1",
+  "features": [
+    {
+      "id": "feature-001",
+      "name": "Visual 5-Level Widget + baseRevision",
+      "description": "Pi TUI widget showing Goal→Feature→Sprint→Task→Subtask with rolling window, deps, and compaction-safe atomic state",
+      "passes": false,
+      "producedByRole": "generator",
+      "definitionOfDone": [
+        "Widget renders 5 levels with ○●◐⚠↷, Progress, +3 more, ← #1 deps, wraps long labels",
+        "harness/feature-list.json has baseRevision, key, dependsOn, subtasks; stale baseRevision rejected",
+        "State survives /reload, /tree, and compaction via hidden checkpoint"
+      ],
+      "tasks": [
+        {
+          "id": "task-001",
+          "description": "Extend feature-list schema to 5 levels with baseRevision",
+          "status": "pending",
+          "acceptanceCriteria": [
+            "harness/features/feature-list.json has baseRevision, tasks have key, dependsOn, subtasks",
+            "harness/features/feature-list.schema.json updated and validates",
+            "Existing pi-harness harness still loads"
+          ]
+        },
+        {
+          "id": "task-002",
+          "description": "Port widget rendering (task-tracker + long-task) to src/widget.ts",
+          "status": "pending",
+          "acceptanceCriteria": [
+            "src/widget.ts implements getWidgetWindowBounds, wrapWidgetLines, statusIcon, rolling window",
+            "Widget shows Goal→Feature→Sprint→Task→Subtask with Progress and +3 more overflow",
+            "Long labels wrap not truncate, deps shown as ← #1"
+          ]
+        },
+        {
+          "id": "task-003",
+          "description": "Implement harness_task_list tool with atomic baseRevision and hidden checkpoint",
+          "status": "pending",
+          "acceptanceCriteria": [
+            "harness_task_list({baseRevision, tasks}) does omission=deletion, baseRevision check, cycle/missing dep check",
+            "in_progress needs deps completed, all-or-nothing, hidden custom checkpoint on compaction",
+            "Widget survives /reload and /tree via toolResult.details replay"
+          ]
+        }
+      ],
+      "coversCriteria": [1, 2, 3]
+    }
+  ]
+}
