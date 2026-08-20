@@ -57,23 +57,13 @@ async function isHarnessProject(targetDir: string): Promise<boolean> {
 }
 
 export default function (pi: ExtensionAPI) {
-  // ── session_start: auto-inject brief ──────────────────────────────────────
+  // ── session_start: lightweight notify (brief injected via context event) ─────
   pi.on("session_start", async (_event: any, ctx: any) => {
     const dir = getProjectDir(ctx);
     if (!(await isHarnessProject(dir))) return;
-
-    const briefText = await buildBriefText(dir);
-    if (!briefText) return;
-
-    // Notify and inject into context so the agent sees it without calling /harness:next
-    ctx.ui.notify("pi-harness: injected next brief (enforced)", "info");
-    // Inject brief as steer message (visible to agent) + persist
-    try {
-      pi.sendUserMessage(`## pi-harness auto-brief (session_start)\n\n${briefText}\n\n---\n*Auto-injected. Follow the brief, then run the validate command. Loop is enforced.*`, { deliverAs: "steer" } as any);
-      pi.appendEntry("harness:brief", { text: briefText, at: "session_start" });
-    } catch {}
-    // Also set status widget
-    ctx.ui.setStatus("harness", "brief injected");
+    ctx.ui.notify("pi-harness: enforcer active — brief will auto-inject via context", "info");
+    ctx.ui.setStatus("harness", "ready");
+    try { pi.appendEntry("harness:brief", { at: "session_start", dir }); } catch {}
   });
 
   // ── turn_end: auto-validate + auto-phase-next ─────────────────────────────
@@ -89,7 +79,7 @@ export default function (pi: ExtensionAPI) {
       // Only auto-validate if we are in a validate-able phase (build/verify/etc.)
       // Gates will tell us if we should advance — we just run them
       const result = await gates.runChecks(dir, config.currentPhase);
-      const allPass = result?.every ? result.every((r: any) => r.pass) : result?.pass;
+      const allPass = result?.overall;
 
       if (allPass) {
         // Check if brief says we should advance — we peek at next phase
@@ -109,14 +99,14 @@ export default function (pi: ExtensionAPI) {
         }
         const nextBrief = await buildBriefText(dir);
         if (nextBrief) {
-          pi.sendUserMessage(`## pi-harness auto-advance (turn_end)\n\nValidate PASS on ${config.currentPhase}. Advanced.\n\n${nextBrief}`, { deliverAs: "followUp" } as any);
+          pi.sendUserMessage(`## pi-harness auto-advance (turn_end)\n\nValidate PASS on ${config.currentPhase}. Advanced.\n\n${nextBrief}`, { deliverAs: "followUp", streamingBehavior: "followUp" } as any);
           pi.appendEntry("harness:advance", { phase: config.currentPhase, brief: nextBrief });
         }
       } else {
         // FAIL — inject the failure so agent fixes it next turn (don't advance)
-        const details = result?.map ? result.filter((r: any) => !r.pass).map((r: any) => `- ${r.name}: ${r.detail}`).join("\n") : "validate failed";
+        const details = result?.checks ? result.checks.filter((r: any) => !r.pass).map((r: any) => `- ${r.name}: ${r.detail}`).join("\n") || result.failures?.join(", ") || "validate failed" : "validate failed";
         ctx.ui.notify(`pi-harness: validate FAIL — blocking advance`, "warning");
-        pi.sendUserMessage(`## pi-harness gate FAIL (turn_end)\n\n${details}\n\nFix the listed checks, then the loop will auto-advance.`, { deliverAs: "steer" } as any);
+        pi.sendUserMessage(`## pi-harness gate FAIL (turn_end)\n\n${details}\n\nFix the listed checks, then the loop will auto-advance.`, { deliverAs: "steer", streamingBehavior: "steer" } as any);
         pi.appendEntry("harness:gate-fail", { phase: config.currentPhase, details });
       }
     } catch (e: any) {
@@ -144,7 +134,7 @@ export default function (pi: ExtensionAPI) {
           const { gates, state } = await loadHarnessLibs();
           const { config } = state.loadConfig(dir);
           const result = await gates.runChecks(dir, config?.currentPhase);
-          const allPass = result?.every ? result.every((r: any) => r.pass) : false;
+          const allPass = result?.overall;
           if (!allPass) {
             return { block: true, reason: "pi-harness: validate must PASS before hand-editing harness/config.json currentPhase. Run the validate command from the brief." };
           }
@@ -159,7 +149,7 @@ export default function (pi: ExtensionAPI) {
         const { gates, state } = await loadHarnessLibs();
         const { config } = state.loadConfig(dir);
         const result = await gates.runChecks(dir, config?.currentPhase);
-        const allPass = result?.every ? result.every((r: any) => r.pass) : false;
+        const allPass = result?.overall;
         if (!allPass) {
           return { block: true, reason: "pi-harness: gate FAIL — phase next blocked. Fix the listed checks and re-validate." };
         }
