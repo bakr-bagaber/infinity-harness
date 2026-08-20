@@ -1,0 +1,35 @@
+{
+  "name": "pi-harness",
+  "version": "5.1.0",
+  "description": "Pi-native enforcement layer for dev-harness — auto-injects brief, auto-validates, blocks phase-skipping, and enables continuous multi-agent development. Clean port of dev-harness-cli.",
+  "type": "module",
+  "keywords": ["pi-package", "pi-extension", "harness", "dev-harness", "agent-pipeline"],
+  "license": "MIT",
+  "author": "Bakr Bagaber",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bakr-bagaber/dev-harness"
+  },
+  "pi": {
+    "extensions": ["./extensions"],
+    "skills": ["./skills"],
+    "prompts": ["./prompts"]
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "picocolors": "^1.1.1",
+    "simple-git": "^3.27.0",
+    "string-width": "^7.1.0",
+    "proper-lockfile": "^4.1.2"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "check": "tsc --noEmit",
+    "lint": "eslint extensions/"
+  }
+}
