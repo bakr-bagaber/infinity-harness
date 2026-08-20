@@ -34,7 +34,7 @@
           "id": "task-001",
           "key": "schema-5level",
           "description": "Extend feature-list schema to 5 levels with baseRevision",
-          "status": "in_progress",
+          "status": "complete",
           "acceptanceCriteria": [
             "harness/features/feature-list.json has baseRevision, tasks have key, dependsOn, subtasks",
             "harness/features/feature-list.schema.json updated and validates",
