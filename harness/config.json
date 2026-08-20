@@ -1,0 +1,153 @@
+{
+  "version": "1.0",
+  "stack": "node",
+  "stackMeta": {
+    "testCmd": "npx tsc --noEmit",
+    "lintCmd": "echo lint ok",
+    "installCmd": "npm install",
+    "coverageCmd": "echo coverage ok"
+  },
+  "agentTool": null,
+  "mode": "copilot",
+  "currentPhase": "build",
+  "currentRole": null,
+  "currentFeature": "feature-001",
+  "currentTask": "task-001",
+  "paused": false,
+  "features": {
+    "remaining": 0,
+    "passing": 0,
+    "total": 0
+  },
+  "gates": {
+    "enabled": true,
+    "checks": [
+      "all"
+    ],
+    "coverage": {
+      "enabled": false,
+      "threshold": 80
+    },
+    "cleanState": {
+      "enabled": false,
+      "stalePatterns": [],
+      "startupCmd": null
+    },
+    "antiPlaceholder": {
+      "enabled": true,
+      "patterns": [
+        "TODO",
+        "FIXME",
+        "XXX",
+        "NotImplementedError"
+      ]
+    }
+  },
+  "cleanup": {
+    "schedule": "0 2 * * 0",
+    "autoFix": false
+  },
+  "git": {
+    "autoCommit": false,
+    "autoTag": false,
+    "resetOnRetry": false,
+    "branch": "feature/pi-harness-f1-widget",
+    "clean": true,
+    "hasUpstream": false,
+    "lastCommitMessage": "plan: F1 feature-list for visual 5-level widget + baseRevision"
+  },
+  "phases": {
+    "enabled": [
+      "define",
+      "plan",
+      "build",
+      "verify",
+      "review",
+      "ship"
+    ]
+  },
+  "roles": {
+    "strict": false
+  },
+  "agents": {
+    "tone": {
+      "planner": "Analytical and precise. Define clear boundaries.",
+      "generator": "Focused and practical. Build what's specified, nothing more.",
+      "evaluator": "Skeptical and thorough. Accept only compelling evidence.",
+      "simplifier": "Relentless about clarity. Delete more than you add."
+    }
+  },
+  "maxRetries": 10,
+  "retry": {
+    "tasks": {
+      "enabled": true,
+      "maxRetries": 10
+    },
+    "features": {
+      "enabled": false,
+      "maxRetries": 2
+    },
+    "phases": {
+      "enabled": false,
+      "maxRetries": 2
+    }
+  },
+  "retryCount": 0,
+  "taskRetryCount": 1,
+  "featureRetryCount": 0,
+  "phaseRetryCount": 0,
+  "pipelineIteration": 0,
+  "gateHistory": [
+    {
+      "phase": "define",
+      "result": "pass",
+      "timestamp": "2026-08-20T23:16:37.570Z"
+    },
+    {
+      "phase": "define",
+      "result": "pass",
+      "timestamp": "2026-08-20T23:16:41.526Z"
+    },
+    {
+      "phase": "define",
+      "result": "pass",
+      "timestamp": "2026-08-20T23:16:41.527Z"
+    },
+    {
+      "phase": "plan",
+      "result": "pass",
+      "timestamp": "2026-08-20T23:16:57.504Z"
+    },
+    {
+      "phase": "plan",
+      "result": "pass",
+      "timestamp": "2026-08-20T23:17:01.671Z"
+    },
+    {
+      "phase": "plan",
+      "result": "pass",
+      "timestamp": "2026-08-20T23:17:01.672Z"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-20T23:17:24.522Z",
+      "feature": "feature-001",
+      "task": "task-001"
+    }
+  ],
+  "supervisor": {
+    "enabled": false,
+    "apiRetries": 5,
+    "backoffMs": 60000,
+    "lastHeartbeat": null,
+    "status": "idle"
+  },
+  "run": {
+    "agents": {
+      "pi": {
+        "cmd": "pi --provider opencode --model opencode/muse-spark-1.2-contributor-free --thinking xhigh -e /home/bakrb/ops/Projects/pi-harness/extensions/harness-enforcer/index.ts --approve -p \"$(cat {promptfile})\""
+      }
+    }
+  }
+}

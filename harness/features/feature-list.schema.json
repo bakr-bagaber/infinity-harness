@@ -1,101 +1,77 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Feature List",
+  "title": "Feature List v1.0 — 5-Level",
   "type": "object",
-  "required": [
-    "version",
-    "features"
-  ],
+  "required": ["version", "features"],
   "properties": {
-    "version": {
-      "type": "string"
+    "version": { "type": "string" },
+    "baseRevision": { "type": "integer", "minimum": 0, "default": 0 },
+    "goals": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "type": "object",
+        "required": ["id", "title"],
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "description": { "type": "string", "default": "" }
+        }
+      }
+    },
+    "sprints": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "type": "object",
+        "required": ["id", "name"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "goalId": { "type": "string" }
+        }
+      }
     },
     "features": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": [
-          "id",
-          "name",
-          "passes",
-          "tasks"
-        ],
+        "required": ["id", "name", "passes", "tasks"],
         "properties": {
-          "id": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "passes": {
-            "type": "boolean"
-          },
-          "definitionOfDone": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "default": []
-          },
-          "producedByRole": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "enum": [
-              null,
-              "planner",
-              "generator",
-              "evaluator",
-              "simplifier"
-            ],
-            "default": null
-          },
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "passes": { "type": "boolean" },
+          "sprintId": { "type": "string" },
+          "goalId": { "type": "string" },
+          "definitionOfDone": { "type": "array", "items": { "type": "string" }, "default": [] },
+          "producedByRole": { "type": ["string", "null"], "enum": [null, "planner", "generator", "evaluator", "simplifier"], "default": null },
+          "coversCriteria": { "type": "array", "items": { "type": "integer" }, "default": [] },
           "tasks": {
             "type": "array",
             "items": {
               "type": "object",
-              "required": [
-                "id",
-                "description",
-                "status"
-              ],
+              "required": ["id", "description", "status"],
               "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "description": {
-                  "type": "string"
-                },
-                "status": {
-                  "type": "string",
-                  "enum": [
-                    "pending",
-                    "in_progress",
-                    "complete",
-                    "blocked"
-                  ]
-                },
-                "acceptanceCriteria": {
+                "id": { "type": "string" },
+                "key": { "type": "string" },
+                "description": { "type": "string" },
+                "status": { "type": "string", "enum": ["pending", "in_progress", "complete", "blocked"] },
+                "acceptanceCriteria": { "type": "array", "items": { "type": "string" }, "default": [] },
+                "producedByRole": { "type": ["string", "null"], "enum": [null, "planner", "generator", "evaluator", "simplifier"], "default": null },
+                "dependsOn": { "type": "array", "items": { "type": "string" }, "default": [] },
+                "subtasks": {
                   "type": "array",
+                  "default": [],
                   "items": {
-                    "type": "string"
-                  },
-                  "default": []
-                },
-                "producedByRole": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "enum": [
-                    null,
-                    "planner",
-                    "generator",
-                    "evaluator",
-                    "simplifier"
-                  ],
-                  "default": null
+                    "type": "object",
+                    "required": ["id", "title", "status"],
+                    "properties": {
+                      "id": { "type": "string" },
+                      "title": { "type": "string" },
+                      "status": { "type": "string", "enum": ["pending", "in_progress", "complete"] }
+                    }
+                  }
                 }
               }
             }
