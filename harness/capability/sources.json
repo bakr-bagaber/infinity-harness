@@ -1,0 +1,132 @@
+{
+  "comment": "Capability acquisition sources (Tier 1 of the ladder). Harness-owned — put YOUR additions/overrides in sources.local.json (merged by name; set \"disabled\": true there to hide a shipped entry). Machine-queryable sources have queryUrl ({query} placeholder) + parser; the rest are pointers for web-capable agents. Trust tiers: official > curated > community.",
+  "sources": [
+    {
+      "name": "skills.sh",
+      "type": "skill",
+      "trust": "curated",
+      "url": "https://skills.sh",
+      "searchHint": "Browse/search the registry; install with: npx skills add <owner>/<repo> — then ADAPT the skill (see capability-acquisition.md), don't use as-is.",
+      "notes": "The de-facto agent-skills registry."
+    },
+    {
+      "name": "github-skills-topic",
+      "type": "skill",
+      "trust": "community",
+      "url": "https://github.com/topics/agent-skills",
+      "queryUrl": "https://api.github.com/search/repositories?q={query}+topic:agent-skills&per_page=10",
+      "parser": "github",
+      "searchHint": "GitHub repos tagged agent-skills. GITHUB_TOKEN env raises the rate limit."
+    },
+    {
+      "name": "mattpocock-skills",
+      "type": "skill",
+      "trust": "curated",
+      "url": "https://github.com/mattpocock/skills",
+      "searchHint": "Engineering craft skills (MIT). Several are already vendored in harness/skills/."
+    },
+    {
+      "name": "anthropic-skills",
+      "type": "skill",
+      "trust": "official",
+      "url": "https://github.com/anthropics/skills",
+      "searchHint": "Anthropic's public skill examples."
+    },
+    {
+      "name": "obra-superpowers",
+      "type": "skill",
+      "trust": "curated",
+      "url": "https://github.com/obra/superpowers",
+      "searchHint": "Large curated skill collection."
+    },
+    {
+      "name": "github-skillmd-code-search",
+      "type": "skill",
+      "trust": "community",
+      "url": "https://github.com/search?type=code&q=path%3ASKILL.md",
+      "searchHint": "Code-search for SKILL.md files mentioning your topic: path:SKILL.md <keyword>."
+    },
+    {
+      "name": "mcp-official-registry",
+      "type": "mcp",
+      "trust": "official",
+      "url": "https://registry.modelcontextprotocol.io",
+      "queryUrl": "https://registry.modelcontextprotocol.io/v0/servers?search={query}&limit=10",
+      "parser": "mcp-registry",
+      "searchHint": "The official MCP server registry."
+    },
+    {
+      "name": "mcp-reference-servers",
+      "type": "mcp",
+      "trust": "official",
+      "url": "https://github.com/modelcontextprotocol/servers",
+      "searchHint": "Reference servers (filesystem, fetch, git, memory, ...) + a long community list in the README."
+    },
+    {
+      "name": "npm-mcp",
+      "type": "mcp",
+      "trust": "community",
+      "url": "https://www.npmjs.com",
+      "queryUrl": "https://registry.npmjs.org/-/v1/search?text=mcp-server%20{query}&size=10",
+      "parser": "npm",
+      "searchHint": "npm packages named mcp-server-*. Check weekly downloads + maintenance before trusting."
+    },
+    {
+      "name": "mcp.so",
+      "type": "mcp",
+      "trust": "community",
+      "url": "https://mcp.so",
+      "searchHint": "Community MCP directory."
+    },
+    {
+      "name": "smithery",
+      "type": "mcp",
+      "trust": "community",
+      "url": "https://smithery.ai",
+      "searchHint": "MCP server registry + hosting."
+    },
+    {
+      "name": "glama-mcp",
+      "type": "mcp",
+      "trust": "community",
+      "url": "https://glama.ai/mcp/servers",
+      "searchHint": "MCP server directory with health/quality signals."
+    },
+    {
+      "name": "npm",
+      "type": "tool",
+      "trust": "community",
+      "url": "https://www.npmjs.com",
+      "queryUrl": "https://registry.npmjs.org/-/v1/search?text={query}&size=10",
+      "parser": "npm",
+      "searchHint": "Node CLIs/libraries."
+    },
+    {
+      "name": "pypi-exact",
+      "type": "tool",
+      "trust": "community",
+      "url": "https://pypi.org",
+      "queryUrl": "https://pypi.org/pypi/{query}/json",
+      "parser": "pypi",
+      "searchHint": "PyPI exact-name lookup (PyPI has no public JSON search — query with the exact package name; browse pypi.org for discovery)."
+    },
+    {
+      "name": "crates.io",
+      "type": "tool",
+      "trust": "community",
+      "url": "https://crates.io",
+      "queryUrl": "https://crates.io/api/v1/crates?q={query}&per_page=10",
+      "parser": "crates",
+      "searchHint": "Rust crates/CLIs."
+    },
+    {
+      "name": "github-tools",
+      "type": "tool",
+      "trust": "community",
+      "url": "https://github.com",
+      "queryUrl": "https://api.github.com/search/repositories?q={query}+in:name,description&per_page=10",
+      "parser": "github",
+      "searchHint": "GitHub repo search. GITHUB_TOKEN env raises the rate limit."
+    }
+  ]
+}

@@ -1,2 +1,20 @@
+# Harness runtime state (regenerated)
+harness/config.json
+harness/features/feature-list.json
+harness/progress.md
+harness/session-handoff.md
+harness/lessons-decisions.md
+harness/capability/index.json
+harness/.run-prompt.md
+harness/.preflight
+
+# Node
 node_modules/
+dist/
+build/
+
+# Pi
 .pi/
+
+# OS
+.DS_Store

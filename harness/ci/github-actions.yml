@@ -1,0 +1,78 @@
+# CI/CD pipeline for Node.js projects scaffolded by Dev Harness
+# Trigger: push + PR to main
+# Stack: node — toolchain setup is conditional on the rendered stack value.
+name: harness
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        if: node == 'node'
+        with: { node-version: lts/* }
+      - uses: actions/setup-python@v5
+        if: node == 'python'
+        with: { python-version: '3.x' }
+      - uses: actions/setup-go@v5
+        if: node == 'go'
+        with: { go-version: 'stable' }
+      - uses: dtolnay/rust-toolchain@stable
+        if: node == 'rust'
+      - run: npm install
+      - run: npx eslint .
+
+  test:
+    needs: lint
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18, 20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        if: node == 'node'
+        with: { node-version: ${{ matrix.node-version }} }
+      - uses: actions/setup-python@v5
+        if: node == 'python'
+        with: { python-version: '3.x' }
+      - uses: actions/setup-go@v5
+        if: node == 'go'
+        with: { go-version: 'stable' }
+      - uses: dtolnay/rust-toolchain@stable
+        if: node == 'rust'
+      - run: npm install
+      - run: npm test
+
+  coverage:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        if: node == 'node'
+        with: { node-version: lts/* }
+      - uses: actions/setup-python@v5
+        if: node == 'python'
+        with: { python-version: '3.x' }
+      - uses: actions/setup-go@v5
+        if: node == 'go'
+        with: { go-version: 'stable' }
+      - uses: dtolnay/rust-toolchain@stable
+        if: node == 'rust'
+      - run: npm install
+      - run: npm test
+
+  gate:
+    needs: coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm install -g dev-harness-cli
+      - run: dev-harness validate --json

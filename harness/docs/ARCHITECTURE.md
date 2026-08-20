@@ -1,0 +1,8 @@
+# Architecture
+
+## Module Structure
+
+```
+src/
+  ...
+```
