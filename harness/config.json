@@ -11,12 +11,12 @@
   "mode": "copilot",
   "currentPhase": "build",
   "currentRole": null,
-  "currentFeature": "feature-001",
-  "currentTask": "task-002",
+  "currentFeature": null,
+  "currentTask": null,
   "paused": false,
   "features": {
-    "remaining": 1,
-    "passing": 0,
+    "remaining": 0,
+    "passing": 1,
     "total": 1
   },
   "gates": {
@@ -256,6 +256,37 @@
       "phase": "build",
       "result": "fail",
       "timestamp": "2026-08-20T23:31:40.569Z"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:10:17.802Z"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:10:36.866Z",
+      "feature": "feature-001",
+      "task": "task-002"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:12:23.703Z",
+      "feature": "feature-001",
+      "task": "task-003"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:14:51.959Z",
+      "feature": "feature-001",
+      "task": "task-003"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-21T15:14:56.291Z"
     }
   ],
   "supervisor": {
