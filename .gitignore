@@ -19,3 +19,7 @@ build/
 
 # OS
 .DS_Store
+
+# Worker isolation attempt history (F3)
+tmp/pi-harness/
+tmp/
