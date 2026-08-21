@@ -1,7 +1,7 @@
 {
   "name": "pi-harness",
-  "version": "0.3.0",
-  "description": "Pi-native enforcement layer for dev-harness — auto-injects brief, auto-validates, blocks phase-skipping, and enables continuous multi-agent development. Clean port of dev-harness-cli.",
+  "version": "0.4.0",
+  "description": "Pi-native enforcement layer for dev-harness \u2014 auto-injects brief, auto-validates, blocks phase-skipping, and enables continuous multi-agent development. Clean port of dev-harness-cli.",
   "type": "module",
   "keywords": [
     "pi-package",

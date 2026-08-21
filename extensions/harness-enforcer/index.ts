@@ -938,7 +938,63 @@ export default function (pi: ExtensionAPI) {
         return undefined as any;
       }
     },
+
   });
+
+  // ── harness_spawn_worker: isolated worker helper (F3) ─────────────────
+  // Exposes src/worker.ts isolation so a BUILD task can be delegated to a
+  // fresh tmp/pi-harness/<run-id>/<feature>/<task>/attempt-N/ directory
+  // without polluting the main session. The enforcer stays
+  // notify-only (no stream injection during turn_end); this tool spawns
+  // an isolated pi --print-style worker via src/worker.ts and records
+  // prompt.md / output.log / fingerprint.json with proper-lockfile on
+  // harness/features/feature-list.json so concurrent workers do not corrupt
+  // baseRevision. Used by dev-harness run when it writes per-task
+  // tmp/pi-harness/<run-id>/ isolated prompts.
+  try {
+    pi.registerTool({
+      name: "harness_spawn_worker",
+      label: "Harness Spawn Worker",
+      description: "Spawn an isolated worker for a BUILD task to tmp/pi-harness/<run-id>/<feature>/<task>/attempt-N/{prompt.md,output.log,fingerprint.json} with proper-lockfile on feature-list.json. Params: runId, featureId, taskId, prompt, command?, timeoutMs?. Writes isolated prompt and records attempt without touching main session context.",
+      parameters: {
+        type: "object",
+        properties: {
+          runId: { type: "string", description: "Run identifier, e.g. run/2026-08-21T00-00-00" },
+          featureId: { type: "string", description: "Feature id, e.g. feature-003" },
+          taskId: { type: "string", description: "Task id, e.g. task-005" },
+          prompt: { type: "string", description: "Full prompt to execute in isolated worker" },
+          command: { type: "string", description: "Optional shell command template with {promptfile} placeholder; if omitted, just records the attempt" },
+          timeoutMs: { type: "integer", minimum: 1000, description: "Timeout ms for the isolated command" },
+          attempt: { type: "integer", minimum: 1, description: "Explicit attempt number (auto-increments if omitted)" },
+        },
+        required: ["runId", "featureId", "taskId", "prompt"],
+      } as any,
+      async execute(toolCallId: string, params: any, _signal: any, _onUpdate: any, ctx: any) {
+        const dir = getProjectDir(ctx as any);
+        try {
+          const workerMod: any = await import("../../src/worker.ts");
+          const res: any = await workerMod.spawnIsolatedWorker({
+            projectDir: dir,
+            runId: params.runId,
+            featureId: params.featureId,
+            taskId: params.taskId,
+            prompt: params.prompt,
+            command: params.command,
+            timeoutMs: params.timeoutMs,
+            attempt: params.attempt,
+          });
+          return {
+            content: [{ type: "text", text: "Isolated worker " + params.runId + "/" + params.featureId + "/" + params.taskId + " attempt-" + res.attempt + " -> " + res.attemptDir + " (exit " + res.exitCode + ")" + (res.timedOut ? " timed out" : "") }],
+            details: { attemptDir: res.attemptDir, attempt: res.attempt, fingerprint: res.fingerprint, exitCode: res.exitCode, output: (res.output || "").slice(-2000) },
+          } as any;
+        } catch (e: any) {
+          return { content: [{ type: "text", text: "harness_spawn_worker error: " + e.message }], details: { error: e.message }, isError: true } as any;
+        }
+      },
+    });
+  } catch (e: any) {
+    try { console.warn("pi-harness: harness_spawn_worker not registered:", e?.message); } catch {}
+  }
 
   // ── turn_end: auto-validate + auto-phase-next (original) ─────────────────
   pi.on("turn_end", async (_event: any, ctx: any) => {

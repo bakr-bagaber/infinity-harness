@@ -2,6 +2,13 @@
 
 All notable changes to `pi-harness` will be documented here.
 
+## [0.4.0] - 2026-08-21
+
+### Added
+- **F3 Worker Isolation per BUILD Task:** `src/worker.ts` with `createWorkerRunDir`, `spawnIsolatedWorker`, `recordAttempt`, `buildFingerprint`, `hashLite`, `proper-lockfile` isolation on `harness/features/feature-list.json` + `harness/config.json`; attempt history to `tmp/pi-harness/<run-id>/<feature>/<task>/attempt-N/{prompt.md,output.log,fingerprint.json}` preserving `baseRevision` and 5-level fields; `tests/worker.test.ts` covering dir creation, `attempt-N` increment, `proper-lockfile` concurrent writes, `baseRevision` preservation, `fingerprint.json` validity and `tmp/pi-harness` isolation.
+- `extensions/harness-enforcer` now exposes `harness_spawn_worker` hidden tool delegating to `src/worker.ts` `spawnIsolatedWorker` so `dev-harness run` isolates per BUILD task via `tmp/pi-harness/<run-id>/` without leaking `gateHistory` to the main session; extension stays `notify`+`appendEntry` only, no `sendUserMessage` mid-stream regression.
+- `tmp/` ignored (`tmp/pi-harness/` worker attempt history does not dirty the repo).
+
 ## [0.3.0] - 2026-08-21
 
 ### Fixed
