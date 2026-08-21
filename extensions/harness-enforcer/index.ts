@@ -754,7 +754,7 @@ export default function (pi: ExtensionAPI) {
         needsCheckpointInject = false;
         llmCallCounter = 0;
         const hiddenText = `Harness checkpoint (revision ${state.revision}): ${state.tasks.map((t)=> `${t.key}:${t.status}`).join(", ") || "(no tasks)"}.`;
-        pi.sendMessage({ customType: CHECKPOINT_TYPE, content: hiddenText, display: false, details: checkpointData } as any, { deliverAs: "steer" } as any);
+        // checkpoint via appendEntry already; no sendMessage during streaming
       } else {
         needsCheckpointInject = true;
       }
@@ -951,25 +951,15 @@ export default function (pi: ExtensionAPI) {
       const result = await gates.runChecks(dir, config.currentPhase);
       const allPass = result?.overall;
       if (allPass) {
-        ctx.ui.notify(`pi-harness: validate PASS on ${config.currentPhase} — auto-advancing`, "info");
-        try {
-          const cliDir = resolve(import.meta.dirname, "../../cli");
-          const phaseCmd = await import(`${cliDir}/commands/phase.mjs`);
-          await phaseCmd.default({ _: ["next"] }, { cwd: dir } as any);
-        } catch {}
-        const nextBrief = await buildBriefText(dir);
-        if (nextBrief) {
-          pi.sendUserMessage(`## pi-harness auto-advance (turn_end)\n\nValidate PASS on ${config.currentPhase}. Advanced.\n\n${nextBrief}`, { deliverAs: "followUp", streamingBehavior: "followUp" } as any);
-          pi.appendEntry("harness:advance", { phase: config.currentPhase, brief: nextBrief });
-        }
+        ctx.ui.notify(`pi-harness: validate PASS on ${config.currentPhase} — run dev-harness phase next`, "info");
+        try { pi.appendEntry("harness:advance", { phase: config.currentPhase } as any); } catch {}
       } else {
         const details = result?.checks ? result.checks.filter((r: any) => !r.pass).map((r: any) => `- ${r.name}: ${r.detail}`).join("\n") || result.failures?.join(", ") || "validate failed" : "validate failed";
-        ctx.ui.notify(`pi-harness: validate FAIL — blocking advance`, "warning");
-        pi.sendUserMessage(`## pi-harness gate FAIL (turn_end)\n\n${details}\n\nFix the listed checks, then the loop will auto-advance.`, { deliverAs: "steer", streamingBehavior: "steer" } as any);
-        pi.appendEntry("harness:gate-fail", { phase: config.currentPhase, details });
+        ctx.ui.notify(`pi-harness: validate FAIL — ${details}`, "warning");
+        try { pi.appendEntry("harness:gate-fail", { phase: config.currentPhase, details } as any); } catch {}
       }
     } catch (e: any) {
-      ctx.ui.notify(`pi-harness turn_end error: ${e.message}`, "error");
+      try { ctx.ui.notify(`pi-harness turn_end error: ${e.message}`, "error"); } catch {}
     }
   });
 
