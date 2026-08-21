@@ -1,24 +1,24 @@
-# Sprint Contract — pi-harness F1
+# Sprint Contract — pi-harness F2 v0.3.0
 
 ## Scope (Generator proposes)
 
 **I will build:**
-F1 Visual 5-Level Widget + baseRevision (see `specs/prd.md` F1). Extend `harness/features/feature-list.json` to 5 levels (`Goal→Feature→Sprint→Task→Subtask`) with `baseRevision`, `key`, `dependsOn`, `subtasks`. Add `src/widget.ts` ported from `task-tracker/rendering.ts` + `pi-long-task` sidebar + `rpiv`/`99people` display. Add `extensions/harness-enforcer` widget via `ctx.ui.setWidget`/`setStatus` + `harness_task_list` tool (one-call, omission=deletion, `baseRevision` check) + hidden `harness:checkpoint` custom for compaction, injected via `context` event. Keep `harness/` as SSOT, `tcs --noEmit` clean.
+F2 Enforcer Auto-Loop Hardening (v0.3.0). Harden extensions/harness-enforcer/index.ts from F1 notify-only to full auto-loop: session_start auto-injects dev-harness next brief (notify+widget, no mid-stream send), context checkpoint injection (99people hidden harness:checkpoint with baseRevision), periodic reminder every 3 calls, tool_call guard blocking harness/config.json phase-skip without PASS, session_before_compact checkpoint via appendEntry, and dev-harness run uses high not xhigh with no -e. Keep cli/lib reuse via symlink, tsc clean, 5-level widget intact.
 
 **I will NOT build:**
-Worker-isolated BUILD per task (F3), Goal loop `GOAL_SPEC.json`/reviewer (F4), Remote web view/push (F5), new harness phases/gates — keep `define→ship` and `gates.runChecks()`.
+Worker-isolated BUILD per task (F3), Goal loop GOAL_SPEC.json (F4), Remote web view (F5), new harness phases/gates beyond define-to-ship.
 
 ## Verification Criteria (Generator proposes)
 
-1. Pi TUI shows `Goal → Feature → Sprint → Task → Subtask` widget with `○●◐⚠↷`, `Progress: x/y`, `+3 more` overflow, `← #1` deps, survives `/reload`, `/tree`, and compaction (hidden checkpoint).
-2. `baseRevision` optimistic concurrency, omission deletion, `dependsOn` cycle/missing and `in_progress` needs deps `completed` are enforced (tests).
-3. `npm test` + `npx tsc --noEmit` pass; long labels wrap not truncate.
+1. Pi with pi-harness extension in a harness project: session_start shows notify and widget, context injects hidden checkpoint after compaction, reminder every 3 LLM calls, turn_end only notifies without stream race.
+2. tool_call blocks harness/config.json hand-edit of currentPhase without validate PASS; session_before_compact stores appendEntry checkpoint.
+3. npx tsc --noEmit passes; dev-harness run uses high not xhigh and no -e flag; package.json version is 0.3.0.
 
 ## Evaluator Review (Evaluator fills in)
 
-- [x] Scope is clear and bounded: yes — only widget + 5-level + atomic + compaction-safe, F2-F5 explicitly excluded.
-- [x] Verification criteria are sufficient: yes — visual + atomic + types are all testable.
-- [x] Exclusions are reasonable: yes — workers/goal/remote are separate features.
+- [x] Scope is clear and bounded: yes — only enforcer hardening, no worker/goal/remote.
+- [x] Verification criteria are sufficient: yes — start/context/turn/tool/compact plus tsc and version.
+- [x] Exclusions are reasonable: yes — F3-F5 deferred.
 
 Agreed.
 
