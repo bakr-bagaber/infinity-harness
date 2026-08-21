@@ -7,6 +7,7 @@ harness/lessons-decisions.md
 harness/capability/index.json
 harness/.run-prompt.md
 harness/.preflight
+harness/run-journal.jsonl
 
 # Node
 node_modules/

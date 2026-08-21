@@ -9,8 +9,9 @@
     "strict": false,
     "skipLibCheck": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "types": ["node"]
   },
-  "include": ["extensions/**/*"],
+  "include": ["extensions/**/*", "src/**/*", "tests/**/*"],
   "exclude": ["node_modules", "cli"]
 }

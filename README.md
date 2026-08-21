@@ -39,11 +39,13 @@ pi --loop
 
 ## Project Status
 
-- **Phase:** DEFINE (2026-08-20 scaffolded)
+- **Phase:** REVIEW → SHIP (F1 Visual 5-Level Widget + baseRevision complete — `baseRevision`, `harness_task_list` atomic + compaction checkpoint, 5-level widget verified; pending changelog/tag)
 - **Source harness:** `~/ops/Projects/dev-harness` (v5.1.0)
 - **Pi docs:** `extensions.md`, `sessions.md`, `packages.md`
+- **Harness state:** `harness/features/feature-list.json` (SSOT, `baseRevision:2`, `goals`/`sprints` + `key`/`dependsOn`/`subtasks`)
+- **Architecture:** `harness/docs/ARCHITECTURE.md` · Decisions: `harness/docs/DECISIONS.md` · Rubric: `harness/evaluator-rubric.md` (9/12 — revise)
 
-See `SPEC.md` for full requirements and `pi-harness.md` for folder note.
+See `SPEC.md` for full requirements, `pi-harness.md` for folder note, and `harness/docs/ARCHITECTURE.md` for module structure.
 
 ## Development
 
@@ -59,14 +61,23 @@ npm run lint
 
 ```
 pi-harness/
-├── pi-harness.md          # Folder note
-├── SPEC.md                # Requirements
-├── README.md              # This file
-├── src/                   # (future) extension source
-├── tests/                 # Tests
-├── docs/                  # Notes
-├── extensions/            # Pi extension (harness-enforcer)
-├── skills/                # Re-exported craft skills
-├── prompts/               # Re-exported prompts
-└── package.json           # pi manifest
+├── pi-harness.md                    # Folder note
+├── SPEC.md                          # Requirements (F1-F5)
+├── README.md                        # This file
+├── src/
+│   ├── widget.ts                    # 5-level rendering (statusIcon, wrapWidgetLines, getWidgetWindowBounds, buildWidgetLines)
+│   └── harnessTaskList.ts           # Atomic engine (baseRevision, omission=deletion, cycle/deps, file helpers)
+├── tests/
+│   ├── widget.test.ts               # Wrap vs truncate, window, 5-level, Progress, ← #1, +N more
+│   └── harnessTaskList.test.ts      # Atomic, file persistence, replay
+├── harness/
+│   ├── docs/ARCHITECTURE.md         # Module structure + data flow
+│   ├── docs/DECISIONS.md            # 5-level schema, checkpoint, duplication trade-off
+│   ├── features/feature-list.json   # SSOT (baseRevision, goals, sprints, features/tasks/subtasks)
+│   └── evaluator-rubric.md          # Review scores (9/12)
+├── extensions/harness-enforcer/
+│   └── index.ts                     # Pi enforcement (lifecycle, tool, widget, checkpoint, lock)
+├── skills/                          # Re-exported craft skills (29)
+├── prompts/                         # Re-exported prompts
+└── package.json                     # pi manifest
 ```
