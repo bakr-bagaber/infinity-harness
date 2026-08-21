@@ -15,6 +15,8 @@
 2026-08-20 | agent | capability gap: port widget rendering - no direct skill found, using frontend-ui + tdd best practices
 2026-08-20 | agent | capability adapted: pi-todo atomic list with omission deletion and compaction checkpoint from @99percentpeople/pi-todo
 2026-08-21 | agent | task-003: global dev-harness-cli ralph-shared lacked 5-level preservation; local fix not used by validate, caused baseRevision stripping — copied fixed file to global node_modules
+2026-08-21 | agent | REVIEW: extension duplicates src widget + atomic logic for runtime isolation — intentionally not DRY; bundle deferred to F2 via tsup; documented as trade-off in ARCHITECTURE.md/DECISIONS.md
+2026-08-21 | agent | REVIEW rubric 9/12: Correctness 2, Security 2, Performance 2, but Test Coverage 1 (no coverage report, extension lifecycle manual), Code Quality 1 (Duplicated Code), Handoff 1 (CHANGELOG/tag pending for SHIP)
 ## Checkpoints
 
 | Tag | Phase | Date | Notes |
