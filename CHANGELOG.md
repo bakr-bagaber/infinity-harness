@@ -2,6 +2,15 @@
 
 All notable changes to `pi-harness` will be documented here.
 
+## [0.3.0] - 2026-08-21
+
+### Fixed
+- **Enforcer stream race (F1 hotfix):** `turn_end` no longer calls `sendUserMessage`/`sendMessage` mid-stream — now `notify`+`appendEntry` only, avoiding OpenAI Responses stream ended error during `high` thinking turns.
+- **BUILD gate infinite dirty:** untracked harness runtime state (`harness/config.json`, `feature-list.json`, `progress.md`, `session-handoff.md` now ignored) so `gateHistory` appends do not block `phase next`.
+
+### Added
+- **F2 Enforcer Auto-Loop Hardening:** `session_start` auto-inject lightweight (`notify`+`widget`), `context` hidden checkpoint and periodic reminder every 3 calls, `session_before_compact` `appendEntry` checkpoint, `tool_call` guard blocks phase-skip without `PASS`, `high` not `xhigh` for `dev-harness run` workers.
+
 ## [0.2.0] - 2026-08-21
 
 ### Added
