@@ -14,7 +14,7 @@
   "author": "Bakr Bagaber",
   "repository": {
     "type": "git",
-    "url": "https://github.com/bakr-bagaber/dev-harness"
+    "url": "https://github.com/bakr-bagaber/pi-harness"
   },
   "pi": {
     "extensions": [
