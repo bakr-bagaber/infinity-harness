@@ -547,6 +547,10 @@ export default function (pi: ExtensionAPI) {
   let llmCallCounter = 0;
   const REMINDER_INTERVAL = 3;
 
+  // Remote singleton (F5) â read-only HTTP view via src/remote.ts
+  let remoteServer: any = null;
+  let remoteServerProjectDir: string | null = null;
+
   // Widget update helper
   const updateWidget = (ctx: ExtensionContext) => {
     try {
@@ -1083,6 +1087,75 @@ export default function (pi: ExtensionAPI) {
     try { registerGoalTool("pi_goal_task"); registerGoalTool("harness_goal_loop"); } catch (e: any) { try { console.warn("pi-harness: pi_goal_task not registered:", e?.message); } catch {} }
   }
 
+  // -- pi_harness_remote F5: Remote Read-Only Web View -> 1.0.0 --
+  {
+    const registerRemoteTool = (toolName: string) => {
+      pi.registerTool({
+        name: toolName,
+        label: toolName === "pi_harness_remote" ? "Pi Harness Remote" : "Harness Remote",
+        description: "Read-only remote view of harness state (GET / HTML + GET /api/harness JSON + GET /api/health) via src/remote.ts. Actions: start launches ephemeral 127.0.0.1 server -> {url,port}, stop closes, status builds state without starting. Singleton per session, closed on session_shutdown. No baseRevision mutation.",
+        parameters: {
+          type: "object",
+          properties: {
+            action: { type: "string", enum: ["start", "stop", "status"], description: "start launches server, stop closes, status returns state" },
+            port: { type: "integer", minimum: 0, maximum: 65535, description: "Port 0=ephemeral, used only for start" },
+            host: { type: "string", description: "Bind host, default 127.0.0.1" },
+            projectDir: { type: "string", description: "Project dir override, defaults to ctx cwd" },
+          },
+          required: ["action"],
+        } as any,
+        async execute(_toolCallId: string, params: any, _signal: any, _onUpdate: any, ctx: any) {
+          const dir: string = typeof params.projectDir === "string" && params.projectDir ? params.projectDir : getProjectDir(ctx as any);
+          const action: string = params.action;
+          try {
+            const remoteMod: any = await import("../../src/remote.ts");
+            if (action === "status") {
+              const state = remoteMod.buildRemoteState(dir);
+              return {
+                content: [{ type: "text", text: "Remote status baseRevision " + state.baseRevision + " widget " + state.widgetLines.length + " lines" + (remoteServer ? " server " + remoteServer.url : " no server") }],
+                details: { baseRevision: state.baseRevision, features: state.features, goals: state.goals, widgetLines: state.widgetLines, timestamp: state.timestamp, serverRunning: !!remoteServer, url: remoteServer?.url ?? null, host: remoteServer?.host ?? null, port: remoteServer?.port ?? null },
+              } as any;
+            }
+            if (action === "stop") {
+              if (!remoteServer) {
+                return { content: [{ type: "text", text: "Remote server not running" }], details: { serverRunning: false } } as any;
+              }
+              const prevUrl = remoteServer.url;
+              try { await remoteServer.close(); } catch {}
+              remoteServer = null;
+              remoteServerProjectDir = null;
+              return { content: [{ type: "text", text: "Remote server stopped (was " + prevUrl + ")" }], details: { serverRunning: false, prevUrl } } as any;
+            }
+            if (remoteServer && remoteServerProjectDir === dir) {
+              return {
+                content: [{ type: "text", text: "Remote server already running " + remoteServer.url }],
+                details: { url: remoteServer.url, host: remoteServer.host, port: remoteServer.port, serverRunning: true },
+              } as any;
+            }
+            if (remoteServer) {
+              try { await remoteServer.close(); } catch {}
+              remoteServer = null;
+              remoteServerProjectDir = null;
+            }
+            const host: string = typeof params.host === "string" && params.host ? params.host : "127.0.0.1";
+            const port: number = typeof params.port === "number" ? params.port : 0;
+            const srv = await remoteMod.createRemoteServer({ projectDir: dir, host, port });
+            remoteServer = srv;
+            remoteServerProjectDir = dir;
+            try { (ctx as any)?.ui?.notify?.("pi-harness remote started " + srv.url, "info"); } catch {}
+            return {
+              content: [{ type: "text", text: "Remote server started " + srv.url }],
+              details: { url: srv.url, host: srv.host, port: srv.port, serverRunning: true },
+            } as any;
+          } catch (e: any) {
+            return { content: [{ type: "text", text: "pi_harness_remote error: " + e.message }], details: { error: e.message }, isError: true } as any;
+          }
+        },
+      });
+    };
+    try { registerRemoteTool("pi_harness_remote"); registerRemoteTool("harness_remote"); } catch (e: any) { try { console.warn("pi-harness: pi_harness_remote not registered:", e?.message); } catch {} }
+  }
+
   // ── turn_end: auto-validate + auto-phase-next (original) ─────────────────
   pi.on("turn_end", async (_event: any, ctx: any) => {
     const dir = getProjectDir(ctx);
@@ -1164,6 +1237,11 @@ export default function (pi: ExtensionAPI) {
     }
   });
   pi.on("session_shutdown", async () => {
+    if (remoteServer) {
+      try { await remoteServer.close(); } catch {}
+      remoteServer = null;
+      remoteServerProjectDir = null;
+    }
     if (lockRelease) {
       try { await lockRelease(); } catch {}
       lockRelease = null;

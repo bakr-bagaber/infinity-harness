@@ -2,6 +2,12 @@
 
 All notable changes to `pi-harness` will be documented here.
 
+## [1.0.0] - 2026-08-22
+
+### Added
+- **F5 Remote Read-Only Web View -> 1.0.0:** src/remote.ts with buildRemoteState(projectDir) + createRemoteServer({projectDir,host,port}) via node:http on 127.0.0.1 ephemeral -> GET / HTML inline polling (2000ms) + GET /api/harness JSON RemoteState {baseRevision,features,goals,widgetLines,timestamp} + GET /api/health {ok,version} using readFileSync (no baseRevision increment, no lock) and buildWidgetLines; buildHtml escapes (&,<,>,",') and lists Goals/Features tables with Progress. tests/remote.test.ts covers ephemeral port, shape baseRevision/widgetLines/timestamp, HTML contains pi-harness + baseRevision + Progress with escaping, concurrent x5 fetches serialized, close idempotent and frees port for re-bind, readOnly baseRevision not mutated.
+- extensions/harness-enforcer now exposes pi_harness_remote (alias harness_remote) hidden tool {action:start|stop|status,port?,host?,projectDir?} delegating to src/remote.ts singleton per session; start launches ephemeral server -> {url,host,port}, status builds RemoteState without starting, stop closes; session_shutdown closes remoteServer; enforcer stays notify+appendEntry only, no sendUserMessage mid-stream regression, no baseRevision or feature-list.json corruption on repeated start/stop.
+
 ## [0.5.0] - 2026-08-22
 
 ### Added
