@@ -1,0 +1,851 @@
+{
+  "version": "1.0",
+  "stack": "node",
+  "stackMeta": {
+    "testCmd": "npx tsc --noEmit",
+    "lintCmd": "echo lint ok",
+    "installCmd": "npm install",
+    "coverageCmd": "echo coverage ok"
+  },
+  "agentTool": null,
+  "mode": "copilot",
+  "currentPhase": "build",
+  "currentRole": null,
+  "currentFeature": null,
+  "currentTask": null,
+  "paused": false,
+  "features": {
+    "remaining": 0,
+    "passing": 4,
+    "total": 4
+  },
+  "gates": {
+    "enabled": true,
+    "checks": [
+      "all"
+    ],
+    "coverage": {
+      "enabled": false,
+      "threshold": 80
+    },
+    "cleanState": {
+      "enabled": false,
+      "stalePatterns": [],
+      "startupCmd": null
+    },
+    "antiPlaceholder": {
+      "enabled": true,
+      "patterns": [
+        "FIXME",
+        "XXX",
+        "NotImplementedError"
+      ]
+    }
+  },
+  "cleanup": {
+    "schedule": "0 2 * * 0",
+    "autoFix": false
+  },
+  "git": {
+    "autoCommit": false,
+    "autoTag": false,
+    "resetOnRetry": false,
+    "branch": "feature/pi-harness-f4-goal",
+    "clean": true,
+    "hasUpstream": false,
+    "lastCommitMessage": "chore: untrack harness runtime for F4 (keep ignored)"
+  },
+  "phases": {
+    "enabled": [
+      "define",
+      "plan",
+      "build",
+      "verify",
+      "review",
+      "ship"
+    ]
+  },
+  "roles": {
+    "strict": false
+  },
+  "agents": {
+    "tone": {
+      "planner": "Analytical and precise. Define clear boundaries.",
+      "generator": "Focused and practical. Build what's specified, nothing more.",
+      "evaluator": "Skeptical and thorough. Accept only compelling evidence.",
+      "simplifier": "Relentless about clarity. Delete more than you add."
+    }
+  },
+  "maxRetries": 10,
+  "retry": {
+    "tasks": {
+      "enabled": true,
+      "maxRetries": 10
+    },
+    "features": {
+      "enabled": false,
+      "maxRetries": 2
+    },
+    "phases": {
+      "enabled": false,
+      "maxRetries": 2
+    }
+  },
+  "retryCount": 0,
+  "taskRetryCount": 0,
+  "featureRetryCount": 0,
+  "phaseRetryCount": 0,
+  "pipelineIteration": 0,
+  "gateHistory": [
+    {
+      "phase": "define",
+      "result": "pass",
+      "timestamp": "2026-08-20T23:16:37.570Z"
+    },
+    {
+      "phase": "define",
+      "result": "pass",
+      "timestamp": "2026-08-20T23:16:41.526Z"
+    },
+    {
+      "phase": "define",
+      "result": "pass",
+      "timestamp": "2026-08-20T23:16:41.527Z"
+    },
+    {
+      "phase": "plan",
+      "result": "pass",
+      "timestamp": "2026-08-20T23:16:57.504Z"
+    },
+    {
+      "phase": "plan",
+      "result": "pass",
+      "timestamp": "2026-08-20T23:17:01.671Z"
+    },
+    {
+      "phase": "plan",
+      "result": "pass",
+      "timestamp": "2026-08-20T23:17:01.672Z"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-20T23:17:24.522Z",
+      "feature": "feature-001",
+      "task": "task-001"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-20T23:20:50.203Z",
+      "feature": "feature-001",
+      "task": "task-001"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-20T23:24:50.894Z"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-20T23:24:57.397Z"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-20T23:25:02.963Z"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-20T23:25:11.323Z"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-20T23:25:13.861Z"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-20T23:25:19.989Z"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-20T23:25:25.781Z"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-20T23:25:27.989Z"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-20T23:28:38.530Z"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-20T23:28:42.145Z"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-20T23:29:03.224Z"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-20T23:29:13.122Z"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-20T23:29:38.879Z"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-20T23:29:45.311Z"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-20T23:29:58.586Z"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-20T23:30:15.458Z"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-20T23:30:39.329Z"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-20T23:30:52.672Z"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-20T23:31:10.272Z"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-20T23:31:18.017Z"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-20T23:31:27.760Z"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-20T23:31:33.429Z"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-20T23:31:40.569Z"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:10:17.802Z"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:10:36.866Z",
+      "feature": "feature-001",
+      "task": "task-002"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:12:23.703Z",
+      "feature": "feature-001",
+      "task": "task-003"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:14:51.959Z",
+      "feature": "feature-001",
+      "task": "task-003"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-21T15:14:56.291Z"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-21T15:15:33.295Z"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-21T15:15:37.493Z"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:15:49.408Z"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-21T15:15:53.401Z"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-21T15:16:03.801Z"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:16:23.579Z"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-21T15:16:28.328Z"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:17:15.791Z"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:17:28.337Z"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:17:32.893Z"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:17:32.894Z"
+    },
+    {
+      "phase": "verify",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:18:06.887Z"
+    },
+    {
+      "phase": "verify",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:18:16.144Z"
+    },
+    {
+      "phase": "verify",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:18:16.146Z"
+    },
+    {
+      "phase": "review",
+      "result": "fail",
+      "timestamp": "2026-08-21T15:18:17.006Z"
+    },
+    {
+      "phase": "review",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:18:27.017Z"
+    },
+    {
+      "phase": "review",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:18:27.769Z"
+    },
+    {
+      "phase": "review",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:18:27.770Z"
+    },
+    {
+      "phase": "ship",
+      "result": "fail",
+      "timestamp": "2026-08-21T15:18:28.005Z"
+    },
+    {
+      "phase": "ship",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:18:39.126Z"
+    },
+    {
+      "phase": "ship",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:18:52.084Z"
+    },
+    {
+      "phase": "define",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:24:31.211Z"
+    },
+    {
+      "phase": "define",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:25:05.338Z"
+    },
+    {
+      "phase": "define",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:25:05.513Z"
+    },
+    {
+      "phase": "define",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:25:05.514Z"
+    },
+    {
+      "phase": "plan",
+      "result": "fail",
+      "timestamp": "2026-08-21T15:25:05.824Z"
+    },
+    {
+      "phase": "plan",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:25:13.346Z"
+    },
+    {
+      "phase": "plan",
+      "result": "fail",
+      "timestamp": "2026-08-21T15:25:18.654Z"
+    },
+    {
+      "phase": "plan",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:25:24.017Z"
+    },
+    {
+      "phase": "plan",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:25:24.185Z"
+    },
+    {
+      "phase": "plan",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:25:24.187Z"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:25:33.046Z",
+      "feature": "feature-002",
+      "task": "task-004"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:26:11.489Z",
+      "feature": "feature-002",
+      "task": "task-004"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-21T15:26:20.578Z"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-21T15:32:55.415Z"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:32:59.704Z"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:33:04.186Z",
+      "feature": "feature-002",
+      "task": "task-004"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:33:12.426Z"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:33:12.427Z"
+    },
+    {
+      "phase": "verify",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:33:16.934Z"
+    },
+    {
+      "phase": "verify",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:33:30.047Z"
+    },
+    {
+      "phase": "verify",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:33:30.048Z"
+    },
+    {
+      "phase": "review",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:33:53.295Z"
+    },
+    {
+      "phase": "review",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:34:05.986Z"
+    },
+    {
+      "phase": "review",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:34:05.987Z"
+    },
+    {
+      "phase": "ship",
+      "result": "fail",
+      "timestamp": "2026-08-21T15:34:06.197Z"
+    },
+    {
+      "phase": "ship",
+      "result": "fail",
+      "timestamp": "2026-08-21T15:34:14.803Z"
+    },
+    {
+      "phase": "ship",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:34:26.707Z"
+    },
+    {
+      "phase": "ship",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:34:27.274Z"
+    },
+    {
+      "phase": "define",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:37:05.970Z"
+    },
+    {
+      "phase": "define",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:38:54.337Z"
+    },
+    {
+      "phase": "define",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:38:54.470Z"
+    },
+    {
+      "phase": "define",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:38:54.472Z"
+    },
+    {
+      "phase": "plan",
+      "result": "fail",
+      "timestamp": "2026-08-21T15:38:54.705Z"
+    },
+    {
+      "phase": "plan",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:39:15.914Z"
+    },
+    {
+      "phase": "plan",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:39:24.634Z"
+    },
+    {
+      "phase": "plan",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:39:24.834Z"
+    },
+    {
+      "phase": "plan",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:39:24.835Z"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:39:29.345Z"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:39:45.824Z",
+      "feature": "feature-003",
+      "task": "task-005"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:40:06.132Z",
+      "feature": "feature-003",
+      "task": "task-005"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:47:59.180Z",
+      "feature": "feature-003",
+      "task": "task-005"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:52:44.112Z",
+      "feature": "feature-003",
+      "task": "task-005"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-21T15:52:57.151Z",
+      "feature": "feature-003",
+      "task": "task-005"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-21T16:08:08.333Z",
+      "feature": "feature-003",
+      "task": "task-006"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-21T16:08:30.938Z",
+      "feature": "feature-003",
+      "task": "task-006"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-21T16:08:54.057Z"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-21T16:09:12.904Z"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-21T16:09:12.906Z"
+    },
+    {
+      "phase": "verify",
+      "result": "pass",
+      "timestamp": "2026-08-21T16:09:22.187Z"
+    },
+    {
+      "phase": "verify",
+      "result": "pass",
+      "timestamp": "2026-08-21T16:09:33.454Z"
+    },
+    {
+      "phase": "verify",
+      "result": "pass",
+      "timestamp": "2026-08-21T16:09:33.455Z"
+    },
+    {
+      "phase": "review",
+      "result": "pass",
+      "timestamp": "2026-08-21T16:09:35.022Z"
+    },
+    {
+      "phase": "review",
+      "result": "pass",
+      "timestamp": "2026-08-21T16:09:40.073Z"
+    },
+    {
+      "phase": "review",
+      "result": "pass",
+      "timestamp": "2026-08-21T16:09:40.075Z"
+    },
+    {
+      "phase": "ship",
+      "result": "fail",
+      "timestamp": "2026-08-21T16:09:40.420Z"
+    },
+    {
+      "phase": "ship",
+      "result": "fail",
+      "timestamp": "2026-08-21T16:09:50.941Z"
+    },
+    {
+      "phase": "ship",
+      "result": "pass",
+      "timestamp": "2026-08-21T16:09:59.150Z"
+    },
+    {
+      "phase": "ship",
+      "result": "pass",
+      "timestamp": "2026-08-22T01:39:54.815Z"
+    },
+    {
+      "phase": "define",
+      "result": "pass",
+      "timestamp": "2026-08-22T01:39:55.140Z"
+    },
+    {
+      "phase": "define",
+      "result": "pass",
+      "timestamp": "2026-08-22T01:42:01.507Z"
+    },
+    {
+      "phase": "define",
+      "result": "pass",
+      "timestamp": "2026-08-22T01:43:36.526Z"
+    },
+    {
+      "phase": "define",
+      "result": "pass",
+      "timestamp": "2026-08-22T01:43:40.366Z"
+    },
+    {
+      "phase": "define",
+      "result": "pass",
+      "timestamp": "2026-08-22T01:43:40.368Z"
+    },
+    {
+      "phase": "plan",
+      "result": "fail",
+      "timestamp": "2026-08-22T01:43:40.891Z"
+    },
+    {
+      "phase": "plan",
+      "result": "pass",
+      "timestamp": "2026-08-22T01:44:31.017Z"
+    },
+    {
+      "phase": "plan",
+      "result": "pass",
+      "timestamp": "2026-08-22T01:44:35.416Z"
+    },
+    {
+      "phase": "plan",
+      "result": "pass",
+      "timestamp": "2026-08-22T01:44:35.417Z"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-22T01:49:10.663Z",
+      "feature": "feature-004",
+      "task": "task-007"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-22T01:49:14.952Z"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-22T01:49:24.933Z",
+      "feature": "feature-004",
+      "task": "task-008"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-22T01:55:30.273Z",
+      "feature": "feature-004",
+      "task": "task-008"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-22T01:55:35.563Z"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-22T01:58:10.863Z"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-22T01:58:16.290Z",
+      "feature": "feature-004",
+      "task": "task-009"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-22T01:58:34.270Z",
+      "feature": "feature-004",
+      "task": "task-009"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-22T01:58:39.471Z"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-22T02:01:32.683Z",
+      "feature": "feature-004",
+      "task": "task-009"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-22T02:02:59.184Z"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-22T02:03:03.897Z",
+      "feature": "feature-004",
+      "task": "task-008"
+    },
+    {
+      "phase": "build",
+      "result": "pass",
+      "timestamp": "2026-08-22T02:19:52.231Z",
+      "feature": "feature-004",
+      "task": "task-009"
+    },
+    {
+      "phase": "build",
+      "result": "fail",
+      "timestamp": "2026-08-22T02:20:08.138Z"
+    }
+  ],
+  "supervisor": {
+    "enabled": false,
+    "apiRetries": 5,
+    "backoffMs": 60000,
+    "lastHeartbeat": null,
+    "status": "idle"
+  },
+  "run": {
+    "agents": {
+      "pi": {
+        "cmd": "pi --provider opencode --model opencode/muse-spark-1.2-contributor-free --thinking high -p \"$(cat {promptfile})\""
+      }
+    }
+  }
+}
