@@ -322,7 +322,7 @@
       "id": "feature-006",
       "name": "Rework + Replan + Return-to-Origin",
       "description": "Rework status with impact BFS via dependsOn DAG, harness/rework.json return-to-origin, and mid-BUILD plan amendment",
-      "passes": false,
+      "passes": true,
       "producedByRole": null,
       "sprintId": "sprint-006",
       "goalId": "goal-001",
@@ -354,7 +354,7 @@
           "id": "task-013",
           "key": "rework-replan",
           "description": "Build src/rework.ts and src/replan.ts with impact BFS, rework.json, and amendPlan guards",
-          "status": "pending",
+          "status": "complete",
           "acceptanceCriteria": [
             "src/rework.ts exports startRework/loadRework/clearRework with forward BFS on dependsOn limited by maxImpactDepth, proper-lockfile + tmp+rename, baseRevision bump",
             "src/replan.ts exports amendPlan validating no cycles/missing deps and guarding maxReplansPerRun, atomic write",
