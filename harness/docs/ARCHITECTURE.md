@@ -1,4 +1,4 @@
-# Architecture — pi-harness v1.1.0 (F6: Resilient Self-Correction)
+# Architecture — pi-harness v1.2.0 (F7: Ops Activation — router live + auto-bounce/unstuck)
 
 v1.0 shipped 5-level widget + atomic baseRevision + worker isolation + goal loop + remote. v1.1.0 adds resilient self-correction as bounded, configurable, optional layers on top of the forward-only harness.
 
@@ -31,6 +31,10 @@ Planner assigns `difficulty`/`modelHint` in `feature-list.json`. Builder calls `
 ## Concurrency & Persistence
 
 Writes use `proper-lockfile` (retries 8, stale 10000, update 2000) + `write tmp.<pid>.tmp` + `renameSync` for atomicity on `feature-list.json`, `rework.json`, `replan.json`, canonical `GOAL_SPEC.json`. Reads (`buildRemoteState`, `loadRouterConfig`, `shouldBounceToRework`, `chooseUnstuckStrategy`) use `readFileSync`+`existsSync` fresh each call, no lock, no bump. `baseRevision` increments only on real change. Budgets cap infinite loops (`maxReworks 3` `maxReplans 2` `maxBounces 2` `maxPerTask 1`), fingerprint dedup via `hashLite`, `bounceRequiresDelta` requires `fileDelta`, `hysteresisMs` cooldown.
+
+## F7 Ops Activation (1.2.0)
+
+`harness/model-router.json` `enabled:true` makes `resolveModel` ladder live (`easy->moderate->difficult->MASTER` one-step, MASTER never assigned). `turn_end` now auto-calls `shouldBounceToRework` (review+fileDelta, maxBounces 2) and `chooseUnstuckStrategy` (budgets 3/2/2,hysteresis,dedup,fileDelta) — both notify+appendEntry only. `harness/evaluator-rubric.md` now 12/12 v1.1.0. Live E2E proved via `tmp` clone + `GET /api/harness` exposing `router`/`rework` read-only.
 
 ## Verification
 
