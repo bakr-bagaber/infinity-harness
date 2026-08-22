@@ -441,7 +441,7 @@
           "id": "task-016",
           "key": "unstuck-core",
           "description": "Build src/unstuck.ts orchestrator with budgets and infinite-loop guards",
-          "status": "pending",
+          "status": "complete",
           "acceptanceCriteria": [
             "src/unstuck.ts exports chooseUnstuckStrategy trying strategies in order retry->reframe->consult->rework->replan->master with maxReworks/maxReplans/maxBounces/maxPerTask guards",
             "Implements fingerprint dedup via hashLite, fileDelta guard, hysteresis cooldown, oneStepOnly, requireExhaustion, master once per run",
