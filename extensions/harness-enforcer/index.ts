@@ -1201,7 +1201,7 @@ export default function (pi: ExtensionAPI) {
     try { registerRemoteTool("pi_harness_remote"); registerRemoteTool("harness_remote"); } catch (e: any) { try { console.warn("pi-harness: pi_harness_remote not registered:", e?.message); } catch {} }
   }
 
-  // ── turn_end: auto-validate + auto-phase-next (original) ─────────────────
+  // ── turn_end: auto-validate + auto-phase-next (+ F7 auto-bounce/unstuck) ──
   pi.on("turn_end", async (_event: any, ctx: any) => {
     const dir = getProjectDir(ctx);
     if (!(await isHarnessProject(dir))) return;
@@ -1218,6 +1218,41 @@ export default function (pi: ExtensionAPI) {
         const details = result?.checks ? result.checks.filter((r: any) => !r.pass).map((r: any) => `- ${r.name}: ${r.detail}`).join("\n") || result.failures?.join(", ") || "validate failed" : "validate failed";
         ctx.ui.notify(`pi-harness: validate FAIL — ${details}`, "warning");
         try { pi.appendEntry("harness:gate-fail", { phase: config.currentPhase, details } as any); } catch {}
+        // F7: auto-wire review bounce + unstuck suggestion (notify-only, budgets+hysteresis, fileDelta guard)
+        try {
+          let fileDelta = false;
+          try {
+            const { execSync } = await import("node:child_process");
+            try {
+              execSync("git diff --quiet", { cwd: dir, stdio: "ignore" });
+              execSync("git diff --cached --quiet", { cwd: dir, stdio: "ignore" });
+              const out = execSync("git status --porcelain 2>/dev/null | head -n 1", { cwd: dir, encoding: "utf-8" } as any);
+              if (out && out.trim()) fileDelta = true;
+              else fileDelta = false;
+            } catch {
+              fileDelta = true;
+            }
+          } catch { fileDelta = true; }
+          if (config.currentPhase === "review") {
+            try {
+              const reviewMod: any = await import("../../src/review.ts");
+              const r = reviewMod.shouldBounceToRework({ projectDir: dir, fileDelta });
+              if (r.shouldBounce) {
+                ctx.ui.notify(`pi-harness: \u21B7 rework eligible (bounce ${r.bounceCount}/${r.maxBounces}) — ${r.reason} — call startRework() to return-to-origin`, "warning");
+                try { pi.appendEntry("harness:rework-eligible", r as any); } catch {}
+              }
+            } catch {}
+          }
+          try {
+            const unstuckMod: any = await import("../../src/unstuck.ts");
+            const sug = unstuckMod.chooseUnstuckStrategy({ projectDir: dir, fileDelta });
+            if (sug && sug.strategy) {
+              const modelPart = sug.nextModel ? ` \u2192 ${sug.nextModel}` : "";
+              ctx.ui.notify(`pi-harness: unstuck suggest ${sug.strategy}${modelPart} — ${sug.reason}`, "info");
+              try { pi.appendEntry("harness:unstuck", sug as any); } catch {}
+            }
+          } catch {}
+        } catch {}
       }
     } catch (e: any) {
       try { ctx.ui.notify(`pi-harness turn_end error: ${e.message}`, "error"); } catch {}

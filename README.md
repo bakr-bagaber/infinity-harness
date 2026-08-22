@@ -39,11 +39,11 @@ pi --loop
 
 ## Project Status
 
-- **Phase:** SHIP — v1.1.0 F6 Resilient Self-Correction shipped (model-router + rework↷ + replan + unstuck matrix + review bounce + remote router/rework)
+- **Phase:** SHIP — v1.2.0 F7 Ops Activated (router enabled:true live ladder, turn_end auto-bounce ↷ + unstuck suggest, rubric 12/12 v1.1.0, E2E consult->rework proved via GET /api/harness)
 - **Source harness:** `~/ops/Projects/dev-harness` (v5.1.0)
 - **Pi docs:** `extensions.md`, `sessions.md`, `packages.md`
 - **Harness state:** `harness/features/feature-list.json` (SSOT, `baseRevision:2`, `goals`/`sprints` + `key`/`dependsOn`/`subtasks` + `difficulty`/`modelHint` + `status: rework`)
-- **Architecture:** `harness/docs/ARCHITECTURE.md` · Decisions: `harness/docs/DECISIONS.md` · Rubric: `harness/evaluator-rubric.md` (9/12 — revise, F1 baseline; update to v1.1.0 pending)
+- **Architecture:** `harness/docs/ARCHITECTURE.md` · Decisions: `harness/docs/DECISIONS.md` · Rubric: `harness/evaluator-rubric.md` (12/12 — accept, v1.1.0 F6)
 
 See `SPEC.md` for full requirements, `pi-harness.md` for folder note, and `harness/docs/ARCHITECTURE.md` for module structure.
 
@@ -95,7 +95,7 @@ pi-harness/
 │   ├── docs/DECISIONS.md            # 8 accepted decisions (F1-F6)
 │   ├── features/feature-list.json   # SSOT (baseRevision, goals, sprints, features/tasks/subtasks)
 │   ├── model-router.json            # Router v1 (optional, fresh-read, bundled)
-│   └── evaluator-rubric.md          # Review scores (F1 9/12 baseline)
+│   └── evaluator-rubric.md          # Review scores (v1.1.0 F6 12/12 accept)
 ├── extensions/harness-enforcer/
 │   └── index.ts                     # Pi enforcement (lifecycle, tools, widget, checkpoint, lock, routing)
 ├── harness/model-router.json        # Default router v1 (disabled, safe defaults)

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "enabled": false,
+  "enabled": true,
   "default": "opencode/muse-spark-1.2-contributor-free",
   "byDifficulty": {
     "easy": "opencode/muse-spark-1.2-contributor-free",

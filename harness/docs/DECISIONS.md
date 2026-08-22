@@ -96,6 +96,17 @@
 
 ---
 
+
+## 2026-08-22: F7 Ops Activation — Router Live + Auto-Bounce/Unstuck + Rubric + E2E
+
+**Status:** accepted
+
+**Context:** F6 shipped configurable self-correction (`model-router.json` v1 `enabled:false`, `src/modelRouter.ts` `resolveModel`/`consultNext`, `src/rework.ts` `startRework` BFS, `src/replan.ts` `amendPlan`, `src/unstuck.ts` `chooseUnstuckStrategy`, `src/review.ts` `shouldBounceToRework`, `src/remote.ts` `router`/`rework`, `src/widget.ts` `rework ↷`) but left router disabled and `turn_end` only `gates.runChecks` notify — no auto `shouldBounceToRework`/`chooseUnstuckStrategy`, rubric still F1 9/12 (2026-08-21, 72 lines), `harness/config.json:git.branch` stale `feature/pi-harness-f6-resilient` vs `main`, and no live E2E proof of `consult->rework ↷->return-to-origin` via `GET /api/harness`.
+
+**Decision:** Activate ops: flip `harness/model-router.json` `enabled:false->true` (fresh-read each call, `loadRouterConfig` merges `DEFAULT_ROUTER`), wire `extensions/harness-enforcer/index.ts` `turn_end` `+ F7 auto-bounce/unstuck` to on FAIL compute `fileDelta` via `git diff --quiet`/`--cached`/`status --porcelain`, if `review` call `shouldBounceToRework({fileDelta})` notify `↷ rework eligible` + `appendEntry harness:rework-eligible`, then always call `chooseUnstuckStrategy({fileDelta})` notify `unstuck suggest <strategy> -> <nextModel>` + `appendEntry harness:unstuck` — both budgets/hysteresis/fileDelta guarded, no `sendUserMessage`. Sync `harness/config.json:git.branch` to `feature/pi-harness-f7-ops`, rewrite `harness/evaluator-rubric.md` to v1.1.0 F6 12/12 (2026-08-22, 62 lines, 6 dimensions 2 each, 12 suites evidence, Code Review two axes). Prove live on `tmp` clone: `resolveModel` ladder, `consultNext` one-step to MASTER, `shouldBounceToRework` fileDelta gate, `chooseUnstuckStrategy` dedup/hysteresis, `computeImpact` BFS, `startRework` flip+bump+`rework.json`, `buildRemoteState`/`createRemoteServer` `127.0.0.1:0` `GET /api/harness` `router`/`rework` + `GET /` HTML, `npx tsc --noEmit` clean, suites PASS. Bump `package.json` `1.1.0->1.2.0` + `CHANGELOG ##[1.2.0]` + `README` phase to `v1.2.0 F7`.
+
+**Consequences:** Router ladder now live (task.modelHint > byTask > byDifficulty > ... > default), review bounce and unstuck suggestions auto-surface on validate FAIL with infinite-loop guards (`maxReworks 3` `maxReplans 2` `maxBounces 2` `maxPerTask 1` + dedup + requiresDelta + hysteresis). Rubric now 12/12 accept, branch hygiene restored, E2E self-correction demonstrated without polluting `baseRevision` (remote read-only). No new harness phase, no remote mutation, no new gate.
+
 | Date | Decision | Status |
 |------|----------|--------|
 | 2026-08-20 | 5-Level Hierarchy + baseRevision Schema | accepted |
@@ -106,3 +117,4 @@
 | 2026-08-22 | F4 Goal Loop with GOAL_SPEC.json + Reviewer Worker | accepted |
 | 2026-08-22 | F5 Remote Read-Only Web View | accepted |
 | 2026-08-22 | F6 Resilient Self-Correction | accepted |
+| 2026-08-22 | F7 Ops Activation — Router Live + Auto-Bounce/Unstuck + Rubric + E2E | accepted |
