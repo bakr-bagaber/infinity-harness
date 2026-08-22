@@ -3,24 +3,26 @@
 ## Scope (Generator proposes)
 
 **I will build:**
-F5 Remote Read-Only Web View → 1.0.0. Build src/remote.ts with buildRemoteState(projectDir) + createRemoteServer({port,host}) (node:http 127.0.0.1 ephemeral -> GET / HTML inline polling, GET /api/harness JSON RemoteState {baseRevision,features,goals,widgetLines,timestamp}, GET /api/health). Reads via readFileSync (no baseRevision increment); widget via src/widget.ts. Wire extensions/harness-enforcer hidden tool pi_harness_remote (alias harness_remote) {action:start|stop|status,port?,host?} delegating to src/remote.ts singleton, session_shutdown closes. Keep 5-level widget + harness_task_list + Goal Loop intact; reuse define→ship.
+F6 Resilient Self-Correction -> 1.1.0. Build harness/model-router.json v1 (enabled, default, byDifficulty easy|moderate|difficult, master never assigned, byPhase/byRole/byTask, consultation maxPerTask1 oneStepOnly requireExhaustion, budgets maxReworks3 maxReplans2 maxBounces2) + harness/rework.json + harness/config.json rework/replan/unstuck/review; add src/modelRouter.ts resolveModel+consultNext, src/rework.ts startRework impact BFS dependsOn baseRevision bump return-to-origin, src/replan.ts amendPlan, src/unstuck.ts chooseUnstuckStrategy (retry->reframe->consult->rework->replan->master); extend src/worker.ts SpawnOpts.model per-task isolation, goalLoop reviewer model routing, widget rework status \u21b7 amber, remote GET /api/harness read-only router+rework; all fresh-read, optional, budgets guard infinite loops.
 
 **I will NOT build:**
-Remote mutation (no POST), auth/QR/tunnel helper, new harness phases/gates, pi --loop daemon beyond per-task isolation, external hosting.
+No endless loops beyond budgets, no multi-step chain consult (one-step only), no MASTER direct assignment, no new harness phases/gates, no remote mutation beyond read-only GETs, no QR beyond SSH.
 
 ## Verification Criteria (Generator proposes)
 
-npx tsc --noEmit passes; src/remote.ts exists with buildRemoteState/createRemoteServer, tests/remote.test.ts passing (start on 127.0.0.1:0, GET /api/harness shape baseRevision/widgetLines/timestamp, GET / HTML contains pi-harness + baseRevision, concurrent fetches serialized, close frees port, HTML escaping).
-Remote read-only demonstrated: fetch /api/harness reflects baseRevision + widgetLines without mutating file; fetch / returns HTML with Progress and widget lines; close() stops server; repeated start/stop does not corrupt baseRevision or feature-list.json.
-package.json 1.0.0 and CHANGELOG.md ## [1.0.0] with remote; enforcer tsc clean no sendUserMessage regression and exposes pi_harness_remote alias harness_remote.
+npx tsc --noEmit passes; src/modelRouter.ts src/rework.ts src/replan.ts src/unstuck.ts exist with resolveModel/consultNext/startRework/amendPlan/chooseUnstuckStrategy, unit tests tests/modelRouter/rework/replan/unstuck.test.ts passing
+Self-correction demonstrated: model-router.json disabled->enabled toggled fresh each call, startRework flips rework \u21b7 and writes harness/rework.json with returnFeature/returnTask/impacted[] + baseRevision bump, amendPlan adds task mid-BUILD guard maxReplans2, review bounce only when fileDelta true else ignored, all read-only via GET /api/harness
+package.json 1.1.0 and CHANGELOG ## [1.1.0]; enforcer tsc clean no sendUserMessage, exposes routing via pi_harness_remote singleton and harness_spawn_worker model passthrough; harness_task_list still baseRevision optimistic with rework status and difficulty/modelHint optional
 
 ## Evaluator Review (Evaluator fills in)
 
-- [x] Scope is clear and bounded: yes — src/remote.ts read-only (GET / HTML + GET /api/harness JSON + /api/health) plus enforcer pi_harness_remote alias harness_remote with {start|stop|status}
-- [x] Verification criteria are sufficient: yes — tsc + tests/remote.test.ts (ephemeral + shape + HTML + concurrent + close + escaping) + read-only demo (baseRevision unchanged) + 1.0.0 version/changelog + enforcer alias
-- [x] Exclusions are reasonable: yes — POST/auth/QR/tunnel/new phases deferred
+- [x] Scope is clear and bounded: yes — src/modelRouter.ts + src/rework.ts + src/replan.ts + src/unstuck.ts with harness/model-router.json v1 + harness/rework.json + config rework/replan/unstuck/review; worker SpawnOpts.model, goalLoop reviewer routing, widget rework ↷
+- [x] Verification criteria are sufficient: yes — tsc + 4 test suites (priority ladder MASTER never assigned, impact BFS, maxReworks guard, fingerprint dedup, bounceRequiresDelta) + toggle fresh-read demo + baseRevision bump + amendPlan guard + remote read-only
+- [x] Exclusions are reasonable: yes — endless loops capped by budgets, no multi-step consult, no MASTER assignment, no new phases, no remote mutation beyond GETs
 
 Agreed.
+
+
 
 
 
@@ -28,4 +30,5 @@ Agreed.
 
 **Status:** Agreed
 **Negotiation rounds:** 2/5
+
 
