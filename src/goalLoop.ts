@@ -1,4 +1,5 @@
 import path from "node:path";
+import { resolveModel } from "./modelRouter.ts";
 
 export type CoordinatorStatus = "done" | "partial" | "blocked" | "failed";
 
@@ -461,6 +462,16 @@ export function cancelGoalLoop(
       iteration: state.currentIteration || undefined,
     },
   );
+}
+
+
+/** Resolve reviewer worker model via harness/model-router.json (fresh-read each call); falls back to default */
+export function resolveReviewerModel(opts: { projectDir?: string; difficulty?: string; modelHint?: string } = {}): string {
+  try {
+    return resolveModel({ projectDir: opts.projectDir, task: opts.difficulty || opts.modelHint ? { difficulty: opts.difficulty, modelHint: opts.modelHint } : undefined });
+  } catch {
+    return "opencode/muse-spark-1.2-contributor-free";
+  }
 }
 
 export function validateGoalLoopState(value: unknown): GoalLoopState {

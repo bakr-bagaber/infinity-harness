@@ -970,6 +970,7 @@ export default function (pi: ExtensionAPI) {
           command: { type: "string", description: "Optional shell command template with {promptfile} placeholder; if omitted, just records the attempt" },
           timeoutMs: { type: "integer", minimum: 1000, description: "Timeout ms for the isolated command" },
           attempt: { type: "integer", minimum: 1, description: "Explicit attempt number (auto-increments if omitted)" },
+          model: { type: "string", description: "Optional model override, e.g. opencode/muse-spark-1.2-contributor-free; if omitted resolves via harness/model-router.json" },
         },
         required: ["runId", "featureId", "taskId", "prompt"],
       } as any,
@@ -977,6 +978,35 @@ export default function (pi: ExtensionAPI) {
         const dir = getProjectDir(ctx as any);
         try {
           const workerMod: any = await import("../../src/worker.ts");
+          // Resolve model via modelRouter if not supplied (fresh read each call)
+          let resolvedModel: string | undefined = typeof params.model === "string" && params.model ? params.model : undefined;
+          if (!resolvedModel) {
+            try {
+              const routerMod: any = await import("../../src/modelRouter.ts");
+              // Try to infer task difficulty/modelHint from feature-list.json
+              let difficulty: string | undefined;
+              let modelHint: string | undefined;
+              try {
+                const fs = await import("node:fs");
+                const path = await import("node:path");
+                const flp = path.resolve(dir, "harness", "features", "feature-list.json");
+                if (fs.existsSync(flp)) {
+                  const raw = JSON.parse(fs.readFileSync(flp, "utf-8"));
+                  outer: for (const f of raw.features ?? []) {
+                    for (const task of f.tasks ?? []) {
+                      const key = (task as any).key ?? (task as any).id;
+                      if (key === params.taskId || (task as any).id === params.taskId) {
+                        difficulty = (task as any).difficulty;
+                        modelHint = (task as any).modelHint;
+                        break outer;
+                      }
+                    }
+                  }
+                }
+              } catch {}
+              resolvedModel = routerMod.resolveModel({ projectDir: dir, task: { id: params.taskId, key: params.taskId, difficulty, modelHint } });
+            } catch {}
+          }
           const res: any = await workerMod.spawnIsolatedWorker({
             projectDir: dir,
             runId: params.runId,
@@ -986,6 +1016,7 @@ export default function (pi: ExtensionAPI) {
             command: params.command,
             timeoutMs: params.timeoutMs,
             attempt: params.attempt,
+            model: resolvedModel ?? params.model,
           });
           return {
             content: [{ type: "text", text: "Isolated worker " + params.runId + "/" + params.featureId + "/" + params.taskId + " attempt-" + res.attempt + " -> " + res.attemptDir + " (exit " + res.exitCode + ")" + (res.timedOut ? " timed out" : "") }],
@@ -1007,7 +1038,7 @@ export default function (pi: ExtensionAPI) {
         name: toolName,
         label: toolName === "pi_goal_task" ? "Pi Goal Task" : "Harness Goal Loop",
         description: "Goal loop with GOAL_SPEC.json + reviewer worker. Run is tmp/pi-harness/goals/<runId>/ (GOAL_STATE.json+trace+iterations) mirrored to harness/goals/GOAL_SPEC.json via proper-lockfile. Reviewer isolated via spawnIsolatedWorker to tmp/pi-harness/<runId>/review/attempt-N/. Delegates to src/goalLoop.ts+src/goalState.ts+src/worker.ts.",
-        parameters: { type: "object", properties: { goal: { type: "string", description: "Original goal" }, goalRunId: { type: "string" }, action: { type: "string", enum: ["create","start_iteration","record_todo","record_worker","review"] }, todoPath: { type: "string" }, todoSummary: { type: "string" }, workerStatus: { type: "string", enum: ["done","partial","blocked","failed"] }, workerSummary: { type: "string" }, reviewerPrompt: { type: "string" }, reviewerCommand: { type: "string" }, reviewerDecision: { type: "string", enum: ["complete","incomplete","blocked","failed"] }, remainingWork: { type: "array", items: { type: "string" } }, cwd: { type: "string" }, timeoutMs: { type: "integer" }, spec: { type: "object" } }, required: ["goal"] } as any,
+        parameters: { type: "object", properties: { goal: { type: "string", description: "Original goal" }, goalRunId: { type: "string" }, action: { type: "string", enum: ["create","start_iteration","record_todo","record_worker","review"] }, todoPath: { type: "string" }, todoSummary: { type: "string" }, workerStatus: { type: "string", enum: ["done","partial","blocked","failed"] }, workerSummary: { type: "string" }, reviewerPrompt: { type: "string" }, reviewerCommand: { type: "string" }, reviewerDecision: { type: "string", enum: ["complete","incomplete","blocked","failed"] }, remainingWork: { type: "array", items: { type: "string" } }, cwd: { type: "string" }, timeoutMs: { type: "integer" }, spec: { type: "object" }, model: { type: "string", description: "Optional model override for reviewer worker; if omitted resolves via harness/model-router.json" } }, required: ["goal"] } as any,
         async execute(toolCallId: string, params: any, _signal: any, _onUpdate: any, ctx: any) {
           const dir = getProjectDir(ctx as any);
           const projectDir = params.cwd || dir;
@@ -1067,7 +1098,21 @@ export default function (pi: ExtensionAPI) {
             }
             if (iter.status === "todo_generated") state = goalLoopMod.recordWorkerResult(state, iter.iteration, { status: "done", summary: "worker done", endedAt: new Date().toISOString() } as any, { now: new Date() });
             const reviewPrompt: string = params.reviewerPrompt || `Review goal "${params.goal}" run ${goalRunId} iteration ${curIt}. Decide complete|incomplete|blocked|failed. JSON {"decision":"complete"}`;
-            const attemptRes: any = await workerMod.spawnIsolatedWorker({ projectDir, runId: goalRunId, featureId: "review", taskId: "reviewer", prompt: reviewPrompt, command: params.reviewerCommand, timeoutMs: params.timeoutMs });
+            let reviewerModel: string | undefined = typeof params.model === "string" && params.model ? params.model : undefined;
+            if (!reviewerModel) {
+              try {
+                const routerMod2: any = await import("../../src/modelRouter.ts");
+                reviewerModel = routerMod2.resolveModel({ projectDir });
+              } catch {}
+            }
+            try {
+              const goalLoopMod2: any = goalLoopMod;
+              if (goalLoopMod2.resolveReviewerModel) {
+                const fromHelper = goalLoopMod2.resolveReviewerModel({ projectDir });
+                if (!reviewerModel || !params.model) reviewerModel = reviewerModel ?? fromHelper;
+              }
+            } catch {}
+            const attemptRes: any = await workerMod.spawnIsolatedWorker({ projectDir, runId: goalRunId, featureId: "review", taskId: "reviewer", prompt: reviewPrompt, command: params.reviewerCommand, timeoutMs: params.timeoutMs, model: reviewerModel });
             let decision: string = params.reviewerDecision || "incomplete";
             let remainingWork: string[] = params.remainingWork || [];
             if (attemptRes.output) { try { const m = attemptRes.output.match(/\{[^]*"decision"[^]*\}/); if (m) { const p2 = JSON.parse(m[0]); if (p2.decision) decision = p2.decision; if (Array.isArray(p2.remainingWork)) remainingWork = p2.remainingWork; } } catch {} }

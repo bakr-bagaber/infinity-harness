@@ -371,7 +371,7 @@
       "id": "feature-007",
       "name": "Model Router with Difficulty Tiers + MASTER",
       "description": "Configurable model routing harness/model-router.json v1 with byDifficulty easy/moderate/difficult + master never assigned, one-step ladder",
-      "passes": false,
+      "passes": true,
       "producedByRole": null,
       "sprintId": "sprint-006",
       "goalId": "goal-001",
@@ -405,7 +405,7 @@
           "id": "task-015",
           "key": "worker-model",
           "description": "Extend worker and goalLoop to route per-task model isolation",
-          "status": "pending",
+          "status": "complete",
           "acceptanceCriteria": [
             "src/worker.ts SpawnOpts adds model:string; spawnIsolatedWorker spawns pi --model <resolved> and records model in fingerprint.json",
             "src/goalLoop.ts reviewerCommand resolves via modelRouter; enforcer harness_spawn_worker and pi_goal_task pass through model",
