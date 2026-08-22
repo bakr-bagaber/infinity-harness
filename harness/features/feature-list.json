@@ -4,39 +4,39 @@
   "goals": [
     {
       "id": "goal-001",
-      "title": "pi-harness v1.0 \u2014 superset visual harness",
+      "title": "pi-harness v1.0 — superset visual harness",
       "description": "Enforced, 5-level, compaction-safe, worker-isolated"
     }
   ],
   "sprints": [
     {
       "id": "sprint-001",
-      "name": "F1 \u2014 Visual 5-Level Widget + baseRevision",
+      "name": "F1 — Visual 5-Level Widget + baseRevision",
       "goalId": "goal-001"
     },
     {
       "id": "sprint-002",
-      "name": "F2 \u2014 Enforcer Auto-Loop Hardening",
+      "name": "F2 — Enforcer Auto-Loop Hardening",
       "goalId": "goal-001"
     },
     {
       "id": "sprint-003",
-      "name": "F3 \u2014 Worker Isolation per BUILD Task",
+      "name": "F3 — Worker Isolation per BUILD Task",
       "goalId": "goal-001"
     },
     {
       "id": "sprint-004",
-      "name": "F4 \u2014 Goal Loop with GOAL_SPEC.json + Reviewer Worker",
+      "name": "F4 — Goal Loop with GOAL_SPEC.json + Reviewer Worker",
       "goalId": "goal-001"
     },
     {
       "id": "sprint-005",
-      "name": "F5 \u2014 Remote Read-Only Web View \u2192 1.0.0",
+      "name": "F5 — Remote Read-Only Web View → 1.0.0",
       "goalId": "goal-001"
     },
     {
       "id": "sprint-006",
-      "name": "F6 \u2014 Resilient Self-Correction \u2192 1.1.0",
+      "name": "F6 — Resilient Self-Correction → 1.1.0",
       "goalId": "goal-001"
     }
   ],
@@ -44,13 +44,13 @@
     {
       "id": "feature-001",
       "name": "Visual 5-Level Widget + baseRevision",
-      "description": "Pi TUI widget showing Goal\u2192Feature\u2192Sprint\u2192Task\u2192Subtask with rolling window, deps, and compaction-safe atomic state",
+      "description": "Pi TUI widget showing Goal→Feature→Sprint→Task→Subtask with rolling window, deps, and compaction-safe atomic state",
       "passes": true,
       "producedByRole": "generator",
       "sprintId": "sprint-001",
       "goalId": "goal-001",
       "definitionOfDone": [
-        "Widget renders 5 levels with \u25cb\u25cf\u25d0\u26a0\u21b7, Progress, +3 more, \u2190 #1 deps, wraps long labels",
+        "Widget renders 5 levels with ○●◐⚠↷, Progress, +3 more, ← #1 deps, wraps long labels",
         "harness/feature-list.json has baseRevision, key, dependsOn, subtasks; stale baseRevision rejected",
         "State survives /reload, /tree, and compaction via hidden checkpoint"
       ],
@@ -86,8 +86,8 @@
           "status": "complete",
           "acceptanceCriteria": [
             "src/widget.ts implements getWidgetWindowBounds, wrapWidgetLines, statusIcon, rolling window",
-            "Widget shows Goal\u2192Feature\u2192Sprint\u2192Task\u2192Subtask with Progress and +3 more overflow",
-            "Long labels wrap not truncate, deps shown as \u2190 #1"
+            "Widget shows Goal→Feature→Sprint→Task→Subtask with Progress and +3 more overflow",
+            "Long labels wrap not truncate, deps shown as ← #1"
           ],
           "dependsOn": [
             "schema-5level"
@@ -271,7 +271,7 @@
     },
     {
       "id": "feature-005",
-      "name": "Remote Read-Only Web View \u2192 1.0.0",
+      "name": "Remote Read-Only Web View → 1.0.0",
       "description": "Read-only HTTP view of harness state with widget lines reuse src/widget.ts, no mutation, 127.0.0.1 ephemeral -> GET / HTML + GET /api/harness JSON + GET /api/health",
       "passes": true,
       "producedByRole": "generator",
@@ -341,7 +341,7 @@
           "id": "task-012",
           "key": "schema-rework",
           "description": "Extend schema and widget to support rework status and difficulty/modelHint",
-          "status": "pending",
+          "status": "complete",
           "acceptanceCriteria": [
             "harness/features/feature-list.schema.json allows task.status rework and optional difficulty easy|moderate|difficult + modelHint; validates fixtures",
             "src/widget.ts renders rework as amber and counts rework in Progress; src/harnessTaskList.ts accepts rework status",

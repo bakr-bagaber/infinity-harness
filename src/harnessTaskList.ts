@@ -9,7 +9,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "
 import { dirname, resolve, join } from "node:path";
 
 // ── Types ───────────────────────────────────────────────────────────────────
-export type TaskStatus = "pending" | "in_progress" | "complete" | "completed" | "blocked" | "done" | "closed" | "passed";
+export type TaskStatus = "pending" | "in_progress" | "complete" | "completed" | "blocked" | "rework" | "done" | "closed" | "passed";
 
 export interface InputSubtask {
   title: string;
@@ -95,12 +95,12 @@ function normalizeStatus(s: string): string {
   return v;
 }
 
-const VALID_STATUSES = new Set(["pending", "in_progress", "complete", "blocked"]);
+const VALID_STATUSES = new Set(["pending", "in_progress", "complete", "blocked", "rework"]);
 
 function validateStatus(status: string, path: string): string {
   const norm = normalizeStatus(status);
   if (!VALID_STATUSES.has(norm)) {
-    throw new ValidationError(`${path} is invalid: ${String(status)} (expected pending|in_progress|complete|blocked)`);
+    throw new ValidationError(`${path} is invalid: ${String(status)} (expected pending|in_progress|complete|blocked|rework)`);
   }
   return norm;
 }
