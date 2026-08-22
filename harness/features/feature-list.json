@@ -1,0 +1,317 @@
+{
+  "version": "0.1",
+  "baseRevision": 2,
+  "goals": [
+    {
+      "id": "goal-001",
+      "title": "pi-harness v1.0 — superset visual harness",
+      "description": "Enforced, 5-level, compaction-safe, worker-isolated"
+    }
+  ],
+  "sprints": [
+    {
+      "id": "sprint-001",
+      "name": "F1 — Visual 5-Level Widget + baseRevision",
+      "goalId": "goal-001"
+    },
+    {
+      "id": "sprint-002",
+      "name": "F2 — Enforcer Auto-Loop Hardening",
+      "goalId": "goal-001"
+    },
+    {
+      "id": "sprint-003",
+      "name": "F3 — Worker Isolation per BUILD Task",
+      "goalId": "goal-001"
+    },
+    {
+      "id": "sprint-004",
+      "name": "F4 — Goal Loop with GOAL_SPEC.json + Reviewer Worker",
+      "goalId": "goal-001"
+    },
+    {
+      "id": "sprint-005",
+      "name": "F5 — Remote Read-Only Web View → 1.0.0",
+      "goalId": "goal-001"
+    }
+  ],
+  "features": [
+    {
+      "id": "feature-001",
+      "name": "Visual 5-Level Widget + baseRevision",
+      "description": "Pi TUI widget showing Goal→Feature→Sprint→Task→Subtask with rolling window, deps, and compaction-safe atomic state",
+      "passes": true,
+      "producedByRole": "generator",
+      "sprintId": "sprint-001",
+      "goalId": "goal-001",
+      "definitionOfDone": [
+        "Widget renders 5 levels with ○●◐⚠↷, Progress, +3 more, ← #1 deps, wraps long labels",
+        "harness/feature-list.json has baseRevision, key, dependsOn, subtasks; stale baseRevision rejected",
+        "State survives /reload, /tree, and compaction via hidden checkpoint"
+      ],
+      "tasks": [
+        {
+          "id": "task-001",
+          "key": "schema-5level",
+          "description": "Extend feature-list schema to 5 levels with baseRevision",
+          "status": "complete",
+          "acceptanceCriteria": [
+            "harness/features/feature-list.json has baseRevision, tasks have key, dependsOn, subtasks",
+            "harness/features/feature-list.schema.json updated and validates",
+            "Existing pi-harness harness still loads"
+          ],
+          "dependsOn": [],
+          "subtasks": [
+            {
+              "id": "st-001",
+              "title": "Add baseRevision, goals, sprints to top-level",
+              "status": "complete"
+            },
+            {
+              "id": "st-002",
+              "title": "Add key, dependsOn, subtasks to tasks",
+              "status": "complete"
+            }
+          ]
+        },
+        {
+          "id": "task-002",
+          "key": "widget-render",
+          "description": "Port widget rendering (task-tracker + long-task) to src/widget.ts",
+          "status": "complete",
+          "acceptanceCriteria": [
+            "src/widget.ts implements getWidgetWindowBounds, wrapWidgetLines, statusIcon, rolling window",
+            "Widget shows Goal→Feature→Sprint→Task→Subtask with Progress and +3 more overflow",
+            "Long labels wrap not truncate, deps shown as ← #1"
+          ],
+          "dependsOn": [
+            "schema-5level"
+          ],
+          "subtasks": [
+            {
+              "id": "st-003",
+              "title": "Port getWidgetWindowBounds and wrapWidgetLines",
+              "status": "complete"
+            }
+          ]
+        },
+        {
+          "id": "task-003",
+          "key": "atomic-tool",
+          "description": "Implement harness_task_list tool with atomic baseRevision and hidden checkpoint",
+          "status": "complete",
+          "acceptanceCriteria": [
+            "harness_task_list({baseRevision, tasks}) does omission=deletion, baseRevision check, cycle/missing dep check",
+            "in_progress needs deps completed, all-or-nothing, hidden custom checkpoint on compaction",
+            "Widget survives /reload and /tree via toolResult.details replay"
+          ],
+          "dependsOn": [
+            "widget-render"
+          ],
+          "subtasks": []
+        }
+      ],
+      "coversCriteria": [
+        1,
+        2,
+        3
+      ]
+    },
+    {
+      "id": "feature-002",
+      "name": "Enforcer Auto-Loop Hardening",
+      "description": "Harden harness-enforcer to full auto-loop without stream race",
+      "passes": true,
+      "producedByRole": "generator",
+      "sprintId": "sprint-002",
+      "goalId": "goal-001",
+      "definitionOfDone": [
+        "session_start notify+widget without mid-stream sendUserMessage survives reload",
+        "context injects hidden checkpoint after compaction and reminder every 3 calls",
+        "tool_call blocks phase-skip and session_before_compact checkpoint stored, tsc clean"
+      ],
+      "tasks": [
+        {
+          "id": "task-004",
+          "key": "loop-hardening",
+          "description": "Harden enforcer loop: context checkpoint + reminder + tool guard",
+          "status": "complete",
+          "acceptanceCriteria": [
+            "session_start and context and session_before_compact work without sendUserMessage mid-stream",
+            "tool_call blocks harness/config.json phase-skip without PASS, tsc --noEmit passes",
+            "package.json version bumps to 0.3.0 and CHANGELOG updated"
+          ],
+          "dependsOn": [],
+          "subtasks": []
+        }
+      ],
+      "coversCriteria": [
+        1,
+        2,
+        3
+      ]
+    },
+    {
+      "id": "feature-003",
+      "name": "Worker Isolation per BUILD Task",
+      "description": "Isolated worker per BUILD task with tmp/pi-harness/<run-id>/ attempt history and proper-lockfile",
+      "passes": true,
+      "producedByRole": "generator",
+      "sprintId": "sprint-003",
+      "goalId": "goal-001",
+      "definitionOfDone": [
+        "src/worker.ts provides worker dirs and proper-lockfile isolation, tests pass and tsc clean",
+        "Worker attempt history tmp/pi-harness/<run-id>/... written by dev-harness run workers, baseRevision preserved",
+        "Version 0.4.0 with changelog, enforcer stays notify-only without stream race"
+      ],
+      "tasks": [
+        {
+          "id": "task-005",
+          "key": "worker-isolation",
+          "description": "Build src/worker.ts isolation with proper-lockfile, attempt history, fingerprint and unit tests",
+          "status": "complete",
+          "acceptanceCriteria": [
+            "src/worker.ts implements createWorkerRunDir, recordAttempt, fingerprint with proper-lockfile isolation",
+            "tests/worker.test.ts passes (dir creation, attempt N, lock, baseRevision, fingerprint)",
+            "npx tsc --noEmit passes with no sendUserMessage mid-stream regression"
+          ],
+          "dependsOn": [],
+          "subtasks": []
+        },
+        {
+          "id": "task-006",
+          "key": "worker-wire",
+          "description": "Wire worker to enforcer and bump to 0.4.0 with changelog",
+          "status": "complete",
+          "acceptanceCriteria": [
+            "enforcer exposes worker helper and dev-harness run workers write tmp/pi-harness/<run-id>/ isolated prompts",
+            "package.json version 0.4.0 and CHANGELOG ## [0.4.0] entry",
+            "enforcer still tsc clean, gateHistory not leaked to main session beyond expected"
+          ],
+          "dependsOn": [
+            "worker-isolation"
+          ],
+          "subtasks": []
+        }
+      ],
+      "coversCriteria": [
+        1,
+        2,
+        3
+      ]
+    },
+    {
+      "id": "feature-004",
+      "name": "Goal Loop with GOAL_SPEC.json + Reviewer Worker",
+      "description": "Pi-native goal loop porting pi-long-task GOAL_SPEC + loop + state to harness/goals/GOAL_SPEC.json and tmp/pi-harness/goals/<runId>/ with isolated reviewer worker",
+      "passes": true,
+      "producedByRole": "generator",
+      "sprintId": "sprint-004",
+      "goalId": "goal-001",
+      "definitionOfDone": [
+        "src/goalSpec.ts, src/goalLoop.ts, src/goalState.ts provide spec/loop/state helpers with proper-lockfile and tsc clean",
+        "GoalSpecification persists to harness/goals/GOAL_SPEC.json and loop writes tmp/pi-harness/goals/<runId>/GOAL_STATE.json + GOAL_TRACE.jsonl + iterations/<nn>/ with GOAL_SPEC.json mirrored and reviewer isolated to tmp/pi-harness/<runId>/review/attempt-1/",
+        "Version 0.5.0 with changelog, enforcer exposes pi_goal_task via spawnIsolatedWorker without stream race"
+      ],
+      "tasks": [
+        {
+          "id": "task-007",
+          "key": "goal-spec",
+          "description": "Port goal_spec.ts to src/goalSpec.ts with GOAL_SPEC_SCHEMA_VERSION and markdown",
+          "status": "complete",
+          "acceptanceCriteria": [
+            "src/goalSpec.ts implements createGoalSpecification, validateGoalSpecification, goalSpecificationToMarkdown with GOAL_SPEC_SCHEMA_VERSION=1 and traceability",
+            "tests/goalSpec.test.ts passes (create, validate rejects bad schema/traceability, markdown contains Spec markers)",
+            "npx tsc --noEmit passes with no sendUserMessage regression in enforcer"
+          ],
+          "dependsOn": [],
+          "subtasks": []
+        },
+        {
+          "id": "task-008",
+          "key": "goal-loop-state",
+          "description": "Port goal_loop.ts + goal_state.ts to src/goalLoop.ts + src/goalState.ts with GoalLoopState and GoalStateStore",
+          "status": "complete",
+          "acceptanceCriteria": [
+            "src/goalLoop.ts implements GoalLoopState, DEFAULT_GOAL_LOOP_LIMITS, createGoalLoopState, startGoalIteration, recordGeneratedTodo/WorkerResult/ReviewerResult, goalLoopStopReason, validateGoalLoopState with min/max/timeout guards",
+            "src/goalState.ts implements GoalStateStore with paths {goalRunDir,statePath,tracePath,resultPath,goalSpecPath,iterationsDir}, ensureRunDir, saveState/loadState, saveGoalSpecification, appendTrace, writeIterationSnapshot using atomic tmp+rename and proper-lockfile on harness/goals/GOAL_SPEC.json",
+            "tests/goalLoop.test.ts and tests/goalState.test.ts pass (iteration lifecycle, limits, cancellation, trace, persistence with proper-lockfile serialized concurrent writes)"
+          ],
+          "dependsOn": [
+            "goal-spec"
+          ],
+          "subtasks": []
+        },
+        {
+          "id": "task-009",
+          "key": "goal-wire",
+          "description": "Wire pi_goal_task to enforcer via spawnIsolatedWorker and bump to 0.5.0 with changelog",
+          "status": "complete",
+          "acceptanceCriteria": [
+            "extensions/harness-enforcer/index.ts exposes pi_goal_task (alias harness_goal_loop) hidden tool delegating to src/goalLoop.ts + src/goalState.ts + src/worker.ts spawnIsolatedWorker reviewer isolated to tmp/pi-harness/<runId>/review/attempt-N/",
+            "package.json version 0.5.0 and CHANGELOG.md ## [0.5.0] entry describing goal loop",
+            "enforcer still tsc clean, no sendUserMessage mid-stream, canonical harness/goals/GOAL_SPEC.json mirrored from tmp/pi-harness/goals/<runId>/"
+          ],
+          "dependsOn": [
+            "goal-loop-state"
+          ],
+          "subtasks": []
+        }
+      ],
+      "coversCriteria": [
+        1,
+        2,
+        3
+      ]
+    },
+    {
+      "id": "feature-005",
+      "name": "Remote Read-Only Web View → 1.0.0",
+      "description": "Read-only HTTP view of harness state with widget lines reuse src/widget.ts, no mutation, 127.0.0.1 ephemeral -> GET / HTML + GET /api/harness JSON + GET /api/health",
+      "passes": true,
+      "producedByRole": "generator",
+      "sprintId": "sprint-005",
+      "goalId": "goal-001",
+      "definitionOfDone": [
+        "src/remote.ts provides buildRemoteState and createRemoteServer read-only polling with node:http 127.0.0.1 ephemeral, tsc clean",
+        "Remote demonstrates GET /api/harness shape baseRevision/widgetLines/timestamp and GET / HTML contains pi-harness + Progress/Todos without mutating baseRevision or feature-list.json, concurrent serialized, close frees port, escaping",
+        "Version 1.0.0 with changelog, enforcer exposes pi_harness_remote alias harness_remote without stream race, singleton session_shutdown closes"
+      ],
+      "tasks": [
+        {
+          "id": "task-010",
+          "key": "remote-core",
+          "description": "Build src/remote.ts read-only server with buildRemoteState and createRemoteServer plus tests/remote.test.ts",
+          "status": "complete",
+          "acceptanceCriteria": [
+            "src/remote.ts exports buildRemoteState(projectDir) and createRemoteServer({port,host}) using node:http on 127.0.0.1 with GET / HTML inline polling, GET /api/harness JSON RemoteState {baseRevision,features,goals,widgetLines,timestamp}, GET /api/health",
+            "tests/remote.test.ts passes (start on 127.0.0.1:0, GET /api/harness shape baseRevision/widgetLines/timestamp, GET / HTML contains pi-harness + baseRevision, concurrent fetches x5 serialized, close frees port, HTML escaping)",
+            "npx tsc --noEmit passes with no sendUserMessage mid-stream regression"
+          ],
+          "dependsOn": [],
+          "subtasks": []
+        },
+        {
+          "id": "task-011",
+          "key": "remote-wire",
+          "description": "Wire pi_harness_remote to enforcer and bump to 1.0.0 with changelog",
+          "status": "complete",
+          "acceptanceCriteria": [
+            "extensions/harness-enforcer/index.ts exposes pi_harness_remote (alias harness_remote) hidden tool {action:start|stop|status,port?,host?} delegating to src/remote.ts singleton, session_shutdown closes",
+            "package.json version 1.0.0 and CHANGELOG.md ## [1.0.0] entry describing remote",
+            "enforcer still tsc clean, no sendUserMessage mid-stream, repeated start/stop does not corrupt baseRevision or feature-list.json"
+          ],
+          "dependsOn": [
+            "remote-core"
+          ],
+          "subtasks": []
+        }
+      ],
+      "coversCriteria": [
+        1,
+        2,
+        3
+      ]
+    }
+  ]
+}
