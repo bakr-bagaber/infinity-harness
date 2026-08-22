@@ -2,6 +2,13 @@
 
 All notable changes to `pi-harness` will be documented here.
 
+## [0.5.0] - 2026-08-22
+
+### Added
+- **F4 Goal Loop with GOAL_SPEC.json + Reviewer Worker:** ports pi-long-task goal loop to src/goalSpec.ts (GOAL_SPEC_SCHEMA_VERSION=1, createGoalSpecification/validateGoalSpecification/goalSpecificationToMarkdown), src/goalLoop.ts (GoalLoopState, DEFAULT_GOAL_LOOP_LIMITS {1,50,48h,3h,30min}, createGoalLoopState/normalizeGoalLoopLimits/startGoalIteration/recordGeneratedTodo/WorkerResult/ReviewerResult/goalLoopStopReason/validateGoalLoopState), src/goalState.ts (GoalStateStore with paths {goalRunDir,statePath,tracePath,resultPath,goalSpecPath,iterationsDir} -> tmp/pi-harness/goals/<runId>/, canonical harness/goals/GOAL_SPEC.json via proper-lockfile atomic tmp+rename, saveState/loadState/saveGoalSpecificationWithCanonical/appendTrace/writeIterationSnapshot); tests/goalSpec.test.ts, tests/goalLoop.test.ts, tests/goalState.test.ts covering create/validate/markdown, limits lifecycle reviewer terminal cancellation timeout max_iterations, persistence concurrent writers and baseRevision isolation.
+- extensions/harness-enforcer now exposes pi_goal_task (alias harness_goal_loop) hidden tool delegating to src/goalLoop.ts+src/goalState.ts+src/worker.ts spawnIsolatedWorker; reviewer isolated to tmp/pi-harness/<runId>/review/attempt-N/{prompt.md,output.log,fingerprint.json} with decision parsing {decision: complete|incomplete|blocked|failed, remainingWork[]}; enforcer stays notify+appendEntry only, no sendUserMessage mid-stream regression.
+- Canonical harness/goals/GOAL_SPEC.json mirrors run-scoped tmp/pi-harness/goals/<runId>/GOAL_SPEC.json with proper-lockfile so concurrent goal loops do not corrupt it; harness/goals/ created, tmp/ already ignored.
+
 ## [0.4.0] - 2026-08-21
 
 ### Added

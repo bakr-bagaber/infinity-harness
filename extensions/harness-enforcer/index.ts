@@ -996,6 +996,93 @@ export default function (pi: ExtensionAPI) {
     try { console.warn("pi-harness: harness_spawn_worker not registered:", e?.message); } catch {}
   }
 
+  // ── pi_goal_task F4: Goal Loop with GOAL_SPEC.json + Reviewer Worker ──
+  {
+    const registerGoalTool = (toolName: string) => {
+      pi.registerTool({
+        name: toolName,
+        label: toolName === "pi_goal_task" ? "Pi Goal Task" : "Harness Goal Loop",
+        description: "Goal loop with GOAL_SPEC.json + reviewer worker. Run is tmp/pi-harness/goals/<runId>/ (GOAL_STATE.json+trace+iterations) mirrored to harness/goals/GOAL_SPEC.json via proper-lockfile. Reviewer isolated via spawnIsolatedWorker to tmp/pi-harness/<runId>/review/attempt-N/. Delegates to src/goalLoop.ts+src/goalState.ts+src/worker.ts.",
+        parameters: { type: "object", properties: { goal: { type: "string", description: "Original goal" }, goalRunId: { type: "string" }, action: { type: "string", enum: ["create","start_iteration","record_todo","record_worker","review"] }, todoPath: { type: "string" }, todoSummary: { type: "string" }, workerStatus: { type: "string", enum: ["done","partial","blocked","failed"] }, workerSummary: { type: "string" }, reviewerPrompt: { type: "string" }, reviewerCommand: { type: "string" }, reviewerDecision: { type: "string", enum: ["complete","incomplete","blocked","failed"] }, remainingWork: { type: "array", items: { type: "string" } }, cwd: { type: "string" }, timeoutMs: { type: "integer" }, spec: { type: "object" } }, required: ["goal"] } as any,
+        async execute(toolCallId: string, params: any, _signal: any, _onUpdate: any, ctx: any) {
+          const dir = getProjectDir(ctx as any);
+          const projectDir = params.cwd || dir;
+          try {
+            const goalLoopMod: any = await import("../../src/goalLoop.ts");
+            const goalStateMod: any = await import("../../src/goalState.ts");
+            const workerMod: any = await import("../../src/worker.ts");
+            const goalSpecMod: any = await import("../../src/goalSpec.ts");
+            const { randomUUID } = await import("node:crypto");
+            const goalRunId: string = params.goalRunId || randomUUID();
+            const store = new goalStateMod.GoalStateStore({ cwd: projectDir, goalRunId });
+            await store.ensureRunDir();
+            const action: string = params.action || "review";
+            let state: any = null;
+            try { state = await store.loadState(); } catch {}
+            if (!state) {
+              state = goalLoopMod.createGoalLoopState({ goal: params.goal, goalRunId, cwd: projectDir });
+              await store.saveState(state);
+              await store.appendNewTraceEvents(0, state);
+              let spec: any = params.spec;
+              if (!spec) spec = goalSpecMod.createGoalSpecification({ goalRunId, originalGoal: params.goal });
+              await store.saveGoalSpecificationWithCanonical(spec, projectDir);
+            } else if (params.spec) {
+              await store.saveGoalSpecificationWithCanonical(params.spec, projectDir);
+            }
+            const prevTraceLen = state.trace.length;
+            if (action === "create") return { content: [{ type: "text", text: `Goal loop ${goalRunId} created at ${store.paths.goalRunDir}` }], details: { goalRunId, goalRunDir: store.paths.goalRunDir, statePath: store.paths.statePath, canonical: goalStateMod.canonicalGoalSpecPath(projectDir), state } } as any;
+            if (action === "start_iteration") {
+              const before = state.trace.length;
+              state = goalLoopMod.startGoalIteration(state, { now: new Date() });
+              await store.saveState(state);
+              await store.appendNewTraceEvents(before, state);
+              await store.writeIterationSnapshot(state.iterations[state.iterations.length - 1]);
+              return { content: [{ type: "text", text: `Iteration ${state.currentIteration} started for ${goalRunId}` }], details: { goalRunId, iteration: state.currentIteration, state } } as any;
+            }
+            if (action === "record_todo") {
+              const it = state.currentIteration || state.iterations.length;
+              state = goalLoopMod.recordGeneratedTodo(state, it, { todoPath: params.todoPath || store.paths.goalSpecPath, summary: params.todoSummary }, { now: new Date() });
+              await store.saveState(state);
+              await store.appendNewTraceEvents(prevTraceLen, state);
+              return { content: [{ type: "text", text: `Todo recorded iteration ${it}` }], details: { goalRunId, iteration: it, state } } as any;
+            }
+            if (action === "record_worker") {
+              const it = state.currentIteration || state.iterations.length;
+              state = goalLoopMod.recordWorkerResult(state, it, { status: params.workerStatus || "done", summary: params.workerSummary || "worker done", endedAt: new Date().toISOString() } as any, { now: new Date() });
+              await store.saveState(state);
+              await store.appendNewTraceEvents(prevTraceLen, state);
+              return { content: [{ type: "text", text: `Worker recorded iteration ${it}` }], details: { goalRunId, iteration: it, state } } as any;
+            }
+            if (state.currentIteration === 0 || state.iterations.length === 0) state = goalLoopMod.startGoalIteration(state, { now: new Date() });
+            const curIt = state.currentIteration || state.iterations.length;
+            let iter = state.iterations.find((x: any) => x.iteration === curIt);
+            if (!iter) { state = goalLoopMod.startGoalIteration(state, { now: new Date() }); iter = state.iterations[state.iterations.length - 1]; }
+            if (iter.status === "pending") {
+              state = goalLoopMod.recordGeneratedTodo(state, iter.iteration, { todoPath: params.todoPath || store.paths.goalSpecPath, summary: params.todoSummary || "todo" }, { now: new Date() });
+              iter = state.iterations.find((x: any) => x.iteration === curIt)!;
+            }
+            if (iter.status === "todo_generated") state = goalLoopMod.recordWorkerResult(state, iter.iteration, { status: "done", summary: "worker done", endedAt: new Date().toISOString() } as any, { now: new Date() });
+            const reviewPrompt: string = params.reviewerPrompt || `Review goal "${params.goal}" run ${goalRunId} iteration ${curIt}. Decide complete|incomplete|blocked|failed. JSON {"decision":"complete"}`;
+            const attemptRes: any = await workerMod.spawnIsolatedWorker({ projectDir, runId: goalRunId, featureId: "review", taskId: "reviewer", prompt: reviewPrompt, command: params.reviewerCommand, timeoutMs: params.timeoutMs });
+            let decision: string = params.reviewerDecision || "incomplete";
+            let remainingWork: string[] = params.remainingWork || [];
+            if (attemptRes.output) { try { const m = attemptRes.output.match(/\{[^]*"decision"[^]*\}/); if (m) { const p2 = JSON.parse(m[0]); if (p2.decision) decision = p2.decision; if (Array.isArray(p2.remainingWork)) remainingWork = p2.remainingWork; } } catch {} }
+            const reviewerResult: any = { decision, complete: decision === "complete", summary: decision === "complete" ? "reviewer marked complete" : `reviewer marked ${decision}`, rationale: decision === "complete" ? "all done" : "needs iteration", remainingWork, reviewedAt: new Date().toISOString() };
+            const beforeReview = state.trace.length;
+            const targetIter = state.iterations.find((x: any) => x.iteration === curIt)?.iteration ?? curIt;
+            try { state = goalLoopMod.recordReviewerResult(state, targetIter, reviewerResult, { now: new Date() }); } catch (e: any) { return { content: [{ type: "text", text: `Review already recorded ${targetIter}: ${e.message}` }], details: { goalRunId, iteration: targetIter, state, attemptDir: attemptRes.attemptDir }, isError: true } as any; }
+            await store.saveState(state);
+            await store.appendNewTraceEvents(beforeReview, state);
+            try { const s2 = await store.tryLoadGoalSpecification(); if (s2) await store.saveCanonicalGoalSpecification(s2, projectDir); } catch {}
+            await store.writeIterationSnapshot(state.iterations.find((x: any) => x.iteration === targetIter) || state.iterations[state.iterations.length - 1]);
+            return { content: [{ type: "text", text: `Reviewer isolated ${attemptRes.attemptDir} -> decision ${decision} status ${state.status}` }], details: { goalRunId, iteration: targetIter, decision, remainingWork, status: state.status, phase: state.phase, attemptDir: attemptRes.attemptDir, attempt: attemptRes.attempt, fingerprint: attemptRes.fingerprint, statePath: store.paths.statePath, tracePath: store.paths.tracePath, canonical: goalStateMod.canonicalGoalSpecPath(projectDir), state } } as any;
+          } catch (e: any) { return { content: [{ type: "text", text: `pi_goal_task error: ${e.message}` }], details: { error: e.message }, isError: true } as any; }
+        },
+      });
+    };
+    try { registerGoalTool("pi_goal_task"); registerGoalTool("harness_goal_loop"); } catch (e: any) { try { console.warn("pi-harness: pi_goal_task not registered:", e?.message); } catch {} }
+  }
+
   // ── turn_end: auto-validate + auto-phase-next (original) ─────────────────
   pi.on("turn_end", async (_event: any, ctx: any) => {
     const dir = getProjectDir(ctx);

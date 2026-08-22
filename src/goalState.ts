@@ -1,0 +1,338 @@
+import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import path from "node:path";
+
+import {
+  GOAL_LOOP_STATE_SCHEMA_VERSION,
+  type GoalIterationState,
+  type GoalLoopState,
+  type GoalLoopTraceEvent,
+  validateGoalLoopState,
+} from "./goalLoop.ts";
+import { type GoalSpecification, validateGoalSpecification } from "./goalSpec.ts";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+declare const require: any;
+
+export const GOAL_STATE_FILE = "GOAL_STATE.json";
+export const GOAL_TRACE_FILE = "GOAL_TRACE.jsonl";
+export const GOAL_RESULT_FILE = "GOAL_RESULT.md";
+export const GOAL_SPEC_FILE = "GOAL_SPEC.json";
+
+export const CANONICAL_GOAL_SPEC_DIR = "harness/goals";
+export const CANONICAL_GOAL_SPEC_FILE = "GOAL_SPEC.json";
+
+export function canonicalGoalSpecPath(projectDir = process.cwd()): string {
+  return resolve(projectDir, CANONICAL_GOAL_SPEC_DIR, CANONICAL_GOAL_SPEC_FILE);
+}
+
+function writeCanonicalWithLockSync(projectDir: string, content: string): void {
+  const target = canonicalGoalSpecPath(projectDir);
+  // try proper-lockfile sync-ish via dynamic import fallback to plain write
+  try {
+    mkdirSync(dirname(target), { recursive: true });
+    // use proper-lockfile if available (async variant would need async; use sync file write with lock attempt)
+    // For sync canonical we rely on atomic tmp+rename and ignore lock if unavailable — async wrapper below handles lock
+    const tmp = `${target}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    writeFileSync(tmp, content, "utf8");
+    // rename via node:fs renameSync equivalent (import already has rename async, but we use writeFileSync+rename via fs)
+    const { renameSync } = require("node:fs");
+    renameSync(tmp, target);
+  } catch {
+    // fallback simple write
+    try {
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, content, "utf8");
+    } catch {}
+  }
+}
+
+
+export interface GoalStateStoreOptions {
+  cwd?: string;
+  goalRunId: string;
+  goalRunDir?: string;
+}
+
+export interface GoalStateStorePaths {
+  goalRunId: string;
+  goalRunDir: string;
+  statePath: string;
+  tracePath: string;
+  resultPath: string;
+  goalSpecPath: string;
+  iterationsDir: string;
+}
+
+export class GoalStateStore {
+  readonly paths: GoalStateStorePaths;
+
+  constructor(options: GoalStateStoreOptions) {
+    const cwd = path.resolve(options.cwd ?? process.cwd());
+    const goalRunDir = options.goalRunDir ?? path.join(cwd, "tmp", "pi-harness", "goals", options.goalRunId);
+    this.paths = {
+      goalRunId: options.goalRunId,
+      goalRunDir,
+      statePath: path.join(goalRunDir, GOAL_STATE_FILE),
+      tracePath: path.join(goalRunDir, GOAL_TRACE_FILE),
+      resultPath: path.join(goalRunDir, GOAL_RESULT_FILE),
+      goalSpecPath: path.join(goalRunDir, GOAL_SPEC_FILE),
+      iterationsDir: path.join(goalRunDir, "iterations"),
+    };
+  }
+
+  async ensureRunDir(): Promise<void> {
+    await mkdir(this.paths.iterationsDir, { recursive: true });
+  }
+
+  async saveState(state: GoalLoopState): Promise<void> {
+    validateGoalLoopState(state);
+    await this.ensureRunDir();
+    await atomicWriteFile(this.paths.statePath, `${JSON.stringify(state, null, 2)}\n`);
+  }
+
+  async loadState(): Promise<GoalLoopState> {
+    const text = await readFile(this.paths.statePath, "utf8");
+    return validateGoalLoopState(JSON.parse(text));
+  }
+
+  async saveGoalSpecification(spec: GoalSpecification): Promise<void> {
+    validateGoalSpecification(spec);
+    await this.ensureRunDir();
+    await atomicWriteFile(this.paths.goalSpecPath, `${JSON.stringify(spec, null, 2)}\n`);
+  }
+
+  /** Persist spec to runDir AND canonical harness/goals/GOAL_SPEC.json with proper-lockfile. */
+  async saveGoalSpecificationWithCanonical(
+    spec: GoalSpecification,
+    projectDir = process.cwd(),
+  ): Promise<void> {
+    await this.saveGoalSpecification(spec);
+    await this.saveCanonicalGoalSpecification(spec, projectDir);
+  }
+
+  async saveCanonicalGoalSpecification(spec: GoalSpecification, projectDir = process.cwd()): Promise<void> {
+    validateGoalSpecification(spec);
+    const content = `${JSON.stringify(spec, null, 2)}\n`;
+    const target = canonicalGoalSpecPath(projectDir);
+    // Use proper-lockfile async lock when available to serialize concurrent writers
+    let release: (() => Promise<void>) | null = null;
+    try {
+      const mod: any = await import("proper-lockfile");
+      const lockfile = mod.default ?? mod;
+      mkdirSync(dirname(target), { recursive: true });
+      if (!existsSync(target)) writeFileSync(target, "", "utf8");
+      release = (await (lockfile as any).lock(target, {
+        retries: { retries: 8, minTimeout: 20, maxTimeout: 80 },
+        stale: 10000,
+        realpath: false,
+      })) as any;
+    } catch {
+      release = null;
+    }
+    try {
+      const tmp = `${target}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      await writeFile(tmp, content, "utf8");
+      await rename(tmp, target);
+    } finally {
+      if (release) {
+        try { await (release as any)(); } catch {}
+      }
+    }
+  }
+
+  async loadCanonicalGoalSpecification(projectDir = process.cwd()): Promise<GoalSpecification> {
+    const text = await readFile(canonicalGoalSpecPath(projectDir), "utf8");
+    return validateGoalSpecification(JSON.parse(text));
+  }
+
+  async tryLoadCanonicalGoalSpecification(projectDir = process.cwd()): Promise<GoalSpecification | undefined> {
+    try {
+      return await this.loadCanonicalGoalSpecification(projectDir);
+    } catch (error) {
+      if (isNodeErrnoException(error) && (error as any).code === "ENOENT") return undefined;
+      throw error;
+    }
+  }
+
+  async loadGoalSpecification(): Promise<GoalSpecification> {
+    const text = await readFile(this.paths.goalSpecPath, "utf8");
+    return validateGoalSpecification(JSON.parse(text));
+  }
+
+  async tryLoadGoalSpecification(): Promise<GoalSpecification | undefined> {
+    try {
+      return await this.loadGoalSpecification();
+    } catch (error) {
+      if (isNodeErrnoException(error) && error.code === "ENOENT") {
+        return undefined;
+      }
+      throw error;
+    }
+  }
+
+  async appendTrace(event: GoalLoopTraceEvent): Promise<void> {
+    await this.ensureRunDir();
+    await appendFile(this.paths.tracePath, `${JSON.stringify(event)}\n`, "utf8");
+  }
+
+  async appendNewTraceEvents(previousTraceLength: number, state: GoalLoopState): Promise<void> {
+    const events = state.trace.slice(Math.max(0, previousTraceLength));
+    for (const event of events) {
+      await this.appendTrace(event);
+    }
+  }
+
+  async initializeResultIfMissing(state: GoalLoopState): Promise<boolean> {
+    try {
+      await readFile(this.paths.resultPath, "utf8");
+      return false;
+    } catch (error) {
+      if (!isNodeErrnoException(error) || error.code !== "ENOENT") {
+        throw error;
+      }
+    }
+    await this.initializeResult(state);
+    return true;
+  }
+
+  async durableTraceLength(): Promise<number> {
+    try {
+      const text = await readFile(this.paths.tracePath, "utf8");
+      return text.split(/\r?\n/).filter((line) => line.trim()).length;
+    } catch (error) {
+      if (isNodeErrnoException(error) && error.code === "ENOENT") {
+        return 0;
+      }
+      throw error;
+    }
+  }
+
+  async initializeResult(state: GoalLoopState): Promise<void> {
+    validateGoalLoopState(state);
+    await this.ensureRunDir();
+    const lines = [
+      "# Pi Goal Task Result",
+      "",
+      `Run: ${state.goalRunId}`,
+      `Goal: ${state.goal}`,
+      `Started: ${state.startedAt}`,
+      `State: ${this.paths.statePath}`,
+      `Trace: ${this.paths.tracePath}`,
+      `Goal specification: ${this.paths.goalSpecPath}`,
+      "",
+      "## Safety limits",
+      "",
+      `- Minimum iterations before completion: ${state.limits.minIterations}`,
+      `- Max iterations: ${state.limits.maxIterations}`,
+      `- Run timeout: ${state.limits.timeoutMs}ms`,
+      `- Iteration timeout: ${state.limits.iterationTimeoutMs}ms`,
+      `- Reviewer timeout: ${state.limits.reviewerTimeoutMs}ms`,
+      "",
+    ];
+    await writeFile(this.paths.resultPath, `${lines.join("\n")}\n`, "utf8");
+  }
+
+  async appendIterationResult(iteration: GoalIterationState): Promise<void> {
+    await this.ensureRunDir();
+    const lines = [
+      "",
+      `## Iteration ${iteration.iteration}`,
+      "",
+      `Status: ${iteration.status}`,
+      `Started: ${iteration.startedAt}`,
+      `Updated: ${iteration.updatedAt}`,
+    ];
+    if (iteration.deadlineAt) {
+      lines.push(`Deadline: ${iteration.deadlineAt}`);
+    }
+    if (iteration.generatedTodo) {
+      lines.push("", "### Generated TODO", "", `Path: ${iteration.generatedTodo.todoPath}`);
+      if (iteration.generatedTodo.summary) {
+        lines.push(`Summary: ${iteration.generatedTodo.summary}`);
+      }
+    }
+    if (iteration.workerResult) {
+      lines.push(
+        "",
+        "### Worker result",
+        "",
+        `Status: ${iteration.workerResult.status}`,
+        `Summary: ${iteration.workerResult.summary}`,
+      );
+      if (iteration.workerResult.resultPath) {
+        lines.push(`Result path: ${iteration.workerResult.resultPath}`);
+      }
+      if (iteration.workerResult.todoPath) {
+        lines.push(`TODO path: ${iteration.workerResult.todoPath}`);
+      }
+      if (iteration.workerResult.taskResultPath) {
+        lines.push(`Task result path: ${iteration.workerResult.taskResultPath}`);
+      }
+      if (iteration.workerResult.workerProgressPath) {
+        lines.push(`Worker progress log: ${iteration.workerResult.workerProgressPath}`);
+      }
+      if (iteration.workerResult.error) {
+        lines.push(`Error: ${iteration.workerResult.error}`);
+      }
+    }
+    if (iteration.reviewerResult) {
+      lines.push(
+        "",
+        "### Reviewer result",
+        "",
+        `Decision: ${iteration.reviewerResult.decision}`,
+        `Complete: ${iteration.reviewerResult.complete ? "yes" : "no"}`,
+        `Summary: ${iteration.reviewerResult.summary}`,
+        `Rationale: ${iteration.reviewerResult.rationale}`,
+      );
+      if (iteration.reviewerResult.remainingWork.length > 0) {
+        lines.push("", "Remaining work:", ...iteration.reviewerResult.remainingWork.map((item) => `- ${item}`));
+      }
+    }
+    if (iteration.completion) {
+      lines.push(
+        "",
+        "### Completion",
+        "",
+        `Status: ${iteration.completion.status}`,
+        `Reason: ${iteration.completion.reason}`,
+      );
+    }
+    await appendFile(this.paths.resultPath, `${lines.join("\n")}\n`, "utf8");
+  }
+
+  async writeIterationSnapshot(iteration: GoalIterationState): Promise<string> {
+    const iterationDir = this.iterationDir(iteration.iteration);
+    await mkdir(iterationDir, { recursive: true });
+    const snapshotPath = path.join(iterationDir, "ITERATION_STATE.json");
+    await atomicWriteFile(snapshotPath, `${JSON.stringify(iteration, null, 2)}\n`);
+    return snapshotPath;
+  }
+
+  iterationDir(iteration: number): string {
+    return path.join(this.paths.iterationsDir, String(iteration).padStart(2, "0"));
+  }
+}
+
+export function goalStatePaths(options: GoalStateStoreOptions): GoalStateStorePaths {
+  return new GoalStateStore(options).paths;
+}
+
+async function atomicWriteFile(filePath: string, content: string): Promise<void> {
+  await mkdir(path.dirname(filePath), { recursive: true });
+  const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  await writeFile(tmpPath, content, "utf8");
+  await rename(tmpPath, filePath);
+}
+
+export function isGoalLoopState(value: unknown): value is GoalLoopState {
+  try {
+    return validateGoalLoopState(value).schemaVersion === GOAL_LOOP_STATE_SCHEMA_VERSION;
+  } catch {
+    return false;
+  }
+}
+
+function isNodeErrnoException(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
+}

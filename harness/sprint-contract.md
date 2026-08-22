@@ -1,24 +1,24 @@
-# Sprint Contract — pi-harness F3 v0.4.0
+# Sprint Contract — pi-harness F4 v0.5.0
 
 ## Scope (Generator proposes)
 
 **I will build:**
-F3 Worker Isolation per BUILD Task (v0.4.0). Add `src/worker.ts` with `createWorkerRunDir`, `spawnIsolatedWorker`, `recordAttempt`, attempt history to `tmp/pi-harness/<run-id>/<featureId>/<taskId>/attempt-N/{prompt.md, output.log, fingerprint.json}` using `proper-lockfile` on `harness/features/feature-list.json` and `harness/config.json`. Wire `extensions/harness-enforcer/index.ts` to stay notify-only but expose worker helper so `dev-harness run` isolates per task via `tmp/pi-harness/<run-id>/` and `gateHistory` does not leak. Keep `dev-harness run` driver loop (git `run/<id>` branch + `--thinking high` + no `-e`) and 5-level widget intact. Port dummy harness loop concept from `/tmp/pi-harness-dummy` (fresh `pi --print` per task with isolated prompt).
+F4 Goal Loop with GOAL_SPEC.json + Reviewer Worker (v0.5.0). Port `pi-long-task` `goal_spec.ts` → `src/goalSpec.ts` (`GOAL_SPEC_SCHEMA_VERSION=1`, `GoalSpecification`, `createGoalSpecification`, `validateGoalSpecification`, `goalSpecificationToMarkdown`), `goal_loop.ts` → `src/goalLoop.ts` (`GoalLoopState`, `DEFAULT_GOAL_LOOP_LIMITS {1,50,48h,3h,30min}`, `createGoalLoopState`, `startGoalIteration`, `recordGeneratedTodo`, `recordWorkerResult`, `recordReviewerResult`, `goalLoopStopReason`, `validateGoalLoopState`), `goal_state.ts` → `src/goalState.ts` (`GoalStateStore` with `paths {goalRunDir,statePath,tracePath,resultPath,goalSpecPath,iterationsDir}`, `ensureRunDir`, `saveState/loadState`, `saveGoalSpecification`, `appendTrace`, `writeIterationSnapshot`, atomic `tmp+rename` + `proper-lockfile` on `harness/goals/GOAL_SPEC.json`). Persist canonical `harness/goals/GOAL_SPEC.json` and run-scoped `tmp/pi-harness/goals/<runId>/GOAL_STATE.json` + `GOAL_TRACE.jsonl` + `iterations/<nn>/` + reviewer worker `tmp/pi-harness/<runId>/review/attempt-1/{prompt.md,output.log,fingerprint.json}` via `src/worker.ts` `spawnIsolatedWorker` `{promptfile}`. Wire `extensions/harness-enforcer/index.ts` hidden tool `pi_goal_task` (alias `harness_goal_loop`) delegating to `src/goalLoop.ts` + `src/goalState.ts` + isolated reviewer worker. Keep 5-level widget and `harness_task_list` atomic intact; reuse `define→ship` phases.
 
 **I will NOT build:**
-Goal loop `GOAL_SPEC.json` + reviewer worker (F4), Remote web view `/pi-harness:remote` QR push (F5), new harness phases or gates beyond `define`→`ship`, `pi --loop` daemon beyond per-task isolation.
+Remote web view `/pi-harness:remote` QR push (F5), new harness phases or gates beyond `define→ship`, `pi --loop` daemon beyond per-task/review isolation.
 
 ## Verification Criteria (Generator proposes)
 
-1. `npx tsc --noEmit` passes; `src/worker.ts` exists with worker-dir and isolation helpers and unit tests `tests/worker.test.ts` passing (create dir, record attempt, lock, baseRevision preserved, fingerprint).
-2. Fresh `pi --print` per BUILD task demonstrated: worker run writes `tmp/pi-harness/<run-id>/<feature>/<task>/attempt-1/` with `prompt.md`, `output.log`, `fingerprint.json`, survives `proper-lockfile` concurrent check, and does not corrupt `harness/features/feature-list.json` `baseRevision`.
-3. `package.json` version is `0.4.0` and `CHANGELOG.md` has `## [0.4.0]` entry describing worker isolation; enforcer still `tsc` clean with no `sendUserMessage` mid-stream regression.
+1. `npx tsc --noEmit` passes; `src/goalSpec.ts`, `src/goalLoop.ts`, `src/goalState.ts` exist with spec/loop/state helpers, unit tests `tests/goalSpec.test.ts`, `tests/goalLoop.test.ts`, `tests/goalState.test.ts` passing (create spec, validate, markdown, create loop, start iteration, recordGeneratedTodo/worker/reviewer, limits min/max, timeout, cancellation, trace, persistence).
+2. Goal persistence demonstrated: `GoalSpecification` → canonical `harness/goals/GOAL_SPEC.json` via `GoalStateStore` with `proper-lockfile` on that path (concurrent writers serialized, `feature-list.json` not corrupted); loop run writes `tmp/pi-harness/goals/<runId>/GOAL_STATE.json` + `GOAL_TRACE.jsonl` + `iterations/<nn>/` with `GOAL_SPEC.json` mirrored and reviewer worker isolated to `tmp/pi-harness/<runId>/review/attempt-1/{prompt.md,output.log,fingerprint.json}`.
+3. `package.json` version is `0.5.0` and `CHANGELOG.md` has `## [0.5.0]` entry describing goal loop; enforcer still `tsc` clean with no `sendUserMessage` mid-stream regression and exposes `pi_goal_task` tool delegating via `spawnIsolatedWorker`.
 
 ## Evaluator Review (Evaluator fills in)
 
-- [x] Scope is clear and bounded: yes — only `src/worker.ts` + `tmp/pi-harness/<run-id>/` + lock, no goal/remote.
-- [x] Verification criteria are sufficient: yes — `tsc` + worker unit tests + isolated dir artifact + version/changelog.
-- [x] Exclusions are reasonable: yes — F4/F5 deferred.
+- [x] Scope is clear and bounded: yes — only three goal modules + `harness/goals/GOAL_SPEC.json` + `tmp/pi-harness/goals/` + enforcer `pi_goal_task`, no remote/phases.
+- [x] Verification criteria are sufficient: yes — `tsc` + 3 unit test suites + isolated persistence artifact + version/changelog + enforcer tool.
+- [x] Exclusions are reasonable: yes — F5 remote deferred.
 
 Agreed.
 

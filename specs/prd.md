@@ -29,7 +29,7 @@ Ship `pi-harness` `1.0.0` (from current `5.1.0` dev-harness base) as a Pi packag
 
 Harden `extensions/harness-enforcer/index.ts` from F1 notify-only to full auto-loop without stream race: `session_start` lightweight `notify`+`widget`, `context` hidden checkpoint and periodic reminder every 3 calls, `session_before_compact` `appendEntry` checkpoint, `tool_call` guard blocks phase-skip without `PASS`, `turn_end` notify-only (no `sendUserMessage` mid-stream), `high` not `xhigh` for `dev-harness run` workers. Untacked harness runtime state to fix BUILD `git-clean`.
 
-## F3 — Worker Isolation per BUILD Task (this sprint, v0.4.0)
+## F3 — Worker Isolation per BUILD Task (shipped v0.4.0)
 
 **Problem:** `BUILD` tasks currently run in the main agent context. A faulty task can pollute the main session (dirty `harness/config.json` `gateHistory`, leaked env, half-written `feature-list.json`), and parallel `dev-harness run` workers can corrupt shared state. The dummy harness at `/tmp/pi-harness-dummy` already proved a fresh `pi --print` (`pi -p`) per task with attempt history works.
 
@@ -40,21 +40,32 @@ Harden `extensions/harness-enforcer/index.ts` from F1 notify-only to full auto-l
 * Integration point 2 — `harness/config.json` `run.agents.pi.cmd` remains `pi --provider opencode --model opencode/muse-spark-1.2-contributor-free --thinking high -p "$(cat {promptfile})"` but the run driver now writes per-task `tmp/pi-harness/<run-id>/` directories and passes `{promptfile}` isolated per attempt. Existing `dev-harness run` loop in `dev-harness/cli/lib` already isolates via `git checkout -b run/<id>`; F3 adds filesystem isolation and attempt history.
 * No new harness phase; reuse `define → plan → build → verify → review → ship`. No `GOAL_SPEC.json` yet (F4), no remote yet (F5).
 
-## Verification Criteria (F3)
+## F4 — Goal Loop with GOAL_SPEC.json + Reviewer Worker (this sprint, v0.5.0)
 
-1. `npx tsc --noEmit` passes; `src/worker.ts` exists with worker-dir + isolation helpers, unit tests in `tests/worker.test.ts` passing (create dir, record attempt, lock, baseRevision preserved, fingerprint).
-2. Fresh `pi --print` per BUILD task is demonstrated: a worker run writes `tmp/pi-harness/<run-id>/<feature>/<task>/attempt-1/` with `prompt.md` + `output.log` + `fingerprint.json`, does not dirty main `harness/config.json` `gateHistory` beyond expected, and survives `proper-lockfile` concurrent test.
-3. `package.json` version bumps to `0.4.0` and `CHANGELOG.md` has `## [0.4.0]` entry describing worker isolation; `pi-harness` enforcer still loads (`extensions/harness-enforcer/index.ts` `tsc` clean, no `sendUserMessage` mid-stream regression).
+**Problem:** `pi-harness` can enforce a 5-level `Goal→Feature→Sprint→Task→Subtask` hierarchy and isolate each `BUILD` task in `tmp/pi-harness/<run-id>/`, but it has no way to turn a high-level natural-language goal (e.g. "ship a checklist app") into a persisted specification and then iterate on it until a reviewer agrees it is done. The reference implementation `pi-long-task` solves this with a goal loop: `GOAL_SPEC.json` + per-iteration `GENERATED_TODO.md` + isolated worker sessions + reviewer pass + `GOAL_STATE.json` trace, running `minIterations..maxIterations` with timeouts. `pi-harness` needs a Pi-native port of that loop re-pointed at its own 5-level SSOT (`harness/goals/GOAL_SPEC.json` ↔ `harness/features/feature-list.json` `goals/sprints/features`) and reusing `src/worker.ts` isolation so the main Pi session is never polluted.
+
+**Solution:** Goal loop as three pure modules plus enforcer wiring — reuse, do not rewrite.
+
+* **New module `src/goalSpec.ts` (pure, tested):** port `pi-long-task/src/goal_spec.ts` (MIT) re-pointed to `pi-harness`. Exports `GOAL_SPEC_SCHEMA_VERSION=1`, `GoalSpecification` (schemaVersion, goalRunId, originalGoal, summary, traceability, scopedRequirements `{inScope,outOfScope,assumptions,openQuestions}`, milestones, acceptanceCriteria, verificationGates, design/product constraints, definitionOfDone), `createGoalSpecification({goalRunId,originalGoal,...})`, `validateGoalSpecification`, `goalSpecificationToMarkdown`. Validates every field, enforces traceability matches, supports `discovery_consolidation` source for future discovery role outputs.
+* **New module `src/goalLoop.ts` (pure, tested):** port `pi-long-task/src/goal_loop.ts` (MIT). Exports `GoalLoopState` (`schemaVersion, goalRunId, goalRunDir, goal, status {running|done|partial|blocked|failed|cancelled}, phase {goal_received|todo_generated|todo_executed|reviewed|complete|cancelled|failed}, limits {minIterations,maxIterations,timeoutMs,iterationTimeoutMs,reviewerTimeoutMs}, iterations[], trace[]`), `DEFAULT_GOAL_LOOP_LIMITS {1,50,48h,3h,30min}`, `createGoalLoopState`, `normalizeGoalLoopLimits`, `startGoalIteration`, `recordGeneratedTodo`, `recordWorkerResult`, `recordReviewerResult`, `failGoalLoop`, `cancelGoalLoop`, `goalLoopStopReason`, `validateGoalLoopState`. Guards `min≤max`, deadline expiry, cancellation, and enforces minimum iterations before `complete`.
+* **New module `src/goalState.ts` (pure, tested):** port `pi-long-task/src/goal_state.ts` (MIT) re-pointed to `tmp/pi-harness/goals/<runId>/` and canonical `harness/goals/GOAL_SPEC.json`. Exports `GoalStateStore` with `paths {goalRunDir,statePath,tracePath,resultPath,goalSpecPath,iterationsDir}`, `ensureRunDir`, `saveState/loadState`, `saveGoalSpecification/loadGoalSpecification/tryLoad`, `appendTrace`, `initializeResult`, `writeIterationSnapshot`, `iterationDir`. Atomic `writeFile tmp+rename`, `proper-lockfile` on `harness/goals/GOAL_SPEC.json` when writing canonical spec so concurrent goal loops do not corrupt it.
+* **Integration point — `extensions/harness-enforcer/index.ts`:** stays `notify` + `appendEntry` only (no `sendUserMessage` mid-stream). Adds hidden tool `pi_goal_task` (alias `harness_goal_loop`) delegating to `src/goalLoop.ts` + `src/goalState.ts` + `src/worker.ts` `spawnIsolatedWorker` for the reviewer pass: a reviewer worker runs in `tmp/pi-harness/<runId>/review/attempt-N/{prompt.md,output.log,fingerprint.json}` with `{promptfile}` isolation, parsed into `{decision: complete|incomplete|blocked|failed, remainingWork[]}`. Main session persists `GOAL_STATE.json` + `GOAL_TRACE.jsonl` under `tmp/pi-harness/goals/<runId>/` and mirrors latest `GOAL_SPEC.json` to `harness/goals/GOAL_SPEC.json` (created, `harness/goals/` dir added, `.gitignore` already ignores `tmp/`).
+* **Integration point — persistence:** canonical `harness/goals/GOAL_SPEC.json` keeps the 5-level `Goal` alive across `/reload` + compaction; run-scoped `tmp/pi-harness/goals/<runId>/` keeps per-iteration TODOs/results isolated like `pi-long-task` `tmp/pi-goal-task/<runId>/`. Worker attempt history still uses `tmp/pi-harness/<run-id>/<feature>/<task>/attempt-N/` from F3. No new harness phase; reuse `define→plan→build→verify→review→ship`. No `/remote` yet (F5).
+
+## Verification Criteria (F4)
+
+1. `npx tsc --noEmit` passes; `src/goalSpec.ts`, `src/goalLoop.ts`, `src/goalState.ts` exist with spec/loop/state helpers, unit tests `tests/goalSpec.test.ts`, `tests/goalLoop.test.ts`, `tests/goalState.test.ts` passing (create spec, validate, markdown, create loop, start iteration, recordGeneratedTodo/worker/reviewer, limits min/max, timeout, cancellation, trace, persistence).
+2. Goal persistence demonstrated: creating a `GoalSpecification` persists canonical `harness/goals/GOAL_SPEC.json` via `GoalStateStore` with `proper-lockfile` on that path (concurrent writers serialized, `baseRevision`/`feature-list.json` not corrupted); a loop run writes `tmp/pi-harness/goals/<runId>/GOAL_STATE.json` + `GOAL_TRACE.jsonl` + `iterations/<nn>/` with `GOAL_SPEC.json` mirrored and reviewer worker isolated to `tmp/pi-harness/<runId>/review/attempt-1/{prompt.md,output.log,fingerprint.json}`.
+3. `package.json` version bumps to `0.5.0` and `CHANGELOG.md` has `## [0.5.0]` entry describing goal loop; `pi-harness` enforcer still loads (`extensions/harness-enforcer/index.ts` `tsc` clean, no `sendUserMessage` mid-stream regression) and exposes `pi_goal_task` tool delegating to `src/goalLoop.ts` via isolated reviewer worker.
 
 ## Non-Goals (this sprint)
 
-* No `GOAL_SPEC.json` generation yet (F4)
 * No `/remote` yet (F5)
-* No `pi --loop` daemon beyond per-task isolation (continuous loop stays in enforcer `turn_end`+`session_before_compact`)
+* No `pi --loop` daemon beyond per-task/review isolation (continuous loop stays in enforcer `turn_end`+`session_before_compact`)
 
-## Out of Scope for F1/F2 (done)
+## Out of Scope for F1-F3 (done)
 
-Worker isolation per BUILD task (F3), Goal loop `GOAL_SPEC.json` (F4), Remote web view (F5) — those are F3-F5.
+Worker isolation per BUILD task (F3) done, Goal loop `GOAL_SPEC.json` (F4) now, Remote web view (F5) — F5 is next.
 
 ## Verification Criteria (F1 — historical)
 
