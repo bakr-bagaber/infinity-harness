@@ -58,14 +58,42 @@ Harden `extensions/harness-enforcer/index.ts` from F1 notify-only to full auto-l
 2. Goal persistence demonstrated: creating a `GoalSpecification` persists canonical `harness/goals/GOAL_SPEC.json` via `GoalStateStore` with `proper-lockfile` on that path (concurrent writers serialized, `baseRevision`/`feature-list.json` not corrupted); a loop run writes `tmp/pi-harness/goals/<runId>/GOAL_STATE.json` + `GOAL_TRACE.jsonl` + `iterations/<nn>/` with `GOAL_SPEC.json` mirrored and reviewer worker isolated to `tmp/pi-harness/<runId>/review/attempt-1/{prompt.md,output.log,fingerprint.json}`.
 3. `package.json` version bumps to `0.5.0` and `CHANGELOG.md` has `## [0.5.0]` entry describing goal loop; `pi-harness` enforcer still loads (`extensions/harness-enforcer/index.ts` `tsc` clean, no `sendUserMessage` mid-stream regression) and exposes `pi_goal_task` tool delegating to `src/goalLoop.ts` via isolated reviewer worker.
 
+## F5 — Remote Read-Only Web View → 1.0.0 (this sprint, v1.0.0)
+
+**Problem:** `pi-harness` enforces the loop and shows a 5-level widget inside the Pi TUI, but offers no way to inspect harness state from another device without SSH. The harness artifacts already exist (`harness/features/feature-list.json` + `harness/goals/GOAL_SPEC.json` + `tmp/pi-harness/...` + widget lines), yet they are only visible inside the spawning terminal. A minimal read-only remote view would let a phone or second laptop poll progress safely while `tmp/` remains ignored and `baseRevision` stays untouched.
+
+**Solution:** Read-only HTTP view that reuses existing SSOT and rendering.
+
+* **New module `src/remote.ts` (pure, tested):** exports `RemoteOptions {projectDir, host?, port?}`, `RemoteState {baseRevision, features, goals, widgetLines, timestamp}`, `buildRemoteState(projectDir)` (reads `harness/features/feature-list.json` via `harnessStateFromFile` + optional `harness/goals/GOAL_SPEC.json` + computes `widgetLines` via `src/widget.ts` `buildWidgetLinesFromState`/`buildWidgetLines` with `WIDGET_LIMIT=8`), and `createRemoteServer(opts)` → `{url, host, port, close():Promise<void>}` using `node:http` `createServer` on `127.0.0.1` (ephemeral `0` → real port). Routes: `GET /` → static HTML (inline, no external deps, shows `Harness — baseRevision N`, `Progress: x/y`, widget `<pre>` block, feature/task table, `fetch(/api/harness)` polling every 2s, escaped HTML), `GET /api/harness` → JSON `RemoteState`, `GET /api/health` → `{ok:true, version}`. Reads are `readFileSync` with try/catch; no writes, no mutation, so `baseRevision` never increments via remote and no lock needed for reads (writes already use `proper-lockfile`+`tmp+rename`). `close()` stops server cleanly; URL printed via `ctx.ui.notify` when invoked through enforcer.
+
+* **Tests `tests/remote.test.ts`:** start on `127.0.0.1:0`, fetch `/api/harness` → valid JSON shape `baseRevision` matches fixture, `features` array, `widgetLines` array length, `timestamp` ISO string; fetch `/` → HTML contains `pi-harness` + `baseRevision`; concurrent `fetch` x5 serialized; `close()` frees port (second `close` no throw); HTML escapes `subject` with `&<>"` safely.
+
+* **Integration — `extensions/harness-enforcer/index.ts`:** stays `notify`+`appendEntry` only (no `sendUserMessage`). Adds hidden tool `pi_harness_remote` (alias `harness_remote`) with `{action: start|stop|status, port?, host?}` delegating to `src/remote.ts` `createRemoteServer`/`buildRemoteState`. `start` launches server and returns `{url, port}`; `stop` closes; `status` builds state without starting server. Server instance kept in module singleton, stopped on `session_shutdown` to avoid leaked handles. No QR dependency; URL is `http://127.0.0.1:<port>` and operator can expose via SSH tunnel if needed.
+
+* No new harness phase; reuse `define→plan→build→verify→review→ship`. No auth beyond `127.0.0.1` bind (read-only, no secrets in payload — `GOAL_SPEC.json` already in repo). No mutation endpoints.
+
+## Verification Criteria (F5)
+
+1. `npx tsc --noEmit` passes; `src/remote.ts` exists with `createRemoteServer`/`buildRemoteState`, unit tests `tests/remote.test.ts` passing (start ephemeral, GET /api/harness shape with baseRevision/widgetLines/timestamp, GET / serves HTML containing harness title, concurrent fetches serialized, close frees port, HTML escaping).
+2. Remote read-only demonstrated: start on `127.0.0.1:0`, `fetch(/api/harness)` reflects `harness/features/feature-list.json` `baseRevision` + computed widget lines without mutating the file, `fetch(/)` returns HTML with `Progress`/`Todos` and widget lines, `close()` stops server; repeated start/stop does not corrupt `baseRevision` or `feature-list.json`.
+3. `package.json` version bumps to `1.0.0` and `CHANGELOG.md` has `## [1.0.0]` entry describing remote; enforcer still `tsc` clean with no `sendUserMessage` mid-stream regression and exposes `pi_harness_remote` (alias `harness_remote`) tool.
+
+## Resolved Questions (F5 self-grill, autopilot)
+
+- **Who uses this the moment it works?** Developer running `pi` with `pi-harness` watches long `GOAL_SPEC` loop from phone: `pi_harness_remote {action:"start",port:0}` → `http://127.0.0.1:PORT` → tail via SSH tunnel or `adb reverse`; no SSH into project dir needed.
+- **What is OUT of scope this sprint?** Mutation via remote (no POST), auth/token beyond localhost bind, QR code generation/dependency, push notifications, new harness phases/gates, `pi --loop` daemon beyond per-task isolation, external hosting.
+- **Smallest slice proving the concept?** `GET /api/harness` returning `baseRevision`+`widgetLines` from real `feature-list.json` and `GET /` rendering those lines + polling fetch — without it, there is no remote view at all.
+- **What breaks first under bad input/no network/concurrent use?** Missing `feature-list.json` → `buildRemoteState` returns empty state with `baseRevision:0` not throw; invalid `port` → `EADDRINUSE` surfaced as `ValidationError`; concurrent `fetch` xN → Node http handles naturally, no shared mutable state beyond singleton server; reads use `readFileSync` so concurrent writes via `proper-lockfile` remain safe (stale read returns previous revision, never corrupt).
+- **How will we KNOW it works?** `npx tsc --noEmit`, `npx tsx tests/remote.test.ts` (ephemeral port + fetch checks), manual `curl http://127.0.0.1:$PORT/api/harness | jq .baseRevision` before/after a `harness_task_list` call shows unchanged until tool mutates.
+- **What existing code already does part of this?** `src/widget.ts` `buildWidgetLines`+`getWidgetWindowBounds` (rendering), `src/harnessTaskList.ts` `harnessStateFromFile` (file → state), `src/worker.ts`/`src/goalState.ts` `proper-lockfile` pattern (only needed on writes, reads stay lock-free), `extensions/harness-enforcer` hidden-tool pattern (`harness_spawn_worker`, `pi_goal_task`).
+
 ## Non-Goals (this sprint)
 
-* No `/remote` yet (F5)
-* No `pi --loop` daemon beyond per-task/review isolation (continuous loop stays in enforcer `turn_end`+`session_before_compact`)
+* No remote mutation (no POST /api/harness), no QR/external tunnel helper (operator uses SSH), no auth/token beyond localhost, no new harness phases/gates, no continuous daemon beyond enforcer `turn_end`+`session_before_compact` already shipped.
 
-## Out of Scope for F1-F3 (done)
+## Out of Scope for F1-F4 (done)
 
-Worker isolation per BUILD task (F3) done, Goal loop `GOAL_SPEC.json` (F4) now, Remote web view (F5) — F5 is next.
+Worker isolation per BUILD task (F3) done, Goal loop `GOAL_SPEC.json` (F4) done — F5 is the final 1.0.0 slice (remote read-only view).
 
 ## Verification Criteria (F1 — historical)
 
