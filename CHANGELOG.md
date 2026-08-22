@@ -2,6 +2,12 @@
 
 All notable changes to `pi-harness` will be documented here.
 
+## [1.1.0] - 2026-08-22
+
+### Added
+- **F6 Resilient Self-Correction -> 1.1.0:** configurable, optional, fresh-read each call, exposed read-only via pi_harness_remote GET /api/harness without baseRevision bump or lock. Adds harness/model-router.json v1 {version:1,enabled,default,byDifficulty:{easy,moderate,difficult},master,byPhase,byRole,byTask,consultation:{enabled,maxPerTask:1,oneStepOnly,requireExhaustion},budgets:{maxReworksPerRun:3,maxReplansPerRun:2,maxReviewBounces:2}} with src/modelRouter.ts resolveModel and consultNext ladder easy->moderate->difficult->MASTER (MASTER never assigned, one-step). Adds harness/rework.json via src/rework.ts startRework forward BFS on dependsOn DAG limited maxImpactDepth 3, flips origin+impacted to rework ↷ amber via src/widget.ts/src/harnessTaskList.ts, bumps baseRevision, proper-lockfile+tmp+rename; loadRework/clearRework. Adds src/replan.ts amendPlan validates DAG no cycles/missing deps, guards maxReplansPerRun 2, proper-lockfile+tmp+rename. Adds src/unstuck.ts chooseUnstuckStrategy retry->reframe->consult->rework->replan->master with budgets, fingerprint dedup via hashLite, fileDelta+bounceRequiresDelta, hysteresis, oneStepOnly, requireExhaustion, MASTER once per run. Adds src/review.ts shouldBounceToRework fresh-read harness/config.json review allowBackward maxBounces 2 bounceRequiresDelta - REVIEW fail bounces to rework only when fileDelta true else ignored, guarded maxBounces. Extends src/worker.ts SpawnWorkerOpts.model fingerprint extra model plus pi --model injection and src/goalLoop.ts resolveReviewerModel; enforcer harness_spawn_worker and pi_goal_task pass model through. Extends src/remote.ts RemoteState router+rework read-only via readFileSync and schema status rework plus difficulty modelHint. No new harness phase, no endless loops (budgets+fingerprint+requiresDelta+hysteresis), npx tsc --noEmit clean, enforcer notify+appendEntry only no sendUserMessage, harness_task_list still baseRevision optimistic with rework status.
+- harness/config.json adds rework:{enabled,maxReworks:3,maxImpactDepth:3}, replan:{allowMidBuildAmend,maxReplans:2}, unstuck:{strategies,hysteresisMs}, review:{allowBackward,maxBounces:2,bounceRequiresDelta} read fresh per call. tests/modelRouter.test.ts, tests/rework.test.ts, tests/replan.test.ts, tests/unstuck.test.ts, tests/review.test.ts passing.
+
 ## [1.0.0] - 2026-08-22
 
 ### Added

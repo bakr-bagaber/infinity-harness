@@ -1157,8 +1157,8 @@ export default function (pi: ExtensionAPI) {
             if (action === "status") {
               const state = remoteMod.buildRemoteState(dir);
               return {
-                content: [{ type: "text", text: "Remote status baseRevision " + state.baseRevision + " widget " + state.widgetLines.length + " lines" + (remoteServer ? " server " + remoteServer.url : " no server") }],
-                details: { baseRevision: state.baseRevision, features: state.features, goals: state.goals, widgetLines: state.widgetLines, timestamp: state.timestamp, serverRunning: !!remoteServer, url: remoteServer?.url ?? null, host: remoteServer?.host ?? null, port: remoteServer?.port ?? null },
+                content: [{ type: "text", text: "Remote status baseRevision " + state.baseRevision + " widget " + state.widgetLines.length + " lines" + (state.router ? " router " + (state.router.enabled ? "enabled" : "disabled") : "") + (state.rework?.active ? " rework->" + state.rework.returnTask : "") + (remoteServer ? " server " + remoteServer.url : " no server") }],
+                details: { baseRevision: state.baseRevision, features: state.features, goals: state.goals, widgetLines: state.widgetLines, timestamp: state.timestamp, router: (state as any).router ?? null, rework: (state as any).rework ?? null, serverRunning: !!remoteServer, url: remoteServer?.url ?? null, host: remoteServer?.host ?? null, port: remoteServer?.port ?? null },
               } as any;
             }
             if (action === "stop") {

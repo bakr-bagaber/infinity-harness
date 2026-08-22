@@ -422,7 +422,7 @@
       "id": "feature-008",
       "name": "Consultation + Review Bounce + Unstuck Matrix + Remote Exposure",
       "description": "One-step consultation bounded by maxPerTask, review bounce with bounceRequiresDelta+fileDelta, unstuck orchestrator, remote read-only",
-      "passes": false,
+      "passes": true,
       "producedByRole": null,
       "sprintId": "sprint-006",
       "goalId": "goal-001",
@@ -456,7 +456,7 @@
           "id": "task-017",
           "key": "bounce-remote-1.1.0",
           "description": "Wire review bounce + remote exposure and bump to 1.1.0",
-          "status": "pending",
+          "status": "complete",
           "acceptanceCriteria": [
             "harness/config.json adds rework/replan/unstuck/review {allowBackward,maxBounces:2,bounceRequiresDelta} read fresh per call; review fail bounces to rework only when fileDelta true else ignored",
             "src/remote.ts buildRemoteState includes router and rework fields read-only via readFileSync without lock or baseRevision bump; enforcer pi_harness_remote singleton exposes them",
