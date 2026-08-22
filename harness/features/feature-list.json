@@ -390,7 +390,7 @@
           "id": "task-014",
           "key": "router-core",
           "description": "Build harness/model-router.json v1 and src/modelRouter.ts with priority chain and ladder",
-          "status": "pending",
+          "status": "complete",
           "acceptanceCriteria": [
             "harness/model-router.json {version:1,enabled,default,byDifficulty,master,byPhase,byRole,byTask,consultation,budgets} exists with defaults",
             "src/modelRouter.ts resolveModel prioritizes task.modelHint > byDifficulty[difficulty] > byFeature > bySprint > byPhase > byRole > default; consultNext steps one rung; MASTER never assigned",
