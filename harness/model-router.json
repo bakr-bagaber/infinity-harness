@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "enabled": false,
+  "default": "opencode/muse-spark-1.2-contributor-free",
+  "byDifficulty": {
+    "easy": "opencode/muse-spark-1.2-contributor-free",
+    "moderate": "opencode/muse-spark-1.2-contributor-free",
+    "difficult": "meta/muse-spark-1.2-contributor"
+  },
+  "master": "meta/muse-spark-1.2-contributor",
+  "byPhase": {},
+  "byRole": {},
+  "byFeature": {},
+  "bySprint": {},
+  "byTask": {},
+  "consultation": {
+    "enabled": true,
+    "maxPerTask": 1,
+    "oneStepOnly": true,
+    "requireExhaustion": true
+  },
+  "budgets": {
+    "maxReworksPerRun": 3,
+    "maxReplansPerRun": 2,
+    "maxReviewBounces": 2
+  }
+}

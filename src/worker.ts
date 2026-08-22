@@ -247,6 +247,8 @@ export type SpawnWorkerOpts = {
   command?: string;
   timeoutMs?: number;
   attempt?: number;
+  /** Optional model override recorded in fingerprint.extra.model and injected into pi --model if applicable */
+  model?: string;
 };
 
 export type SpawnWorkerResult = {
@@ -277,6 +279,7 @@ export async function spawnIsolatedWorker(opts: SpawnWorkerOpts): Promise<SpawnW
     taskId: opts.taskId,
     attempt,
     baseRevision,
+    ...(opts.model ? { extra: { model: opts.model } } : {}),
   });
 
   // Always write prompt.md upfront so attempt history exists even if spawn fails
@@ -289,7 +292,12 @@ export async function spawnIsolatedWorker(opts: SpawnWorkerOpts): Promise<SpawnW
     return { attemptDir, attempt, fingerprint, exitCode: 0, output: "" };
   }
 
-  const cmd = renderCommand(opts.command, promptPath);
+  let cmd = renderCommand(opts.command, promptPath);
+  if (opts.model && cmd.includes(" pi ") && !cmd.includes("--model")) {
+    cmd = cmd.replace(" pi ", ` pi --model ${opts.model} `);
+  } else if (opts.model && cmd.startsWith("pi ") && !cmd.includes("--model")) {
+    cmd = cmd.replace("pi ", `pi --model ${opts.model} `);
+  }
   const timeoutMs = opts.timeoutMs ?? 5 * 60 * 1000;
 
   const result = await new Promise<{ exitCode: number | null; output: string; timedOut?: boolean }>((resolveP) => {

@@ -24,6 +24,7 @@ export function statusIcon(status: string): string {
     case "blocked":
       return "⚠";
     case "waiting":
+    case "rework":
       return "↷";
     // checkbox variants from spec
     case "☐":
@@ -39,6 +40,7 @@ export function statusIcon(status: string): string {
       if (status === "in_progress") return "◐";
       if (status === "complete") return "●";
       if (status === "blocked") return "⚠";
+      if (status === "rework" || status === "waiting") return "↷";
       return "○";
   }
 }
@@ -136,8 +138,9 @@ export function getWidgetWindowBounds(
   const total = items.length;
   if (total <= limit) return { start: 0, end: total };
 
-  // Find active index: first in_progress, else first pending/blocked, else tail
+  // Find active index: first in_progress, else rework, else pending/blocked, else tail
   let activeIdx = items.findIndex((it) => it.status === "in_progress");
+  if (activeIdx === -1) activeIdx = items.findIndex((it) => it.status === "rework");
   if (activeIdx === -1) activeIdx = items.findIndex((it) => it.status === "pending");
   if (activeIdx === -1) activeIdx = items.findIndex((it) => it.status === "blocked");
   if (activeIdx === -1) {

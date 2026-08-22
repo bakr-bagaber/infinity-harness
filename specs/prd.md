@@ -8,6 +8,10 @@
 
 Ship `pi-harness` `1.0.0` (from current `5.1.0` dev-harness base) as a Pi package that is **visually trackable at 5 levels**, **atomically revisioned**, and **compaction-safe** — the foundation for F2-F5 (workers, goal loop, remote).
 
+## v1.1.0 Goal — Resilient Self-Correction
+
+Ship pi-harness 1.1.0 as the resilient superset: every failure mode becomes bounded self-correction (rework upstream, amend plan, escalate model) with difficulty tiers easy|moderate|difficult + MASTER-only consultation, all configurable/optional and exposed read-only via remote, without infinite loops.
+
 ## F1 — Visual 5-Level Widget + baseRevision (shipped v0.2.0)
 
 **Levels:** `Goal → Feature → Sprint → Task → Subtask` (from 4 to 5).
@@ -78,6 +82,44 @@ Harden `extensions/harness-enforcer/index.ts` from F1 notify-only to full auto-l
 2. Remote read-only demonstrated: start on `127.0.0.1:0`, `fetch(/api/harness)` reflects `harness/features/feature-list.json` `baseRevision` + computed widget lines without mutating the file, `fetch(/)` returns HTML with `Progress`/`Todos` and widget lines, `close()` stops server; repeated start/stop does not corrupt `baseRevision` or `feature-list.json`.
 3. `package.json` version bumps to `1.0.0` and `CHANGELOG.md` has `## [1.0.0]` entry describing remote; enforcer still `tsc` clean with no `sendUserMessage` mid-stream regression and exposes `pi_harness_remote` (alias `harness_remote`) tool.
 
+## F6 — Resilient Self-Correction → 1.1.0 (this sprint, v1.1.0)
+
+**Problem:** pi-harness enforces forward-only define->plan->build->verify->review->ship with isValidTransition from+1 and validate marking task.status complete. No backward edge, bad plan cannot be amended mid-BUILD, and run.agents.pi.cmd is single global model. Long runs stall after STALL_NO_CHANGE and go blocked, never self-correct.
+
+**Solution:** Add configurable, optional self-correction off by default, read fresh each call, bounded by budgets.
+
+* Config (all fresh-read, optional, exposed read-only via pi_harness_remote GET /api/harness):
+  * harness/model-router.json v1 {version:1, enabled, default, byDifficulty:{easy,moderate,difficult}, master, byPhase, byRole, byTask, consultation:{enabled,maxPerTask:1,oneStepOnly,requireExhaustion}, budgets:{maxReworksPerRun:3,maxReplansPerRun:2,maxReviewBounces:2}}
+  * harness/rework.json {runId, returnFeature, returnTask, impacted, reason, timestamp, remainingBudgets} proper-lockfile+tmp+rename.
+  * harness/config.json {rework:{enabled,maxReworks:3,maxImpactDepth:3}, replan:{allowMidBuildAmend,maxReplans:2}, unstuck:{strategies:["retry","reframe","consult","rework","replan","master"]}, review:{allowBackward,maxBounces:2,bounceRequiresDelta}}
+
+* Difficulty + modelHint (PLAN assigns, BUILD respects):
+  * harness/features/feature-list.schema.json adds task.difficulty easy|moderate|difficult and task.modelHint string; inherits feature.difficulty -> sprint -> phase -> role -> default. Priority task.modelHint > byDifficulty[difficulty] > byFeature > bySprint > byPhase > byRole > default. Ladder easy->moderate->difficult->MASTER; MASTER never assigned, only consulted one-step after exhaustion.
+
+* New module src/modelRouter.ts: resolveModel({task,feature,sprint,phase,role}) -> string and consultNext(currentDifficultyOrModel,budget) -> next model or null. Reads model-router.json fresh; enabled:false returns default.
+
+* New module src/rework.ts: startRework({featureId,taskId,reason}) computes impact via forward BFS on dependsOn DAG limited by maxImpactDepth, flips status of origin+impacted to rework (↷ in widget), bumps baseRevision, writes harness/rework.json with returnFeature/returnTask/impacted[] for return-to-origin.
+
+* New module src/replan.ts: amendPlan({reason,addFeatures,addTasks,addSprints}) validates new DAG (no cycles, missing deps), bumps baseRevision, guards maxReplansPerRun.
+
+* New module src/unstuck.ts: chooseUnstuckStrategy({featureId,taskId,attemptFingerprints,fileDelta}) tries strategies in harness/config.json unstuck.strategies order retry->reframe->consult->rework->replan->master, respecting budgets, fingerprint dedup, fileDelta guard.
+
+* Extended src/worker.ts: SpawnOpts adds model string; spawnIsolatedWorker shells per-task model via pi --model <resolved>. GoalLoop reviewerCommand uses resolveModel; enforcer harness_spawn_worker/pi_goal_task plumbing passes model through.
+
+* Widget + remote: src/widget.ts treats status rework as ↷ amber; src/remote.ts buildRemoteState includes router:{enabled,budgets,byDifficulty} and rework:{active,impactedCount} read-only.
+
+* Guards: maxReworksPerRun 3, maxReplansPerRun 2, maxReviewBounces 2, maxPerTask 1, oneStepOnly, requireExhaustion, bounceRequiresDelta, fingerprint dedup, fileDelta, hysteresis.
+
+* No new harness phase; reuse define->ship. When review.allowBackward REVIEW fail may bounce tasks to rework bounded by maxBounces.
+
+## Verification Criteria (F6)
+
+1. npx tsc --noEmit passes; src/modelRouter.ts, src/rework.ts, src/replan.ts, src/unstuck.ts exist with resolveModel/consultNext/startRework/amendPlan/chooseUnstuckStrategy, unit tests tests/modelRouter.test.ts, tests/rework.test.ts, tests/replan.test.ts, tests/unstuck.test.ts passing.
+2. Self-correction demonstrated: model-router.json disabled->enabled toggled fresh each call, startRework flips rework ↷ and writes harness/rework.json with returnFeature/returnTask/impacted[] + baseRevision bump, amendPlan adds task mid-BUILD with guard maxReplans 2, review bounce only when fileDelta true.
+3. package.json 1.1.0 and CHANGELOG ## [1.1.0]; enforcer tsc clean no sendUserMessage, exposes routing via pi_harness_remote and harness_spawn_worker model passthrough.
+
+## Resolved Questions (F6 self-grill, autopilot)
+
 ## Resolved Questions (F5 self-grill, autopilot)
 
 - **Who uses this the moment it works?** Developer running `pi` with `pi-harness` watches long `GOAL_SPEC` loop from phone: `pi_harness_remote {action:"start",port:0}` → `http://127.0.0.1:PORT` → tail via SSH tunnel or `adb reverse`; no SSH into project dir needed.
@@ -87,9 +129,9 @@ Harden `extensions/harness-enforcer/index.ts` from F1 notify-only to full auto-l
 - **How will we KNOW it works?** `npx tsc --noEmit`, `npx tsx tests/remote.test.ts` (ephemeral port + fetch checks), manual `curl http://127.0.0.1:$PORT/api/harness | jq .baseRevision` before/after a `harness_task_list` call shows unchanged until tool mutates.
 - **What existing code already does part of this?** `src/widget.ts` `buildWidgetLines`+`getWidgetWindowBounds` (rendering), `src/harnessTaskList.ts` `harnessStateFromFile` (file → state), `src/worker.ts`/`src/goalState.ts` `proper-lockfile` pattern (only needed on writes, reads stay lock-free), `extensions/harness-enforcer` hidden-tool pattern (`harness_spawn_worker`, `pi_goal_task`).
 
-## Non-Goals (this sprint)
+## Non-Goals (this sprint, F6)
 
-* No remote mutation (no POST /api/harness), no QR/external tunnel helper (operator uses SSH), no auth/token beyond localhost, no new harness phases/gates, no continuous daemon beyond enforcer `turn_end`+`session_before_compact` already shipped.
+* No autonomous endless loops (budgets cap rework/replan/bounce/consult); no multi-step chain consult (one-step only); no MASTER direct assignment; no new harness phases/gates; no remote mutation beyond read-only GETs; no QR beyond SSH. `turn_end`+`session_before_compact` already shipped.
 
 ## Out of Scope for F1-F4 (done)
 

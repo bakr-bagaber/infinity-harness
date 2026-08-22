@@ -25,6 +25,8 @@ export interface RemoteState {
   goals: any[];
   widgetLines: string[];
   timestamp: string;
+  router: { enabled: boolean; budgets: any; byDifficulty: any; default?: string } | null;
+  rework: { active: boolean; impactedCount: number; returnFeature?: string; returnTask?: string; impacted?: string[] } | null;
 }
 
 export interface RemoteServer {
@@ -96,12 +98,63 @@ export function buildRemoteState(projectDir?: string): RemoteState {
     widgetLines = [`Progress: 0/0`];
   }
 
+  let router: RemoteState["router"] = null;
+  try {
+    const routerPath = resolve(dir, "harness", "model-router.json");
+    if (existsSync(routerPath)) {
+      const rraw = readFileSync(routerPath, "utf-8");
+      const rcfg = JSON.parse(rraw);
+      router = {
+        enabled: !!rcfg.enabled,
+        budgets: rcfg.budgets ?? null,
+        byDifficulty: rcfg.byDifficulty ?? null,
+        default: typeof rcfg.default === "string" ? rcfg.default : undefined,
+      };
+    }
+  } catch {}
+
+  let rework: RemoteState["rework"] = null;
+  try {
+    const reworkPath = resolve(dir, "harness", "rework.json");
+    if (existsSync(reworkPath)) {
+      const rraw2 = readFileSync(reworkPath, "utf-8");
+      const rj: any = JSON.parse(rraw2);
+      let rec: any = null;
+      if (Array.isArray((rj as any).history) && (rj as any).history.length) {
+        const h = (rj as any).history;
+        rec = h[h.length - 1];
+      } else if (rraw2.trim().startsWith("[")) {
+        const arr = rj as any[];
+        rec = arr.length ? arr[arr.length - 1] : null;
+      } else {
+        rec = rj;
+      }
+      if (rec && rec.returnTask) {
+        rework = {
+          active: true,
+          impactedCount: Array.isArray(rec.impacted) ? rec.impacted.length : 0,
+          returnFeature: rec.returnFeature,
+          returnTask: rec.returnTask,
+          impacted: Array.isArray(rec.impacted) ? rec.impacted : [],
+        };
+      } else {
+        rework = { active: false, impactedCount: 0 };
+      }
+    } else {
+      rework = { active: false, impactedCount: 0 };
+    }
+  } catch {
+    rework = { active: false, impactedCount: 0 };
+  }
+
   return {
     baseRevision,
     features,
     goals,
     widgetLines,
     timestamp: new Date().toISOString(),
+    router,
+    rework,
   };
 }
 
