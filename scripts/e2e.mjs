@@ -2714,8 +2714,22 @@ async function scenarioLive() {
     });
     if (!res.ok) throw new Error(`chat/completions → HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
     const body = await res.json();
-    const text = body?.choices?.[0]?.message?.content;
-    assert.equal(typeof text, "string", `no completion text in ${JSON.stringify(body).slice(0, 300)}`);
+    const choice = body?.choices?.[0];
+    const text = choice?.message?.content;
+
+    // A reasoning model can spend its whole budget thinking and return
+    // content:null with finish_reason "length". That is a budget problem, not
+    // an endpoint problem, so say which it is rather than asserting on a type.
+    if (typeof text !== "string") {
+      const reason = choice?.finish_reason ?? "unknown";
+      const used = body?.usage?.completion_tokens ?? "?";
+      throw new Error(
+        reason === "length"
+          ? `the model hit the ${maxTokens}-token cap before emitting any content ` +
+            `(finish_reason=length, completion_tokens=${used}) — raise the cap for this model`
+          : `no completion text (finish_reason=${reason}): ${JSON.stringify(body).slice(0, 240)}`,
+      );
+    }
     return text;
   };
 
@@ -2726,7 +2740,7 @@ async function scenarioLive() {
         { role: "system", content: "Answer with one lowercase word and nothing else." },
         { role: "user", content: `${brief}\n\nWhich phase is this brief for?` },
       ],
-      12,
+      256,
     );
     note(`answer: ${JSON.stringify(answer.trim())}`);
     assert.ok(answer.trim().length > 0, "the model returned an empty completion");
