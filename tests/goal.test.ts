@@ -228,4 +228,44 @@ function finishPipeline(dir: string): void {
   console.log("✓ a project with no goal is left entirely alone");
 }
 
+
+// ── reviewing early ────────────────────────────────────────────────────────
+// Found by running the shipped package against a real project, not by any of
+// the tests above: they all recorded a pipeline pass first, so none of them
+// ever asked what happens when a review arrives before one. The answer was
+// `GoalLoopStateError: Cannot update goal iteration 2 from status pending` —
+// an internal phase name thrown at whoever called the tool.
+//
+// Reviewing early is legitimate. You can see a pass will not meet the goal
+// well before the pipeline agrees, and waiting for a doomed pipeline to finish
+// first is theatre.
+{
+  const dir = project();
+  await startGoal({ targetDir: dir, goal: "Do the thing properly", runId: "goal-1", maxIterations: 3 });
+
+  // Straight to a verdict, with no pipeline pass recorded at all.
+  const first = await reviewGoal(dir, {
+    decision: "incomplete",
+    rationale: "this approach was never going to work",
+    remainingWork: ["start again with the other approach"],
+  });
+  assert.equal(first.terminal, false);
+  assert.match(first.message, /Starting pass 2/);
+
+  // And again on the fresh pass, which is the exact sequence that threw.
+  const second = await reviewGoal(dir, {
+    decision: "incomplete",
+    rationale: "still not right",
+    remainingWork: ["one more thing"],
+  });
+  assert.equal(second.terminal, false);
+  assert.match(second.message, /Starting pass 3/);
+
+  const third = await reviewGoal(dir, { decision: "complete", rationale: "done at last" });
+  assert.equal(third.terminal, true);
+  assert.equal(third.state.status, "done");
+  rmSync(dir, { recursive: true, force: true });
+  console.log("✓ a review that arrives before the pipeline finishes is answered, not thrown at");
+}
+
 console.log("goal.test.ts ✓");

@@ -4,6 +4,22 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.1] — 2026-08-23
+
+### Fixed
+
+- **Reviewing a goal before the pipeline finished threw an internal error.** `GoalLoopStateError:
+  Cannot update goal iteration 2 from status pending` — a phase name from inside the state machine,
+  thrown at whoever called the tool. Reviewing early is legitimate: you can see a pass will not meet
+  the goal well before the pipeline agrees, and waiting for a doomed pipeline to finish first is
+  theatre. The review now records the pass itself and answers.
+
+  Found by running the shipped package against a real project, in the first minute. Every test
+  recorded a pipeline pass before reviewing, so not one of them ever asked what happens when a
+  review arrives without one.
+
+---
+
 ## [2.2.0] — 2026-08-23
 
 Nine modules shipped in this package, typechecked, and passed their tests while no code path in the

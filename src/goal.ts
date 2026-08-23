@@ -262,6 +262,17 @@ export async function reviewGoal(
     return { state, terminal: true, message: `The goal loop already finished: ${state.status}.`, rewoundTo: null };
   }
 
+  // A review can legitimately arrive before the pipeline finishes: someone can
+  // already see that this pass will not meet the goal, and making them wait
+  // for a doomed pipeline to complete first is theatre. The state machine only
+  // accepts a verdict on an iteration that has recorded its work, so record it
+  // — otherwise the caller gets `Cannot update goal iteration 2 from status
+  // pending`, which names an internal phase and helps nobody.
+  if (state.phase === "goal_received" || state.phase === "todo_generated") {
+    const caught = await recordPipelinePass(targetDir, "reviewed before the pipeline finished", now);
+    if (caught) state = caught;
+  }
+
   const at = (now ?? new Date()).toISOString();
   const remainingWork = (input.remainingWork ?? []).map((s) => s.trim()).filter(Boolean);
   if (input.decision !== "complete" && remainingWork.length === 0) {
