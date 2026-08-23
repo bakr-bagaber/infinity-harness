@@ -35,6 +35,6 @@ decides the shape:
 5. **Surface the state.** After every action, print the full relevant state
    so the effect of each step is visible.
 6. **Capture it when done.** Fold the validated decision into the real code
-   and record it: `infinity-harness decision "state machine X chosen because Y
-   (validated by prototype)"`. Then DELETE the prototype — the
+   and append it to `harness/docs/DECISIONS.md`: "state machine X chosen
+   because Y, validated by prototype". Then DELETE the prototype — the
    anti-placeholder gate will flag leftovers, and that's by design.

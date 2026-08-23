@@ -26,13 +26,19 @@ import { runChecks } from "../../src/core/gates.ts";
 import { advancePhase } from "../../src/core/phases.ts";
 import { configPath } from "../../src/core/paths.ts";
 import { withLock } from "../../src/core/lock.ts";
-import { ValidationError, type FeatureList, type Phase } from "../../src/core/types.ts";
+import {
+  DEFAULT_ENABLED_PHASES,
+  ValidationError,
+  type FeatureList,
+  type Phase,
+} from "../../src/core/types.ts";
 import { writeTaskList, summarizeApply, type TaskInput } from "../../src/taskList.ts";
 import { renderWidget, renderStatusLine, type WidgetState } from "../../src/ui/widget.ts";
 import { createStyler, detectGlyphs } from "../../src/ui/theme.ts";
 import { decideNext, stopFilePath } from "../../src/loop.ts";
 import { runConfigMenu, renderSettings, type ModelChoice, type Prompter } from "../../src/ui/config.ts";
 import { SETTINGS, readAll, readSetting, formatValue } from "../../src/core/settings.ts";
+import { detectStack, describeInit, initHarness, type StackId } from "../../src/core/init.ts";
 
 const CHECKPOINT = "infinity:checkpoint";
 const WIDGET_KEY = "infinity-harness";
@@ -438,22 +444,72 @@ export default function (pi: ExtensionAPI): void {
             },
           },
         },
+        features: {
+          type: "array",
+          maxItems: 100,
+          description:
+            "Feature names and acceptance criteria, merged by id. Unlike tasks, omitting a feature " +
+            "here leaves it alone rather than deleting it. The DEFINE gate requires criteria on " +
+            "every feature, so this is how DEFINE is passed.",
+          items: {
+            type: "object",
+            required: ["id"],
+            properties: {
+              id: { type: "string", description: 'Feature id, e.g. "feature-001"' },
+              name: { type: "string", description: "What the feature is, in a few words" },
+              description: { type: "string" },
+              criteria: {
+                type: "array",
+                items: { type: "string" },
+                description: "How you will know this feature is done. Observable, not aspirational.",
+              },
+            },
+          },
+        },
+        goal: {
+          type: "string",
+          description: "One line: what this whole run is for. Shown at the top of every brief.",
+        },
       },
     } as never,
-    async execute(_id: string, params: { baseRevision?: number; tasks?: TaskInput[] }, _signal, _onUpdate, ctx) {
+    async execute(
+      _id: string,
+      params: {
+        baseRevision?: number;
+        tasks?: TaskInput[];
+        features?: { id: string; name?: string; description?: string; criteria?: string[] }[];
+        goal?: string;
+      },
+      _signal,
+      _onUpdate,
+      ctx,
+    ) {
       const dir = projectDir(ctx);
 
-      if (!Array.isArray(params?.tasks)) {
+      // A submission with no tasks, no features and no goal is a read.
+      const writing =
+        Array.isArray(params?.tasks) || Array.isArray(params?.features) || typeof params?.goal === "string";
+      if (!writing) {
         const { list } = loadFeatureList(dir);
         const p = computeProgress(list);
+        // Features and their criteria are printed, not just tasks: the DEFINE
+        // gate judges criteria, so a plan view that hides them shows the model
+        // everything except the thing it is being marked on.
         const rows = (list.features ?? [])
-          .flatMap((f) => (f.tasks ?? []).map((t) => `[${t.status}] ${t.key ?? t.id}: ${t.description}`))
+          .flatMap((f) => [
+            `${f.id} · ${f.name}${f.criteria?.length ? "" : "  ← no acceptance criteria"}`,
+            ...(f.criteria ?? []).map((c) => `    ✓ ${c}`),
+            ...(f.tasks ?? []).map((t) => `    [${t.status}] ${t.key ?? t.id}: ${t.description}`),
+          ])
           .join("\n");
+        const goal = (list.goals ?? [])[0]?.title;
         return {
           content: [
             {
               type: "text",
-              text: `Plan revision ${list.baseRevision} — ${p.tasksDone}/${p.tasksTotal} tasks\n${rows || "(empty)"}`,
+              text:
+                `Plan revision ${list.baseRevision} — ${p.tasksDone}/${p.tasksTotal} tasks` +
+                `${goal ? `\nGoal: ${goal}` : ""}\n${rows || "(empty)"}`,
             },
           ],
           details: { revision: list.baseRevision, progress: p },
@@ -464,7 +520,12 @@ export default function (pi: ExtensionAPI): void {
         // writeTaskList takes the plan lock itself, around the whole
         // read-apply-write. Wrapping it again here would only add a second
         // lock with weaker semantics.
-        const result = writeTaskList(dir, { baseRevision: params.baseRevision, tasks: params.tasks! });
+        const result = writeTaskList(dir, {
+          baseRevision: params.baseRevision,
+          tasks: params.tasks,
+          features: params.features,
+          goal: params.goal,
+        });
         refreshWidget(ctx as ExtensionContext);
         return {
           content: [{ type: "text", text: summarizeApply(result) }],
@@ -678,6 +739,134 @@ export default function (pi: ExtensionAPI): void {
     },
   });
 
+  // -- init -----------------------------------------------------------------
+
+  /**
+   * Said wherever a command finds no harness.
+   *
+   * It used to be "No harness in this project." and nothing else — a dead end
+   * with no exit, in a tool whose every other command needs a harness to work.
+   * A warning that does not say what to do instead is only half a warning.
+   */
+  const NO_HARNESS = "No harness in this project yet. Run /infinity:init to create one.";
+
+  /** Everything the pipeline can run. INIT is not a phase you choose. */
+  const SELECTABLE_PHASES: Phase[] = ["define", "plan", "build", "verify", "simplify", "review", "ship"];
+
+  pi.registerTool({
+    name: "infinity_init",
+    label: "Init",
+    description:
+      "Create a harness in this project: config, an empty plan, the phase and role docs, and starters " +
+      "for the documents the review gate demands. Detects the stack and its lint/test/build commands. " +
+      "Refuses if a harness already exists unless force is set, and never overwrites an existing file.",
+    parameters: {
+      type: "object",
+      properties: {
+        mode: { type: "string", enum: ["copilot", "autopilot"], description: "copilot keeps the human in the loop" },
+        stack: { type: "string", enum: ["node", "python", "rust", "go", "unknown"] },
+        phases: {
+          type: "array",
+          items: { type: "string", enum: ["define", "plan", "build", "verify", "simplify", "review", "ship"] },
+          description: "Which phases run. Omit for the default pipeline.",
+        },
+        force: { type: "boolean", description: "Restore missing files in a project that already has a harness" },
+      },
+    } as never,
+    async execute(
+      _id: string,
+      params: { mode?: "copilot" | "autopilot"; stack?: StackId; phases?: Phase[]; force?: boolean },
+      _signal,
+      _onUpdate,
+      ctx,
+    ) {
+      const dir = projectDir(ctx);
+      const result = initHarness(dir, {
+        mode: params?.mode,
+        stack: params?.stack,
+        phases: params?.phases,
+        force: params?.force,
+      });
+      if (!result.ok) {
+        return {
+          content: [{ type: "text", text: result.error ?? "init failed" }],
+          details: result,
+          isError: true,
+        };
+      }
+      refreshWidget(ctx as ExtensionContext);
+      return { content: [{ type: "text", text: describeInit(result) }], details: result };
+    },
+  });
+
+  pi.registerCommand("infinity:init", {
+    description: "Create a harness in this project",
+    handler: async (args: string, ctx: ExtensionContext) => {
+      const dir = projectDir(ctx);
+      const force = /\bforce\b/.test(args);
+
+      if (isHarnessProject(dir) && !force) {
+        notify(
+          ctx,
+          "This project already has a harness. /infinity:config changes it; /infinity:init force restores missing files.",
+          "warning",
+        );
+        return;
+      }
+
+      const detected = detectStack(dir);
+      let mode: "copilot" | "autopilot" = "copilot";
+      let phases: Phase[] | undefined;
+
+      // With dialogs, ask the two questions whose answers we cannot infer.
+      // Without them, take the detected defaults and say so — an unattended
+      // run must not stall on a prompt nobody will answer.
+      if (ctx.hasUI) {
+        const cmds = Object.entries(detected.commands).filter(([, v]) => Boolean(v));
+        const summary = cmds.length ? cmds.map(([k, v]) => `${k}: ${v}`).join(", ") : "no commands detected";
+        const go = await ctx.ui.select(
+          `Create a harness here? ${detected.label} · ${summary}`,
+          ["yes, use these defaults", "yes, but let me choose the phases", "cancel"],
+        );
+        if (go === undefined || go === "cancel") {
+          notify(ctx, "init cancelled — nothing was written.", "info");
+          return;
+        }
+        const picked = await ctx.ui.select("How should it run?", [
+          "copilot — you stay in the loop",
+          "autopilot — it drives itself",
+        ]);
+        if (picked?.startsWith("autopilot")) mode = "autopilot";
+
+        if (go.includes("phases")) {
+          const chosen = new Set<Phase>(DEFAULT_ENABLED_PHASES);
+          for (;;) {
+            const rows = SELECTABLE_PHASES.map((p) => `${chosen.has(p) ? "[x]" : "[ ]"} ${p}`);
+            const hit = await ctx.ui.select("Phases to run", [...rows, "✓ done"]);
+            if (hit === undefined || hit === "✓ done") break;
+            const key = SELECTABLE_PHASES[rows.indexOf(hit)];
+            if (!key) break;
+            if (chosen.has(key)) chosen.delete(key);
+            else chosen.add(key);
+          }
+          phases = [...chosen];
+        }
+      }
+
+      const result = initHarness(dir, { mode, phases, force });
+      if (!result.ok) {
+        notify(ctx, result.error ?? "init failed", "error");
+        return;
+      }
+
+      notify(ctx, describeInit(result), "info");
+      refreshWidget(ctx);
+      // Hand the model the brief straight away, so the session that created
+      // the harness is also the session that starts using it.
+      pi.sendUserMessage(await briefText(dir), { deliverAs: "followUp" });
+    },
+  });
+
   // -- commands -------------------------------------------------------------
 
   pi.registerCommand("infinity:status", {
@@ -685,7 +874,7 @@ export default function (pi: ExtensionAPI): void {
     handler: async (_args: string, ctx: ExtensionContext) => {
       const dir = projectDir(ctx);
       if (!isHarnessProject(dir)) {
-        notify(ctx, "No harness in this project (harness/config.json not found).", "warning");
+        notify(ctx, NO_HARNESS, "warning");
         return;
       }
       const state = widgetStateFor(dir);
@@ -725,7 +914,7 @@ export default function (pi: ExtensionAPI): void {
     handler: async (_args: string, ctx: ExtensionContext) => {
       const dir = projectDir(ctx);
       if (!isHarnessProject(dir)) {
-        notify(ctx, "No harness in this project.", "warning");
+        notify(ctx, NO_HARNESS, "warning");
         return;
       }
       loopEnabled = true;
@@ -784,7 +973,7 @@ export default function (pi: ExtensionAPI): void {
     handler: async (args: string, ctx: ExtensionContext) => {
       const dir = projectDir(ctx);
       if (!isHarnessProject(dir)) {
-        notify(ctx, "No harness in this project (harness/config.json not found).", "warning");
+        notify(ctx, NO_HARNESS, "warning");
         return;
       }
 

@@ -17,7 +17,7 @@ clean working tree, and ensure all ship gates pass.
 6. Ensure LICENSE, CONTRIBUTING.md exist
 7. Run `infinity_validate` to check ship gates
 8. If PASS → `infinity_advance` (pipeline complete!)
-9. Create checkpoint: `infinity-harness checkpoint create release-<version>`
+9. The release tag from step 5 is the checkpoint — nothing else to create.
 
 ## Rationalizations to Avoid
 | Excuse | Rebuttal |

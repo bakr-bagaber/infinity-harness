@@ -25,8 +25,8 @@ the other.
 
 1. **Pin the fixed point.** `git diff <fixed-point>...HEAD` (three-dot) and
    `git log <fixed-point>..HEAD --oneline`. In the harness pipeline the fixed
-   point is usually the phase-start or sprint-start commit/tag
-   (`infinity-harness rollback list` shows checkpoints).
+   point is usually the phase-start or sprint-start commit or tag
+   (`git tag --sort=-creatordate | head` finds it).
 2. **Spec review.** The spec sources are `specs/prd.md`, the sprint contract
    (`harness/sprint-contract.md`), and the feature list's acceptance
    criteria. Report: (a) requirements missing or partial; (b) behaviour

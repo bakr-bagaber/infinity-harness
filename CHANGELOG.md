@@ -4,6 +4,51 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] — 2026-08-23
+
+You could not start, and if you had, you could not have got past the first gate. Both are fixed.
+
+### Added
+
+- **`/infinity:init`, and the `infinity_init` tool.** There was no way to create a harness. `pi
+  install` put the extension in place and then every command answered *"No harness in this project
+  (harness/config.json not found)"* — with nothing anywhere that made one. The package installed,
+  loaded, and passed its entire test suite while being unusable.
+
+  Init detects the stack and its lint/test/build commands, writes the config, an empty plan, the
+  phase and role docs the brief points at, and starters for the documents the review gate demands,
+  then hands the model its first brief. It asks two questions when there are dialogs and takes the
+  detected defaults when there are not, so an unattended run never stalls on a prompt. It never
+  overwrites an existing file, and `/infinity:init force` restores what was deleted without touching
+  what was written.
+- **Feature names, acceptance criteria and the run's goal are writable through `infinity_plan`.**
+  Features are derived from task keys, so there was no input for their metadata — and the DEFINE
+  gate requires criteria on every feature. The first gate in the pipeline could only be passed by
+  hand-editing the plan file, which the brief explicitly tells you not to do.
+
+  `features` merges by id and never deletes, because features are inferred rather than submitted;
+  `tasks` keeps its omission-means-deletion rule. Leaving `tasks` out entirely is now distinct from
+  sending `[]`: absent means "not touching them", empty still means "delete them all". Nesting tasks
+  inside a feature — the obvious wrong guess — is refused with the shape that works.
+- **A `coldstart` E2E scenario**: bare directory, `/infinity:init`, brief, plan, gate, advance,
+  through the real adapter. Every leg of it was a defect before it was a test.
+
+### Fixed
+
+- **Six more shipped documents told the agent to run a CLI this package does not have** —
+  `infinity-harness contract propose`, `decision "..."`, `rollback list`, `checkpoint create`. The
+  2.0.2 guard only caught a hardcoded list of verbs, which by construction only ever catches the
+  ones already found. It now looks at *where* the claim is made: inside a code fence or span, the
+  package name followed by a word is a command line, and there is no command line.
+- **The plan view hid the thing the model is marked on.** Reading the plan listed tasks but not
+  features or their criteria — so the DEFINE gate judged something the model could not see. It now
+  shows the goal, each feature, and its criteria, flagging any feature that has none.
+- **Comments counted as document content.** `docCheck` stripped headings but not HTML comments, so a
+  scaffolded file whose guidance lived in a comment would satisfy the gate that demanded it. A
+  comment is instructions to the author, not content.
+
+---
+
 ## [2.0.4] — 2026-08-23
 
 ### Changed

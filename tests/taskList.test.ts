@@ -361,3 +361,102 @@ function assertValidation(fn: () => unknown, match: RegExp): void {
 }
 
 console.log("All taskList tests PASS");
+
+// ── feature metadata ───────────────────────────────────────────────────────
+// Features are derived from task keys, which left no way to give one a name or
+// its acceptance criteria — and the DEFINE gate requires criteria on every
+// feature. The first gate in the pipeline was unpassable through the tools.
+{
+  const dir = tmpProject();
+
+  // DEFINE: criteria exist before tasks do, so this submits no `tasks` field.
+  const defined = writeTaskList(dir, {
+    goal: "Ship the thing",
+    features: [{ id: "feature-001", name: "Checkout", criteria: ["it charges once", "it refunds"] }],
+  });
+  assert.ok(defined.changed, "writing criteria is a change");
+  assert.equal(defined.list.features[0]!.name, "Checkout");
+  assert.deepEqual(defined.list.features[0]!.criteria, ["it charges once", "it refunds"]);
+  assert.equal(defined.list.goals?.[0]?.title, "Ship the thing");
+  assert.deepEqual(defined.list.features[0]!.tasks, [], "a feature may exist before its tasks");
+
+  // PLAN: tasks arrive, and must not wipe the criteria written in DEFINE.
+  const planned = writeTaskList(dir, {
+    baseRevision: defined.revision,
+    tasks: [{ key: "feature-001/task-001", subject: "charge the card", status: "pending" }],
+  });
+  assert.deepEqual(planned.list.features[0]!.criteria, ["it charges once", "it refunds"]);
+  assert.equal(planned.list.features[0]!.name, "Checkout", "and the name survives too");
+  assert.equal(planned.list.features[0]!.tasks.length, 1);
+
+  // Omitting a feature leaves it alone — it is a merge, not a submission.
+  const more = writeTaskList(dir, {
+    baseRevision: planned.revision,
+    features: [{ id: "feature-002", name: "Refunds", criteria: ["money goes back"] }],
+  });
+  assert.equal(more.list.features.length, 2);
+  assert.equal(more.list.features[0]!.name, "Checkout", "feature-001 was not touched");
+  assert.equal(more.list.features[0]!.tasks.length, 1, "and kept its tasks");
+
+  // An unchanged resubmission does not move the revision.
+  const noop = writeTaskList(dir, {
+    baseRevision: more.revision,
+    features: [{ id: "feature-002", name: "Refunds", criteria: ["money goes back"] }],
+  });
+  assert.equal(noop.changed, false);
+  assert.equal(noop.revision, more.revision);
+
+  rmSync(dir, { recursive: true, force: true });
+  console.log("✓ features carry names and criteria, merged rather than resubmitted");
+}
+
+// Absent tasks means "leave them"; an empty array still means "delete them".
+{
+  const dir = tmpProject();
+  const seeded = writeTaskList(dir, {
+    tasks: [
+      { key: "feature-001/task-001", subject: "a", status: "pending" },
+      { key: "feature-001/task-002", subject: "b", status: "pending" },
+    ],
+  });
+  assert.equal(seeded.tasks.length, 2);
+
+  const metaOnly = writeTaskList(dir, {
+    baseRevision: seeded.revision,
+    features: [{ id: "feature-001", criteria: ["c"] }],
+  });
+  assert.equal(metaOnly.tasks.length, 2, "a metadata write must not delete the plan");
+
+  const emptied = writeTaskList(dir, { baseRevision: metaOnly.revision, tasks: [] });
+  assert.equal(emptied.tasks.length, 0, "an explicit empty list still clears it");
+  assert.deepEqual(emptied.list.features[0]?.criteria, ["c"], "without losing the criteria");
+  rmSync(dir, { recursive: true, force: true });
+  console.log("✓ omitting tasks is not the same as sending none");
+}
+
+// Bad input is refused with something the model can act on.
+{
+  const dir = tmpProject();
+  assert.throws(() => writeTaskList(dir, {}), /nothing submitted/);
+  assert.throws(
+    () => writeTaskList(dir, { features: [{ id: "feature-001", tasks: [] } as never] }),
+    /top-level "tasks" array/,
+  );
+  assert.throws(
+    () => writeTaskList(dir, { features: [{ id: "feature-001", criteria: ["ok", ""] }] }),
+    /must be non-empty/,
+  );
+  assert.throws(
+    () => writeTaskList(dir, { features: [{ id: "", criteria: ["x"] }] }),
+    /features\[0\]\.id/,
+  );
+  assert.throws(
+    () => writeTaskList(dir, { features: [{ id: "f", criteria: Array(41).fill("x") }] }),
+    /at most 40/,
+  );
+  // Duplicates in one submission collapse rather than being stored twice.
+  const ok = writeTaskList(dir, { features: [{ id: "feature-001", criteria: ["same", "same"] }] });
+  assert.deepEqual(ok.list.features[0]!.criteria, ["same"]);
+  rmSync(dir, { recursive: true, force: true });
+  console.log("✓ malformed feature metadata is refused with a message that says the fix");
+}

@@ -18,7 +18,7 @@ session (you, another agent, a human) starts from what was WRITTEN.
 
 - **Externalize at the moment of discovery**, not "later":
   - Surprise, gotcha, non-obvious behavior → `harness/lessons-decisions.md "..."`
-  - Design choice with a why → `infinity-harness decision "..."`
+  - Design choice with a why → `harness/docs/DECISIONS.md`
   - Resolved terminology → `harness/docs/DOMAIN.md`
   - Verified fact about an API/tool → `docs/research/` (with frontmatter)
 - **Re-read instead of remember.** Before acting on something you learned

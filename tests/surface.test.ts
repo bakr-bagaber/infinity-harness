@@ -164,16 +164,33 @@ function checkText(label: string, text: string): string[] {
 }
 
 // ── the CLI that isn't ─────────────────────────────────────────────────────
-// This package has no executable. Nothing shipped may tell anyone to run one.
+// This package ships no executable. It descends from one that did, and the
+// instructions came with it: `infinity-harness capability add`, `contract
+// propose`, `decision "..."`, `rollback list`, `checkpoint create`, `init`.
+// Every one was a command-not-found waiting for whoever followed the document.
+//
+// A hardcoded list of banned verbs only ever catches the ones already found.
+// So this looks at where the claim is made instead: inside a code fence or a
+// code span, the package name followed by a word is a command line, and there
+// is no command line. In prose — "infinity-harness drives the agent" — it is
+// just the name.
 {
   const problems: string[] = [];
+  const CLI = /\b(?:infinity-harness|dev-harness|pi-harness)\s+([a-z][a-z-]*)/g;
+
+  /** Fenced blocks and inline spans — the places a command is written. */
+  function codeOnly(text: string): string {
+    const parts: string[] = [];
+    for (const [, body] of text.matchAll(/```[a-z]*\n([\s\S]*?)```/g)) parts.push(body);
+    for (const [, body] of text.matchAll(/`([^`\n]+)`/g)) parts.push(body);
+    return parts.join("\n");
+  }
+
   const check = (label: string, text: string) => {
-    for (const [, cmd] of text.matchAll(/\b(?:infinity-harness|dev-harness|pi-harness)\s+([a-z][a-z-]*)/g)) {
-      // `pi install infinity-harness` and prose like "infinity-harness fixes"
-      // are fine; an imperative verb after the package name is not.
-      if (["capability", "validate", "status", "phase", "run", "init", "plan"].includes(cmd)) {
-        problems.push(`${label}: names a CLI that does not exist — "${cmd}"`);
-      }
+    for (const [hit, verb] of codeOnly(text).matchAll(CLI)) {
+      // `pi install npm:infinity-harness` is the one legitimate form.
+      if (/\b(?:pi|npm|npx|git)\b/.test(hit)) continue;
+      problems.push(`${label}: names a CLI that does not exist — "${verb}" in \`${hit.trim()}\``);
     }
   };
   const files = [

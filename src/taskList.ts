@@ -49,9 +49,44 @@ export type TaskInput = {
   criteria?: string[];
 };
 
+/**
+ * Feature metadata, supplied alongside the tasks.
+ *
+ * Features themselves are derived from task keys — `feature-002/task-004`
+ * creates `feature-002` — which left no way at all to give a feature a name or
+ * its acceptance criteria. The DEFINE gate requires criteria on every feature,
+ * so the first gate in the pipeline could not be passed through the tools: the
+ * only route was hand-editing the plan file, which the brief tells you not to
+ * do.
+ *
+ * Unlike `tasks`, this is a merge and never a deletion. Omission means
+ * deletion for tasks because the model has to submit the authoritative list;
+ * features are not submitted at all, they are inferred, so omitting one here
+ * means "nothing to say about it", not "remove it".
+ */
+export type FeatureInput = {
+  id: string;
+  name?: string;
+  description?: string;
+  criteria?: string[];
+};
+
 export type ApplyInput = {
   baseRevision?: number;
-  tasks: TaskInput[];
+  /**
+   * The complete, authoritative task list. Omission means deletion — one
+   * unambiguous rule beats incremental edits a model loses track of.
+   *
+   * Leaving the whole field out is different from sending `[]`: absent means
+   * "I am not touching the tasks", empty means "delete them all". DEFINE needs
+   * that distinction, because criteria are written there and tasks do not
+   * exist until PLAN.
+   */
+  tasks?: TaskInput[];
+  /** Names and acceptance criteria, merged onto features by id. */
+  features?: FeatureInput[];
+  /** The one-line statement of what this whole run is for. */
+  goal?: string;
 };
 
 export type Change = {
@@ -96,6 +131,34 @@ function validateSubtasks(raw: TaskInput["subtasks"], path: string): Subtask[] {
   });
 }
 
+/** At most this many features may be described in one submission. */
+const MAX_FEATURES = 100;
+/** And this many acceptance criteria on any one of them. */
+const MAX_CRITERIA = 40;
+
+function bounded(value: string, max: number, path: string): string {
+  const trimmed = String(value ?? "").trim();
+  if (trimmed.length > max) {
+    throw new ValidationError(`${path} exceeds ${max} characters (${trimmed.length})`);
+  }
+  return trimmed;
+}
+
+function validateCriteria(raw: unknown, path: string): string[] {
+  if (!Array.isArray(raw)) throw new ValidationError(`${path} must be an array`);
+  if (raw.length > MAX_CRITERIA) {
+    throw new ValidationError(`${path} supports at most ${MAX_CRITERIA} entries, got ${raw.length}`);
+  }
+  const out: string[] = [];
+  for (const [i, entry] of raw.entries()) {
+    const text = bounded(String(entry ?? ""), MAX_SUBJECT_LEN, `${path}[${i}]`);
+    // An empty criterion is worse than none: it looks like the work was done.
+    if (!text) throw new ValidationError(`${path}[${i}] must be non-empty`);
+    if (!out.includes(text)) out.push(text);
+  }
+  return out;
+}
+
 function validateDependsOn(raw: string[] | undefined, path: string): string[] {
   if (!Array.isArray(raw)) return [];
   if (raw.length > MAX_DEPENDS_ON) {
@@ -126,11 +189,24 @@ export function applyTaskList(current: FeatureList, input: ApplyInput): ApplyRes
         `Re-read the plan and resubmit.`,
     );
   }
-  if (!Array.isArray(input.tasks)) {
+  if (input.tasks !== undefined && !Array.isArray(input.tasks)) {
     throw new ValidationError("tasks must be an array");
   }
-  if (input.tasks.length > MAX_TASKS) {
-    throw new ValidationError(`tasks supports at most ${MAX_TASKS} items, got ${input.tasks.length}`);
+  if (input.tasks === undefined && input.features === undefined && input.goal === undefined) {
+    throw new ValidationError("nothing submitted: send tasks, features, or a goal");
+  }
+  const inputFeatures = input.features;
+  const goal = input.goal;
+  if (inputFeatures !== undefined && !Array.isArray(inputFeatures)) {
+    throw new ValidationError("features must be an array");
+  }
+  if (Array.isArray(inputFeatures) && inputFeatures.length > MAX_FEATURES) {
+    throw new ValidationError(
+      `features supports at most ${MAX_FEATURES} items, got ${inputFeatures.length}`,
+    );
+  }
+  if ((input.tasks?.length ?? 0) > MAX_TASKS) {
+    throw new ValidationError(`tasks supports at most ${MAX_TASKS} items, got ${input.tasks!.length}`);
   }
 
   const before = flattenTasks(current);
@@ -146,8 +222,24 @@ export function applyTaskList(current: FeatureList, input: ApplyInput): ApplyRes
   const staged: Staged[] = [];
   const seen = new Set<string>();
 
-  for (let i = 0; i < input.tasks.length; i++) {
-    const raw = input.tasks[i]!;
+  // No `tasks` field means the submission is about features or the goal, and
+  // the task list carries over untouched. Re-staging what is already stored
+  // keeps every downstream step — dependency validation, the rebuild, the
+  // diff — on exactly one code path.
+  if (input.tasks === undefined) {
+    for (const f of current.features) {
+      for (const t of f.tasks ?? []) {
+        staged.push({
+          featureId: f.id,
+          task: structuredClone(t),
+          compositeKey: t.key ?? `${f.id}/${t.id}`,
+        });
+      }
+    }
+  }
+
+  for (let i = 0; i < (input.tasks?.length ?? 0); i++) {
+    const raw = input.tasks![i]!;
     const path = `tasks[${i}]`;
     const key = validateKey(String(raw?.key ?? ""), `${path}.key`);
     if (seen.has(key)) throw new ValidationError(`${path}.key is duplicated: ${key}`);
@@ -272,6 +364,60 @@ export function applyTaskList(current: FeatureList, input: ApplyInput): ApplyRes
     feature.tasks.push(s.task);
   }
 
+  // -- feature metadata -----------------------------------------------------
+  let metaChanged = false;
+  for (const [i, input] of (Array.isArray(inputFeatures) ? inputFeatures : []).entries()) {
+    const id = validateKey(input?.id ?? "", `features[${i}].id`);
+    // A model that has seen the plan file will reasonably try to nest tasks
+    // inside a feature. Silently dropping them would look like the write
+    // succeeded and lose the work; say where they go instead.
+    if ("tasks" in (input as object)) {
+      throw new ValidationError(
+        `features[${i}].tasks is not accepted — submit tasks in the top-level "tasks" array, ` +
+          `keyed "${id}/task-001". features carries names and criteria only.`,
+      );
+    }
+    let feature = featureById.get(id);
+    if (!feature) {
+      // Declaring a feature before its tasks exist is legitimate: DEFINE is
+      // where criteria are written, and PLAN is where tasks arrive.
+      feature = { id, name: id, passes: false, tasks: [] };
+      next.features.push(feature);
+      featureById.set(id, feature);
+      metaChanged = true;
+    }
+    if (typeof input.name === "string" && input.name.trim()) {
+      const name = bounded(input.name, MAX_SUBJECT_LEN, `features[${i}].name`);
+      if (feature.name !== name) {
+        feature.name = name;
+        metaChanged = true;
+      }
+    }
+    if (typeof input.description === "string") {
+      const description = bounded(input.description, MAX_SUBJECT_LEN, `features[${i}].description`);
+      if (feature.description !== description) {
+        feature.description = description;
+        metaChanged = true;
+      }
+    }
+    if (Array.isArray(input.criteria)) {
+      const criteria = validateCriteria(input.criteria, `features[${i}].criteria`);
+      if (JSON.stringify(feature.criteria ?? []) !== JSON.stringify(criteria)) {
+        feature.criteria = criteria;
+        metaChanged = true;
+      }
+    }
+  }
+
+  if (typeof goal === "string" && goal.trim()) {
+    const title = bounded(goal, MAX_SUBJECT_LEN, "goal");
+    const goals = Array.isArray(next.goals) ? next.goals : [];
+    if (goals[0]?.title !== title) {
+      next.goals = [{ ...(goals[0] ?? { id: "goal-001" }), title }, ...goals.slice(1)];
+      metaChanged = true;
+    }
+  }
+
   // A feature passes when it has tasks and all of them are complete.
   for (const f of next.features) {
     f.passes = f.tasks.length > 0 && f.tasks.every((t) => t.status === "complete");
@@ -295,7 +441,8 @@ export function applyTaskList(current: FeatureList, input: ApplyInput): ApplyRes
   const reordered =
     oldOrder.length !== newOrder.length || oldOrder.some((k, i) => k !== newOrder[i]);
 
-  const changed = added.length > 0 || updated.length > 0 || removed.length > 0 || reordered;
+  const changed =
+    added.length > 0 || updated.length > 0 || removed.length > 0 || reordered || metaChanged;
   next.baseRevision = changed ? current.baseRevision + 1 : current.baseRevision;
 
   return {

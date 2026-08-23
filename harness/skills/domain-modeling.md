@@ -57,7 +57,8 @@ once `shipped`. NOT the same as a Cart (pre-checkout, mutable).
 scratch notes, no specs.
 
 ### Record decisions sparingly
-Record a decision (`infinity-harness decision "..."`) only when all three hold:
+Record a decision — one entry appended to `harness/docs/DECISIONS.md` — only
+when all three hold:
 
 1. **Hard to reverse** — changing your mind later costs something real
 2. **Surprising without context** — a future reader would ask "why?"

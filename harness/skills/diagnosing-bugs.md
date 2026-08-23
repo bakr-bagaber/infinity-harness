@@ -82,4 +82,4 @@ pass → re-run the Phase 1 loop against the original scenario.
 - [ ] Record the confirmed hypothesis: `harness/lessons-decisions.md "bug X was caused by Y"`
 
 Then ask: what would have prevented this bug? If the answer is architectural
-(no test seam, tangled callers), record it: `infinity-harness decision "..."`.
+(no test seam, tangled callers), append it to `harness/docs/DECISIONS.md`.

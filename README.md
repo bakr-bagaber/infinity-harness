@@ -77,12 +77,25 @@ cd your-project
 pi
 ```
 
-On session start the harness injects a brief — phase, role, current task, acceptance criteria, and
-what to do next. Do the work, then:
+Then, once, in that project:
+
+```
+/infinity:init
+```
+
+That is the whole setup. It detects your stack and its lint/test/build commands, writes
+`harness/` with the config, an empty plan, the phase and role docs, and starters for the
+documents the review gate will demand — then hands the model its first brief. It never
+overwrites a file that already exists, and `/infinity:init force` restores anything you
+deleted without touching what you wrote.
+
+From then on, every session opens with a brief: phase, role, current task, acceptance criteria,
+the craft skills that match the work, and what to do next. Do the work, then:
 
 ```
 /infinity:validate     run the gate for this phase
 /infinity:run          hand it the wheel: validate → advance → re-brief, until done or stuck
+/infinity:status       where the run is right now
 /infinity:config       change any setting, including which model runs which tier
 /infinity:models       what models pi has, and how they are being routed
 /infinity:dashboard    open the live web view
@@ -90,6 +103,25 @@ what to do next. Do the work, then:
 ```
 
 `/infinity:run` is the point of the tool. It keeps the loop turning without you.
+
+### The first pass through
+
+DEFINE wants acceptance criteria on every feature, so start by telling it what you are building.
+The agent writes that through `infinity_plan`:
+
+```jsonc
+{
+  "goal": "Ship the payments rewrite behind a flag",
+  "features": [
+    { "id": "feature-001", "name": "Checkout flow", "criteria": ["refunds reconcile against the ledger"] }
+  ]
+}
+```
+
+Features carry names and criteria; tasks are a separate list keyed `feature-001/task-001`, and
+arrive in PLAN. Omitting a task deletes it — that is the rule that keeps the plan honest — but
+omitting a *feature* just leaves it alone, because features are inferred from task keys rather
+than submitted.
 
 ## Configuration
 
@@ -166,7 +198,12 @@ brief all read it; nothing caches a second copy.
 
 The agent edits it by submitting the **complete** task list through the `infinity_plan` tool:
 
-- **Omission means deletion.** One unambiguous rule beats incremental edits a model loses track of.
+- **Omission means deletion** — for tasks. One unambiguous rule beats incremental edits a model
+  loses track of. Leaving the `tasks` field out entirely is different from sending an empty one:
+  absent means "not touching them", empty means "delete them all".
+- **Features are a merge, not a submission.** They are inferred from task keys, so they are never
+  resubmitted wholesale; `features` supplies names and acceptance criteria by id, and omitting one
+  leaves it alone.
 - **`baseRevision` guards every write.** A stale revision is rejected, so parallel workers can't
   clobber each other.
 - **Unknown fields survive.** An update merges onto the stored task, so `difficulty`, `modelHint`,
@@ -241,8 +278,9 @@ that looks like a broken endpoint but is only a small cap.
 
 | Tool | Purpose |
 |---|---|
+| `infinity_init` | Create the harness in this project |
 | `infinity_brief` | What am I supposed to be doing right now? |
-| `infinity_plan` | Read or rewrite the task list |
+| `infinity_plan` | Read or rewrite the plan — tasks, features, criteria, goal |
 | `infinity_validate` | Run the gate for this phase |
 | `infinity_advance` | Move to the next phase (refuses on a failing gate) |
 | `infinity_dashboard` | Start/stop/query the web view |
@@ -270,7 +308,7 @@ infinity-harness/
 │   ├── model-router.json          optional routing
 │   ├── docs/                      architecture · decisions · phase and role docs
 │   └── skills/                    28 craft skills the brief points at
-├── tests/                         23 files, plain node:assert
+├── tests/                         25 files, plain node:assert
 └── scripts/run-tests.mjs
 ```
 
@@ -282,7 +320,7 @@ there is one implementation, and the adapter calls it.
 ```bash
 npm install
 npm run check    # tsc --noEmit
-npm test         # 23 test files
+npm test         # 25 test files
 npm run e2e      # end-to-end against a live model
 ```
 

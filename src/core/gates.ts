@@ -196,7 +196,14 @@ async function checkNoPlaceholders({ targetDir, config }: Ctx): Promise<CheckRes
 function docCheck(name: string, path: string, minChars: number, hint: string): CheckResult {
   const text = readText(path);
   if (text === null) return fail(name, `${hint} is missing`);
-  const body = text.replace(/^#.*$/gm, "").trim();
+  // Headings are structure and HTML comments are instructions to the author —
+  // neither is content. This matters because the scaffolded starters explain
+  // in a comment what belongs in the file; counting that would let the review
+  // gate pass on a template nobody had written a word into.
+  const body = text
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/^#.*$/gm, "")
+    .trim();
   return body.length >= minChars
     ? pass(name, `${hint} present (${body.length} chars)`)
     : fail(name, `${hint} exists but is essentially empty (${body.length} chars, need ${minChars})`);

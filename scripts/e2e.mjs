@@ -2333,12 +2333,17 @@ function fakePi() {
   };
 }
 
-function fakeCtx(dir) {
+function fakeCtx(dir, answers) {
   const widgets = {};
   const statuses = {};
   const notices = [];
+  const asked = [];
+  // `answers` is a queue of dialog replies. Passing one turns hasUI on, which
+  // is how the interactive paths get exercised without a terminal.
+  const queue = Array.isArray(answers) ? [...answers] : null;
   return {
     cwd: dir,
+    hasUI: queue !== null,
     ui: {
       setWidget: (k, lines) => {
         widgets[k] = lines;
@@ -2347,10 +2352,19 @@ function fakeCtx(dir) {
         statuses[k] = s;
       },
       notify: (m, level) => notices.push({ m, level }),
+      select: async (title, options) => {
+        asked.push({ title, options });
+        return queue?.length ? queue.shift() : undefined;
+      },
+      input: async (title) => {
+        asked.push({ title, options: null });
+        return queue?.length ? queue.shift() : undefined;
+      },
     },
     widgets,
     statuses,
     notices,
+    asked,
   };
 }
 
@@ -2723,6 +2737,165 @@ const LIVE_MAX_TOKENS = Number(process.env.INFINITY_E2E_MAX_TOKENS ?? 3000);
 // The repo working tree is not the product. The tarball is. So this packs it
 // for real and inspects what comes out.
 // ────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────────────
+// coldstart — the first five minutes
+//
+// A user installs the extension, opens pi in their project, and types a
+// command. Until this scenario existed, what happened next was:
+//
+//   Warning: No harness in this project (harness/config.json not found).
+//
+// for every command, with nothing anywhere that created one. The package
+// installed, loaded, and passed its entire test suite while being unusable.
+//
+// So this drives the real adapter the way a person does: bare directory,
+// /infinity:init, then straight into the loop.
+// ────────────────────────────────────────────────────────────────────────────
+async function scenarioColdStart() {
+  const adapter = (await import(pathToFileURL(join(REPO_ROOT, "extensions", "infinity-harness", "index.ts")).href))
+    .default;
+  const { isHarnessProject } = await import(
+    pathToFileURL(join(REPO_ROOT, "src", "core", "config.ts")).href
+  );
+
+  const dir = mkTempDir("coldstart");
+  writeFileSync(
+    join(dir, "package.json"),
+    JSON.stringify({ name: "cold", scripts: { test: "node --test", lint: "eslint ." } }, null, 2),
+  );
+
+  const pi = fakePi();
+  adapter(pi.api);
+
+  await step("before init, every command says what to do instead of dead-ending", async () => {
+    const ctx = fakeCtx(dir);
+    await pi.emit("session_start", {}, ctx);
+    assert.equal(pi.sent.length, 0, "a project with no harness is left completely alone");
+    assert.equal(pi.userMessages.length, 0, "and is not spoken to at all");
+    assert.deepEqual(ctx.widgets, {}, "and gets no widget");
+
+    for (const command of ["infinity:status", "infinity:run", "infinity:config"]) {
+      ctx.notices.length = 0;
+      await pi.command(command, "", ctx);
+      const said = ctx.notices.map((n) => n.m).join("\n");
+      assert.match(said, /No harness in this project yet/, `${command} said nothing useful`);
+      assert.match(said, /\/infinity:init/, `${command} did not say how to fix it`);
+    }
+  });
+
+  await step("/infinity:init creates a harness and briefs the model", async () => {
+    // "yes, use these defaults" then "copilot".
+    const ctx = fakeCtx(dir, ["yes, use these defaults", "copilot — you stay in the loop"]);
+    await pi.command("infinity:init", "", ctx);
+
+    assert.ok(isHarnessProject(dir), "the harness exists now");
+    assert.ok(ctx.asked.length >= 2, "it asked before writing");
+    assert.match(ctx.asked[0].title, /Create a harness here\?/);
+    assert.match(ctx.asked[0].title, /Node/, "and said what it detected");
+
+    const said = ctx.notices.map((n) => n.m).join("\n");
+    assert.match(said, /infinity-harness ready/);
+    assert.match(said, /npm run test/, "the detected commands are reported");
+    assert.match(said, /DEFINE/);
+
+    assert.ok(ctx.widgets["infinity-harness"]?.length, "the widget appears immediately");
+    assert.equal(pi.userMessages.length, 1, "the session that created the harness gets the first brief");
+    assert.match(pi.userMessages[0].text, /NEXT STEP · DEFINE/);
+  });
+
+  await step("cancelling writes nothing", async () => {
+    const fresh = mkTempDir("coldstart-cancel");
+    const ctx = fakeCtx(fresh, ["cancel"]);
+    await pi.command("infinity:init", "", ctx);
+    assert.equal(isHarnessProject(fresh), false, "cancel means cancel");
+    assert.equal(readdirSync(fresh).length, 0, "not one file was written");
+    assert.match(ctx.notices.map((n) => n.m).join("\n"), /cancelled/);
+  });
+
+  await step("a second init refuses, and says what to run instead", async () => {
+    const ctx = fakeCtx(dir, ["yes, use these defaults"]);
+    await pi.command("infinity:init", "", ctx);
+    const said = ctx.notices.map((n) => n.m).join("\n");
+    assert.match(said, /already has a harness/);
+    assert.match(said, /\/infinity:config/);
+    assert.equal(ctx.asked.length, 0, "it did not even ask");
+  });
+
+  await step("with no dialogs it takes the detected defaults rather than stalling", async () => {
+    const headless = mkTempDir("coldstart-headless");
+    writeFileSync(join(headless, "go.mod"), "module cold\n");
+    const ctx = fakeCtx(headless); // hasUI false
+    await pi.command("infinity:init", "", ctx);
+    assert.ok(isHarnessProject(headless), "an unattended run still gets a harness");
+    assert.equal(ctx.asked.length, 0, "and was never asked a question nobody would answer");
+    const config = JSON.parse(readFileSync(join(headless, "harness", "config.json"), "utf-8"));
+    assert.equal(config.stack, "go");
+    assert.equal(config.commands.test, "go test ./...");
+    assert.equal(config.mode, "copilot");
+  });
+
+  await step("the freshly-made harness is a working one: brief, plan, gate", async () => {
+    const ctx = fakeCtx(dir);
+
+    // The brief the model would act on.
+    const brief = await pi.call("infinity_brief", {}, ctx);
+    assert.match(toolText(brief), /NEXT STEP · DEFINE/);
+    assert.match(toolText(brief), /infinity_validate/, "and it names a tool that exists");
+
+    // DEFINE opens only once features carry criteria — so write a plan.
+    // Nesting tasks inside a feature is the obvious wrong guess; it must say
+    // where they actually go rather than dropping them.
+    const wrongShape = await pi.call(
+      "infinity_plan",
+      { features: [{ id: "feature-001", tasks: [{ id: "task-001" }] }] },
+      ctx,
+    );
+    assert.ok(wrongShape.isError, "nested tasks should be refused");
+    assert.match(toolText(wrongShape), /top-level "tasks" array/);
+
+    // DEFINE is about criteria, and tasks do not exist yet — so this writes
+    // feature metadata with no `tasks` field at all.
+    const defined = await pi.call(
+      "infinity_plan",
+      {
+        baseRevision: 0,
+        goal: "Prove a cold start reaches a working pipeline",
+        features: [{ id: "feature-001", name: "First feature", criteria: ["it does the thing"] }],
+      },
+      ctx,
+    );
+    assert.ok(!defined.isError, toolText(defined));
+
+    const read = await pi.call("infinity_plan", {}, ctx);
+    assert.match(toolText(read), /Goal: Prove a cold start/);
+    assert.match(toolText(read), /it does the thing/, "the read view shows the criteria it is judged on");
+
+    const gate = await pi.call("infinity_validate", {}, ctx);
+    assert.match(toolText(gate), /Gate PASS/, `DEFINE should open with criteria set:\n${toolText(gate)}`);
+
+    const advanced = await pi.call("infinity_advance", {}, ctx);
+    assert.ok(!advanced.isError, toolText(advanced));
+    const config = JSON.parse(readFileSync(join(dir, "harness", "config.json"), "utf-8"));
+    assert.equal(config.currentPhase, "plan", "the pipeline moved, from a harness that did not exist");
+  });
+
+  await step("init restores what was deleted without touching what was written", async () => {
+    const rubric = join(dir, "harness", "evaluator-rubric.md");
+    writeFileSync(join(dir, "harness", "docs", "ARCHITECTURE.md"), "# Arch\n\nSomething real.\n");
+    rmSync(rubric);
+    const ctx = fakeCtx(dir, ["yes, use these defaults", "copilot — you stay in the loop"]);
+    await pi.command("infinity:init", "force", ctx);
+    assert.ok(existsSync(rubric), "the missing file came back");
+    assert.match(
+      readFileSync(join(dir, "harness", "docs", "ARCHITECTURE.md"), "utf-8"),
+      /Something real/,
+      "and the written one was left alone",
+    );
+  });
+
+  rmSync(dir, { recursive: true, force: true });
+}
+
 async function scenarioPackage() {
   const { auditSkillsDir, formatAudit } = await import(
     pathToFileURL(join(REPO_ROOT, "src", "core", "skillsAudit.ts")).href,
@@ -3003,6 +3176,7 @@ const SCENARIOS = [
   ["widget", "rendering across empty, huge, long, CJK, ASCII and narrow", scenarioWidget],
   ["edges", "adversarial plans and inputs", scenarioEdges],
   ["extension", "the pi adapter driven through its real tools, commands and hooks", scenarioExtension],
+  ["coldstart", "install, open pi, and get to a working harness", scenarioColdStart],
   ["package", "what npm actually ships, unpacked and inspected", scenarioPackage],
   ["live", "one real model call (skipped when the endpoint is unreachable)", scenarioLive],
 ];

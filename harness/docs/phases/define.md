@@ -27,14 +27,31 @@ feature list.
    - No source files in project root
 5. Write `specs/prd.md` — scope, success criteria, non-goals
 6. Keep the PRD bounded: no vague verbs ("improve", "enhance")
-7. **Negotiate the sprint contract** (the DEFINE gate requires it agreed):
-   - `infinity-harness contract propose --scope "..." --criteria "tests pass|feature X works"`
-   - `infinity-harness contract review --agreed` (put on the evaluator hat: would
-     these criteria really prove the sprint worked?)
-8. **Create a feature branch**: `git checkout -b feature/<short-slug>` (the
-   gate rejects work on main/master)
-9. Run `infinity_validate` to check gates
-10. If PASS → `infinity_advance` to advance to PLAN
+7. **Write the acceptance criteria into the plan** — this is what the DEFINE
+   gate actually checks. Every feature needs criteria before it opens:
+
+   ```jsonc
+   // infinity_plan
+   {
+     "goal": "one line: what this whole run is for",
+     "features": [
+       { "id": "feature-001", "name": "Checkout flow",
+         "criteria": ["refunds reconcile against the ledger"] }
+     ]
+   }
+   ```
+
+   Tasks are a separate list and arrive in PLAN — do not nest them here.
+   Criteria must be observable: "refunds reconcile against the ledger", not
+   "refunds work well". Put the evaluator hat on and ask whether passing these
+   would really prove the feature works.
+8. **Record the sprint contract** in `harness/sprint-contract.md` — scope,
+   what is explicitly out, and how you will know you are done. The gate does
+   not read it; the next session does.
+9. **Create a feature branch**: `git checkout -b feature/<short-slug>` (later
+   gates reject work on main/master)
+10. Run `infinity_validate` to check gates
+11. If PASS → `infinity_advance` to advance to PLAN
 
 ## Rationalizations to Avoid
 | Excuse | Rebuttal |
@@ -49,7 +66,8 @@ feature list.
 
 ## Verification
 - [ ] `specs/prd.md` exists with scope, success criteria, non-goals
-- [ ] Sprint contract agreed with non-placeholder verification criteria
+- [ ] Every feature has observable acceptance criteria in the plan
+- [ ] Sprint contract recorded in `harness/sprint-contract.md`
 - [ ] On a feature branch (not main/master)
 - [ ] Folder structure agreed and documented
 - [ ] `infinity_validate` passes
