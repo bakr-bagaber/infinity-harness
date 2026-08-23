@@ -24,10 +24,24 @@ export function ensureDir(dir: string): void {
   mkdirSync(dir, { recursive: true });
 }
 
+/**
+ * Strip a leading UTF-8 byte-order mark.
+ *
+ * Windows writes one routinely — PowerShell's `Set-Content -Encoding utf8`,
+ * Notepad, and several editors all do — and `JSON.parse` rejects it. Without
+ * this, a user who opens harness/config.json in Notepad, changes one value and
+ * saves gets "config is missing or unreadable" and no clue why. The files are
+ * explicitly documented as hand-editable, so they have to survive the editors
+ * people actually have.
+ */
+export function stripBom(text: string): string {
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+}
+
 export function readText(path: string): string | null {
   if (!existsSync(path)) return null;
   try {
-    return readFileSync(path, "utf-8");
+    return stripBom(readFileSync(path, "utf-8"));
   } catch {
     return null;
   }
@@ -41,7 +55,7 @@ export function readText(path: string): string | null {
  */
 export function readJson<T>(path: string): T | null {
   if (!existsSync(path)) return null;
-  const raw = readFileSync(path, "utf-8");
+  const raw = stripBom(readFileSync(path, "utf-8"));
   if (raw.trim() === "") return null;
   try {
     return JSON.parse(raw) as T;

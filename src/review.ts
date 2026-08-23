@@ -5,6 +5,7 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { stripBom } from "./core/fsx.ts";
 
 export interface ShouldBounceOpts {
   projectDir?: string;
@@ -23,14 +24,14 @@ function readConfig(projectDir: string): any {
   try {
     const q = resolve(projectDir, "harness", "config.json");
     if (!existsSync(q)) return null;
-    return JSON.parse(readFileSync(q, "utf-8"));
+    return JSON.parse(stripBom(readFileSync(q, "utf-8")));
   } catch { return null; }
 }
 function readBounceCount(projectDir: string): number {
   try {
     const rp = resolve(projectDir, "harness", "rework.json");
     if (!existsSync(rp)) return 0;
-    const raw = JSON.parse(readFileSync(rp, "utf-8"));
+    const raw = JSON.parse(stripBom(readFileSync(rp, "utf-8")));
     if (Array.isArray((raw as any).history)) return (raw as any).history.length;
     if ((raw as any).returnTask) return 1;
     if (Array.isArray(raw)) return raw.length;

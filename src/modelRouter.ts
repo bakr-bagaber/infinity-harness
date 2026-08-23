@@ -6,7 +6,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { writeJsonAtomic } from "./core/fsx.ts";
+import { writeJsonAtomic, stripBom } from "./core/fsx.ts";
 
 export const ROUTER_FILE = "harness/model-router.json";
 export const ROUTER_VERSION = 1;
@@ -72,7 +72,7 @@ export function loadRouterConfig(projectDir?: string): RouterConfig {
   const p = routerPath(projectDir);
   if (!existsSync(p)) return { ...DEFAULT_ROUTER, byDifficulty: { ...DEFAULT_ROUTER.byDifficulty! }, byPhase: {}, byRole: {}, byFeature: {}, bySprint: {}, byTask: {}, consultation: { ...DEFAULT_ROUTER.consultation! }, budgets: { ...DEFAULT_ROUTER.budgets! } };
   try {
-    const raw = JSON.parse(readFileSync(p, "utf-8"));
+    const raw = JSON.parse(stripBom(readFileSync(p, "utf-8")));
     // merge with defaults to ensure fields
     const cfg: RouterConfig = {
       version: typeof raw.version === "number" ? raw.version : 1,

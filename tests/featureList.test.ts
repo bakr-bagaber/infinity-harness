@@ -18,6 +18,8 @@ import {
   validateKey,
 } from "../src/core/featureList.ts";
 import { ValidationError, type FeatureList, type Task, type TaskStatus } from "../src/core/types.ts";
+import { stripBom } from "../src/core/fsx.ts";
+import { defaultConfig as defaultConfigForBom, loadConfig as loadConfigForBom } from "../src/core/config.ts";
 
 function tmpProject(): string {
   const d = mkdtempSync(join(tmpdir(), "pi-featurelist-"));
@@ -459,3 +461,46 @@ function assertValidation(fn: () => unknown, match: RegExp): void {
 }
 
 console.log("All featureList tests PASS");
+
+// ── UTF-8 BOM tolerance ─────────────────────────────────────────────────────
+// Windows writes a BOM routinely (PowerShell `Set-Content -Encoding utf8`,
+// Notepad, several editors) and JSON.parse rejects it. The harness files are
+// documented as hand-editable, so they have to survive the editors people
+// actually have. Without this, editing config.json in Notepad produced
+// "config is missing or unreadable" and no clue why.
+{
+  const dir = mkdtempSync(join(tmpdir(), "infinity-bom-"));
+  try {
+    mkdirSync(join(dir, "harness", "features"), { recursive: true });
+    const BOM = "﻿";
+
+    const plan = {
+      version: "2.0",
+      baseRevision: 4,
+      goals: [{ id: "g", title: "survives a BOM" }],
+      sprints: [],
+      features: [
+        { id: "feature-001", name: "F", passes: false, tasks: [{ id: "t1", description: "a", status: "pending" }] },
+      ],
+    };
+    writeFileSync(join(dir, "harness", "features", "feature-list.json"), BOM + JSON.stringify(plan, null, 2), "utf-8");
+
+    const { list, existed } = loadFeatureList(dir);
+    assert.equal(existed, true);
+    assert.equal(list.baseRevision, 4, "a BOM does not make the plan look absent");
+    assert.equal(list.features.length, 1);
+    assert.equal(list.goals?.[0]?.title, "survives a BOM");
+
+    // And the config half of the same problem.
+    writeFileSync(join(dir, "harness", "config.json"), BOM + JSON.stringify(Object.assign(defaultConfigForBom(), { currentPhase: "build" }), null, 2), "utf-8");
+    const loaded = loadConfigForBom(dir);
+    assert.equal(loaded.ok, true, "a BOM does not make the config look unreadable");
+    assert.equal(loaded.config.currentPhase, "build");
+
+    assert.equal(stripBom(BOM + "x"), "x");
+    assert.equal(stripBom("x"), "x", "stripping is a no-op without a BOM");
+    console.log("✓ a UTF-8 BOM does not make harness files look missing");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}

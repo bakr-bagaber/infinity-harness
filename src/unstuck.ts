@@ -9,6 +9,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { hashLite } from "./worker.ts";
 import { loadRouterConfig, consultNext } from "./modelRouter.ts";
+import { stripBom } from "./core/fsx.ts";
 
 export type UnstuckStrategy = "retry" | "reframe" | "consult" | "rework" | "replan" | "master";
 
@@ -48,7 +49,7 @@ function readHarnessConfig(projectDir: string): any {
   try {
     const p = resolve(projectDir, "harness", "config.json");
     if (!existsSync(p)) return null;
-    return JSON.parse(readFileSync(p, "utf-8"));
+    return JSON.parse(stripBom(readFileSync(p, "utf-8")));
   } catch { return null; }
 }
 
@@ -60,7 +61,7 @@ function readCounts(projectDir: string): { reworkCount: number; replanCount: num
   try {
     const rp = resolve(projectDir, "harness", "rework.json");
     if (existsSync(rp)) {
-      const raw = JSON.parse(readFileSync(rp, "utf-8"));
+      const raw = JSON.parse(stripBom(readFileSync(rp, "utf-8")));
       if (Array.isArray((raw as any).history)) reworkCount = (raw as any).history.length;
       else if ((raw as any).returnTask) reworkCount = 1;
     }
@@ -68,7 +69,7 @@ function readCounts(projectDir: string): { reworkCount: number; replanCount: num
   try {
     const rp2 = resolve(projectDir, "harness", "replan.json");
     if (existsSync(rp2)) {
-      const raw = JSON.parse(readFileSync(rp2, "utf-8"));
+      const raw = JSON.parse(stripBom(readFileSync(rp2, "utf-8")));
       if (Array.isArray(raw)) replanCount = raw.length;
       else if (Array.isArray((raw as any).history)) replanCount = (raw as any).history.length;
       else if ((raw as any).reason) replanCount = 1;

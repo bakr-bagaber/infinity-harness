@@ -11,6 +11,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { resolve, join, dirname } from "node:path";
 import { spawn, execSync } from "node:child_process";
+import { stripBom } from "./core/fsx.ts";
 
 // ── constants ───────────────────────────────────────────────────────────────
 export const WORKER_ROOT_SEGMENT = "tmp/infinity-harness";
@@ -54,7 +55,7 @@ function readBaseRevision(projectDir: string): number {
   try {
     const p = resolve(projectDir, "harness", "features", "feature-list.json");
     if (!existsSync(p)) return 0;
-    const raw = JSON.parse(readFileSync(p, "utf-8"));
+    const raw = JSON.parse(stripBom(readFileSync(p, "utf-8")));
     return typeof raw.baseRevision === "number" ? raw.baseRevision : 0;
   } catch {
     return 0;
