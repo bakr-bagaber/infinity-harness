@@ -4,7 +4,8 @@
  * Pure helpers for `tmp/infinity-harness/<run-id>/<feature>/<task>/attempt-N/`
  * Uses `proper-lockfile` on `harness/features/feature-list.json` and
  * `harness/config.json` so concurrent workers do not corrupt `baseRevision`.
- * Preserves 5-level fields via `harnessTaskList` helpers.
+ * The plan itself is read here and never written: `src/taskList.ts` is its only
+ * writer, and the only place that has to preserve unknown task fields.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from "node:fs";

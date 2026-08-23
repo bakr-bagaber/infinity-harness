@@ -1,41 +1,159 @@
-# Architecture — pi-harness v1.2.0 (F7: Ops Activation — router live + auto-bounce/unstuck)
+# Architecture
 
-v1.0 shipped 5-level widget + atomic baseRevision + worker isolation + goal loop + remote. v1.1.0 adds resilient self-correction as bounded, configurable, optional layers on top of the forward-only harness.
+infinity-harness is a pi extension that drives an agent through a gated build pipeline and keeps it
+going, unattended, for hours or days.
 
-## Module Structure
+The whole design rests on one idea: **take two decisions away from the model.** When work is done is
+decided by a deterministic gate, not the agent's judgement. What happens next is decided by a
+forward-only phase machine, not the agent's preference. Everything else exists to keep those two
+decisions honest across a very long run.
 
-Top-level layout mirrors the Pi package contract:
+## Shape
 
-- `extensions/harness-enforcer/index.ts` — core enforcement extension. Subscribes to Pi events (`session_start`, `turn_end`, `tool_call`, `agent_start`/`agent_end`, `session_shutdown`, `session_before_compact`, `session_compact`, `context`). Registers `harness_task_list`, `harness_spawn_worker`, `pi_goal_task`/`harness_goal_loop`, `pi_harness_remote`/`harness_remote` hidden tools. Renders widget via `ctx.ui.setWidget`/`setStatus`, manages `harness:checkpoint` hidden injection (`pi.appendEntry`), guards `harness/config.json` hand-edits, routes per-task model via `src/modelRouter.ts`. Stays `notify`+`appendEntry` only (no `sendUserMessage` mid-stream). Depends on `proper-lockfile`, `string-width`, dynamic `cli/lib/*`.
-- `src/widget.ts` — pure rendering library (no Pi deps). Exports `WIDGET_LIMIT=8`, `COMPLETED_CONTEXT=3`, `statusIcon`, `wrapWidgetLines`, `getWidgetWindowBounds`, `buildWidgetLines`, `formatDeps`. Status `rework` renders as `↷` amber; `getWidgetWindowBounds` prioritizes `in_progress` → `rework` → `pending` → `blocked`. Ports task-tracker + pi-long-task + 99people deps display. Tested via `tests/widget.test.ts`.
-- `src/harnessTaskList.ts` — atomic state engine. `TaskStatus` includes `rework`; `VALID_STATUSES` includes `rework`; `atomicApply` with `baseRevision` optimistic concurrency, omission=deletion, `dependsOn` cycle/missing, `in_progress`/`complete` requires deps `completed`, `completed→completed` prune, temp-file+rename. Validates `difficulty`/`modelHint` pass-through.
-- `src/worker.ts` — worker isolation. `createWorkerRunDir`, `spawnIsolatedWorker`, `recordAttempt`, `buildFingerprint`, `hashLite`. `SpawnWorkerOpts.model` recorded in `fingerprint.extra.model` and injected as `pi --model <resolved>` when command contains `pi` and no existing `--model`. Attempt history `tmp/pi-harness/<run-id>/<featureId>/<taskId>/attempt-N/{prompt.md,output.log,fingerprint.json}` with `proper-lockfile` on `harness/features/feature-list.json` + `harness/config.json`.
-- `src/goalSpec.ts` / `src/goalLoop.ts` / `src/goalState.ts` — goal loop (ported pi-long-task MIT, v0.5.0). `GOAL_SPEC_SCHEMA_VERSION=1`, `DEFAULT_GOAL_LOOP_LIMITS {1,50,48h,3h,30min}`, `GoalStateStore` with canonical `harness/goals/GOAL_SPEC.json` via `proper-lockfile` + run-scoped `tmp/pi-harness/goals/<runId>/`. `goalLoop.ts` now exports `resolveReviewerModel()` via `src/modelRouter.ts` fresh-read.
-- `src/modelRouter.ts` — difficulty tiers + MASTER ladder (F6). `ROUTER_FILE=harness/model-router.json`, `ROUTER_VERSION=1`, `RouterConfig {enabled,default,byDifficulty, master,byPhase,byRole,byFeature,bySprint,byTask, consultation:{enabled,maxPerTask,oneStepOnly,requireExhaustion}, budgets:{maxReworksPerRun,maxReplansPerRun,maxReviewBounces}}`. `DEFAULT_ROUTER` enabled false, default `opencode/muse-spark-1.2-contributor-free`, ladder `easy→moderate→difficult→MASTER`. `resolveModel(opts)` priority `task.modelHint > byTask[key|id] > byDifficulty[difficulty] > byFeature > bySprint > byPhase > byRole > default`; `consultNext(currentDifficulty, {consultedCount})` one-step, MASTER never directly assigned. `loadRouterConfig` fresh-read each call merged with defaults. `routerSummary` for remote.
-- `src/rework.ts` — backward edge with return-to-origin (F6). `REWORK_FILE=harness/rework.json`, `ReworkRecord {runId,returnFeature,returnTask,impacted,reason,timestamp,remainingBudgets,maxImpactDepth}`. `computeImpact` forward BFS on `dependsOn` DAG limited `maxImpactDepth 3`. `startRework({featureId,taskId,reason,maxImpactDepth})` resolves `originKey` via `key|featureId/taskId|id`, bumps `baseRevision`, flips origin+impacted to `rework` `↷`, writes `harness/rework.json` via `proper-lockfile+tmp+rename` with `history[]`.
-- `src/replan.ts` — mid-BUILD plan amendment (F6). `REPLAN_FILE=harness/replan.json`, `amendPlan({addSprints,addFeatures,addTasks})` validates DAG (`validateDeps` missing, `detectCycle`, status guard), guards `maxReplansPerRun 2`, bumps `baseRevision`, `proper-lockfile+tmp+rename`.
-- `src/unstuck.ts` — unstuck matrix (F6). `DEFAULT_STRATEGIES ["retry","reframe","consult","rework","replan","master"]`, `chooseUnstuckStrategy({attemptFingerprints,currentFingerprint,fileDelta,lastUnstuckAt,hysteresisMs,consultedCount,reworkCount,replanCount,masterUsed})` tries strategies in `harness/config.json unstuck.strategies` order, respecting `maxReworks/maxReplans/maxBounces/maxPerTask`, `fingerprint dedup` via `hashLite`, `fileDelta+bounceRequiresDelta`, `hysteresis`, `oneStepOnly`, `requireExhaustion`, MASTER once per run. Fresh-read each call from `harness/config.json` + `harness/model-router.json`.
-- `src/review.ts` — REVIEW bounce guard (F6). `shouldBounceToRework({fileDelta,bounceCount})` fresh-read `harness/config.json {allowBackward,maxBounces:2,bounceRequiresDelta}`; bounces only when `fileDelta true` else ignored, guards `maxBounces` via `harness/rework.json` history.
-- `src/remote.ts` — read-only HTTP view (F5+F6). `buildRemoteState(projectDir)` reads `harness/features/feature-list.json` + `harness/goals/GOAL_SPEC.json` + widget via `buildWidgetLines`, plus `router`/`rework` via `readFileSync` on `harness/model-router.json`/`harness/rework.json` (no lock, no baseRevision bump). `createRemoteServer` on `127.0.0.1:0` with `GET /` HTML polling 2s + `GET /api/harness` JSON `RemoteState` + `GET /api/health`. `buildHtml` escapes `&<>"'`.
-- `harness/features/feature-list.json` — SSOT. Schema v1.0 extended: `task.status` includes `rework`, `task.difficulty easy|moderate|difficult` + `task.modelHint`, `feature/sprint difficulty`. 5-level + baseRevision + budgets.
-- `harness/model-router.json` v1 + `harness/rework.json` + `harness/replan.json` + `harness/config.json` rework/replan/unstuck/review blocks (runtime, read fresh each call, exposed read-only via remote, ignored from git per `.gitignore` except model-router).
+```
+                        ┌──────────────────────────────────┐
+   pi lifecycle ──────► │ extensions/infinity-harness      │   thin adapter
+                        │ hooks · tools · commands         │   no logic of its own
+                        └───────────────┬──────────────────┘
+                                        │
+        ┌───────────────────────────────┼───────────────────────────────┐
+        ▼                               ▼                               ▼
+   ┌─────────┐                   ┌─────────────┐                 ┌───────────┐
+   │ loop.ts │                   │  taskList   │                 │    ui/    │
+   │ decide  │                   │  atomic     │                 │ widget    │
+   │ next    │                   │  plan edit  │                 │ dashboard │
+   └────┬────┘                   └──────┬──────┘                 └─────┬─────┘
+        │                               │                              │
+        └───────────────┬───────────────┴──────────────────────────────┘
+                        ▼
+              ┌───────────────────────────────────────────────┐
+              │ src/core/                                     │
+              │ types · paths · fsx · lock · exec             │
+              │ config · phases · gates · brief · featureList  │
+              └───────────────────────┬───────────────────────┘
+                                      ▼
+                            harness/  (state on disk)
+                            config.json · features/feature-list.json
+```
 
-## Data Flow (F6 extended)
+**The extension is thin on purpose.** An earlier version inlined its own copies of the plan engine
+and the widget, so the tested code and the shipped code were two different implementations that
+drifted apart. There is one implementation now, in `src/`, and the adapter calls it. The same rule
+applies to every module: if you find yourself writing a private `loadFeatureList`, stop — that
+mistake has already been made twice and fixed twice.
 
-Planner assigns `difficulty`/`modelHint` in `feature-list.json`. Builder calls `harness_task_list` → `atomicApply` validates difficulty passthrough. For each BUILD task, `harness_spawn_worker` resolves model via `resolveModel({task:{difficulty,modelHint},feature,sprint,phase,role})` fresh, then `spawnIsolatedWorker({model})` injects `pi --model`. On failure, `chooseUnstuckStrategy` reads `model-router.json` + `config.json` fresh, respects budgets/dedup/fileDelta/hysteresis, returns `retry|reframe|consult(nextModel)|rework|replan|master`. `consultNext` walks ladder one step to `MASTER` at most once. Rework computes impact BFS depth 3, flips to `rework`, bumps `baseRevision`, review bounce gated by `fileDelta`.
+## Layers
 
-## Rendering Details
+### `src/core/` — owned foundations
 
-`buildWidgetLines` 5-level with `rework` amber `↷` via `statusIcon`. Window keeps 3 completed context around active `rework`/`in_progress`. Remote `GET /api/harness` includes `router {enabled,budgets,byDifficulty}` + `rework {active,impactedCount,returnTask}` without incrementing `baseRevision`.
+| Module | Responsibility |
+|---|---|
+| `types.ts` | Every shape crossing a module boundary. No I/O; safe to import anywhere. |
+| `paths.ts` | The only place a `harness/…` path is spelled out. |
+| `fsx.ts` | Atomic JSON writes, `.bak` snapshots, absent-vs-corrupt reads. |
+| `exec.ts` | Every shell-out, bounded by a timeout. Never throws; failures are data. |
+| `lock.ts` | `withLockSync` (exclusive, fail-closed) and `withLock` (advisory, best-effort). |
+| `config.ts` | `harness/config.json` — pipeline state, retry budgets, gate history. |
+| `phases.ts` | The forward-only state machine and `transitionPhase`. |
+| `gates.ts` | The deterministic checks and the runner. |
+| `featureList.ts` | The plan on disk: load, save, flatten, progress, dependency integrity. |
+| `brief.ts` | "What do I do now?", assembled from state and rendered for a model. |
 
-## Concurrency & Persistence
+These were ported to TypeScript from a sibling CLI project that used to be reached through a symlink.
+The symlink made the package unshippable — it pointed at an absolute path on one developer's
+machine — so the needed logic is now owned, typed, and tested here.
 
-Writes use `proper-lockfile` (retries 8, stale 10000, update 2000) + `write tmp.<pid>.tmp` + `renameSync` for atomicity on `feature-list.json`, `rework.json`, `replan.json`, canonical `GOAL_SPEC.json`. Reads (`buildRemoteState`, `loadRouterConfig`, `shouldBounceToRework`, `chooseUnstuckStrategy`) use `readFileSync`+`existsSync` fresh each call, no lock, no bump. `baseRevision` increments only on real change. Budgets cap infinite loops (`maxReworks 3` `maxReplans 2` `maxBounces 2` `maxPerTask 1`), fingerprint dedup via `hashLite`, `bounceRequiresDelta` requires `fileDelta`, `hysteresisMs` cooldown.
+### `src/` — the harness proper
 
-## F7 Ops Activation (1.2.0)
+- **`taskList.ts`** — the atomic plan editor. The agent submits the complete list; omission means
+  deletion; `baseRevision` guards the write; unknown fields survive.
+- **`loop.ts`** — `decideNext()`: given state on disk, continue, advance, wait, or stop.
+- **`worker.ts`** — isolated per-task workers under `tmp/infinity-harness/<run>/`.
+- **`modelRouter.ts`** — optional difficulty ladder, disabled and vendor-neutral by default.
+- **`rework.ts` / `replan.ts`** — bounded backward movement: BFS impact analysis, DAG-guarded
+  mid-build amendment.
+- **`unstuck.ts` / `review.ts`** — escalation strategy matrix; the REVIEW bounce guard.
+- **`remote.ts`** — the read-only dashboard server.
 
-`harness/model-router.json` `enabled:true` makes `resolveModel` ladder live (`easy->moderate->difficult->MASTER` one-step, MASTER never assigned). `turn_end` now auto-calls `shouldBounceToRework` (review+fileDelta, maxBounces 2) and `chooseUnstuckStrategy` (budgets 3/2/2,hysteresis,dedup,fileDelta) — both notify+appendEntry only. `harness/evaluator-rubric.md` now 12/12 v1.1.0. Live E2E proved via `tmp` clone + `GET /api/harness` exposing `router`/`rework` read-only.
+### `src/ui/` — the visible surface
+
+- **`theme.ts`** — ANSI-aware width, wrapping, truncation, colour degradation, glyph fallback.
+- **`widget.ts`** — the terminal plan view.
+- **`dashboard.ts`** — the web plan view, same information design.
+
+## Data flow
+
+```
+session_start ──► buildBrief ──► renderBrief ──► sendMessage        the agent is told what to do
+                     ▲
+                     │
+agent works ─────────┼──► infinity_plan ──► writeTaskList ──► feature-list.json
+                     │                          (locked)              │
+                     │                                                ▼
+agent_settled ──► decideNext ──► runChecks ──► gate verdict      widget · dashboard
+                     │                │
+                     │                ├── pass ──► advancePhase ──► new brief ──► next turn
+                     │                └── fail ──► re-brief with the failing checks
+                     │
+                     └── budgets exhausted / no progress / paused ──► stop, with a reason
+```
+
+Nothing caches a second copy of the plan. The widget, the dashboard and the brief all read
+`feature-list.json`, so the visible state is always the real state — even when the agent's own
+narration has drifted.
+
+## Concurrency
+
+Parallel workers write the same plan file. `baseRevision` detects a stale **read**; it cannot
+serialise a read-modify-write. Two processes that both read revision N both pass the check and both
+write N+1, and one set of edits is gone — measured at 2 lost updates in a 6-way fan-out.
+
+So `writeTaskList` holds an exclusive lock across the entire read-apply-write, and **fails closed**:
+if the lock cannot be taken, the write is refused with an error the caller can retry, rather than
+racing and losing an edit silently.
+
+Two details that cost real debugging time:
+
+- The sync lock uses `<path>.ilock`, **not** `<path>.lock` — the latter is what `proper-lockfile`
+  uses, and it is a directory there too. Sharing the name made a nested async+sync lock deadlock
+  against itself.
+- Locks are held for the duration of the *work*, never across an agent turn. An earlier version took
+  a lock at the start of a turn with an 8-second staleness timeout, so every turn longer than eight
+  seconds left a lock another process was entitled to steal.
+
+## Stopping
+
+Continuing is easy; knowing when to stop is the hard part, and the difference between a useful
+overnight run and a wasted weekend of tokens.
+
+| Guard | Catches |
+|---|---|
+| No-progress detector | The gate keeps failing and the tree fingerprint hasn't moved — spinning, not working |
+| Wall clock | A run nobody remembered to stop |
+| Iteration ceiling | Runaway loops that stay under the clock |
+| Retry budgets | One impossible task consuming the run |
+| Human brake | `paused`, `/infinity:halt`, or `harness/STOP` |
+
+The fingerprint is `git status --porcelain` + HEAD + the plan revision and task statuses. The first
+failing iteration establishes a baseline and never counts as a stall — there is nothing to compare
+against yet.
+
+Every stop carries a reason. A human coming back finds an explanation, not a mystery.
+
+## Failure posture
+
+- **Reads distinguish absent from corrupt.** A missing plan seeds an empty one; a corrupt plan
+  recovers the previous good revision from `.bak` rather than silently starting over.
+- **Advisory checks never fail a gate.** A gate that fails for a reason the agent cannot fix
+  deadlocks the loop, so an unconfigured lint command is reported, not enforced.
+- **Errors are data where the caller can continue** (`{ ok, error }`), thrown where it cannot.
+- **The dashboard cannot perturb the run.** Read-only, loopback-only, and it never runs the gate —
+  running lint and tests because someone opened a web page would be a surprising side effect.
 
 ## Verification
 
-`npx tsc --noEmit` clean; tests `widget`, `harnessTaskList`, `worker`, `remote`, `goalSpec/Loop/State`, `modelRouter` (priority ladder, MASTER never assigned, one-step, fresh-read toggle), `rework` (BFS depth, flip/bump/history/guard), `replan` (DAG guards, maxReplans), `unstuck` (order, budgets, fileDelta, hysteresis, dedup, consultation), `review` (bounceRequiresDelta, maxBounces, fresh-read). Enforcer `tsc` clean, no `sendUserMessage`, `harness_task_list` baseRevision optimistic with `rework` status preserved.
+- `npm test` — 20 unit files, plain `node:assert`, no framework.
+- `npm run e2e` — 11 scenarios over real temp projects, real git repos, real child processes: the
+  full pipeline walkthrough, loop convergence, every stop condition, SIGKILL-and-restart, a 6-way
+  concurrent write fan-out with an unlocked control, data round-trip, the dashboard, widget
+  rendering across shapes, adversarial input, and the extension adapter itself.

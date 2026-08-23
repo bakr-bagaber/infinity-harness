@@ -1,57 +1,95 @@
 # Changelog
 
-All notable changes to `pi-harness` will be documented here.
+All notable changes to this project are documented here.
+Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.2.0] - 2026-08-22
+## [2.0.0] — 2026-08-23
 
-### Added
-- **F7 Ops Activation -> 1.2.0:** flip `harness/model-router.json` `enabled:false->true` so `resolveModel` ladder `easy->moderate->difficult->MASTER` is live fresh-read each call (priority `task.modelHint > byTask > byDifficulty > byFeature > bySprint > byPhase > byRole > default`, `DEFAULT_ROUTER` safe defaults, `loadRouterConfig` merges, `consultNext` one-step to MASTER never directly assigned, `maxPerTask 1` `oneStepOnly` `requireExhaustion`). Wire `extensions/harness-enforcer/index.ts` `turn_end` `+ F7 auto-bounce/unstuck` to auto-call `shouldBounceToRework({projectDir,fileDelta})` on `review` FAIL (reads `harness/config.json` `review:{allowBackward true,maxBounces 2,bounceRequiresDelta true}` + `harness/rework.json` history, `fileDelta` via `git diff --quiet`/`--cached`/`status`, `maxBounces 2` guard) and `chooseUnstuckStrategy({projectDir,fileDelta})` on any FAIL (reads `harness/config.json` `rework/replan/unstuck/review` + `harness/model-router.json` `budgets:{maxReworksPerRun 3,maxReplansPerRun 2,maxReviewBounces 2}` `consultation`, order `retry->reframe->consult->rework->replan->master`, `hashLite` fingerprint dedup, `fileDelta+bounceRequiresDelta`, `hysteresisMs`, `oneStepOnly`, `requireExhaustion`, MASTER once per run) — both `notify` + `appendEntry` only (`harness:rework-eligible`, `harness:unstuck`) no `sendUserMessage` mid-stream, budgets/hysteresis/fileDelta guarded. Sync `harness/config.json:git.branch` to `feature/pi-harness-f7-ops` (was stale `f6-resilient`), update `harness/evaluator-rubric.md` F1 9/12 (2026-08-21, 72 lines) -> v1.1.0 F6 12/12 (2026-08-22, 62 lines) with evidence 12 suites `widget/harnessTaskList/worker/remote/goalSpec/Loop/State/modelRouter/rework/replan/unstuck/review`, F6 modules `modelRouter/rework BFS/replan DAG/unstuck matrix/review bounce/worker model/remote router+rework` + F7 ops `enabled:true` + `turn_end` wiring. Live E2E dogfood on `tmp` clone: `resolveModel` ladder `easy/moderate->free` `difficult->meta`, `consultNext` `easy->moderate` `difficult->MASTER` `overflow null`, `shouldBounceToRework` `noDelta false` `withDelta true`, `chooseUnstuckStrategy` `retry` `dedup->reframe` `noDelta rework blocked` `consult exhaustion`, `computeImpact` BFS depth 1->[b] 2->[b,c] 3->[b,c,d], `startRework` flips `rework-demo` + `rework-demo-2` to `rework` bumps `baseRevision 2->3` writes `harness/rework.json` `proper-lockfile+tmp+rename` `history`, `buildRemoteState`/`createRemoteServer` `127.0.0.1:0` `GET /api/harness` exposes `router:{enabled:true,budgets,byDifficulty}` + `rework:{active,impactedCount}` + `widgetLines`/`baseRevision` without bump, `GET /` HTML contains `pi-harness` + `Progress`, concurrent x5 serialized, close idempotent + re-bind, read-only `readFileSync` no lock no bump, `escapeHtml` `&<>"` + `'`, `npx tsc --noEmit` clean.
+Renamed from `pi-harness` to **infinity-harness**, and rebuilt from a working prototype into
+something shippable. This is a breaking release: tool names, command names and the package name all
+changed, and the extension no longer depends on an external repository.
 
-## [1.1.0] - 2026-08-22
+### Breaking
 
-### Added
-- **F6 Resilient Self-Correction -> 1.1.0:** configurable, optional, fresh-read each call, exposed read-only via pi_harness_remote GET /api/harness without baseRevision bump or lock. Adds harness/model-router.json v1 {version:1,enabled,default,byDifficulty:{easy,moderate,difficult},master,byPhase,byRole,byTask,consultation:{enabled,maxPerTask:1,oneStepOnly,requireExhaustion},budgets:{maxReworksPerRun:3,maxReplansPerRun:2,maxReviewBounces:2}} with src/modelRouter.ts resolveModel and consultNext ladder easy->moderate->difficult->MASTER (MASTER never assigned, one-step). Adds harness/rework.json via src/rework.ts startRework forward BFS on dependsOn DAG limited maxImpactDepth 3, flips origin+impacted to rework ↷ amber via src/widget.ts/src/harnessTaskList.ts, bumps baseRevision, proper-lockfile+tmp+rename; loadRework/clearRework. Adds src/replan.ts amendPlan validates DAG no cycles/missing deps, guards maxReplansPerRun 2, proper-lockfile+tmp+rename. Adds src/unstuck.ts chooseUnstuckStrategy retry->reframe->consult->rework->replan->master with budgets, fingerprint dedup via hashLite, fileDelta+bounceRequiresDelta, hysteresis, oneStepOnly, requireExhaustion, MASTER once per run. Adds src/review.ts shouldBounceToRework fresh-read harness/config.json review allowBackward maxBounces 2 bounceRequiresDelta - REVIEW fail bounces to rework only when fileDelta true else ignored, guarded maxBounces. Extends src/worker.ts SpawnWorkerOpts.model fingerprint extra model plus pi --model injection and src/goalLoop.ts resolveReviewerModel; enforcer harness_spawn_worker and pi_goal_task pass model through. Extends src/remote.ts RemoteState router+rework read-only via readFileSync and schema status rework plus difficulty modelHint. No new harness phase, no endless loops (budgets+fingerprint+requiresDelta+hysteresis), npx tsc --noEmit clean, enforcer notify+appendEntry only no sendUserMessage, harness_task_list still baseRevision optimistic with rework status.
-- harness/config.json adds rework:{enabled,maxReworks:3,maxImpactDepth:3}, replan:{allowMidBuildAmend,maxReplans:2}, unstuck:{strategies,hysteresisMs}, review:{allowBackward,maxBounces:2,bounceRequiresDelta} read fresh per call. tests/modelRouter.test.ts, tests/rework.test.ts, tests/replan.test.ts, tests/unstuck.test.ts, tests/review.test.ts passing.
-
-## [1.0.0] - 2026-08-22
-
-### Added
-- **F5 Remote Read-Only Web View -> 1.0.0:** src/remote.ts with buildRemoteState(projectDir) + createRemoteServer({projectDir,host,port}) via node:http on 127.0.0.1 ephemeral -> GET / HTML inline polling (2000ms) + GET /api/harness JSON RemoteState {baseRevision,features,goals,widgetLines,timestamp} + GET /api/health {ok,version} using readFileSync (no baseRevision increment, no lock) and buildWidgetLines; buildHtml escapes (&,<,>,",') and lists Goals/Features tables with Progress. tests/remote.test.ts covers ephemeral port, shape baseRevision/widgetLines/timestamp, HTML contains pi-harness + baseRevision + Progress with escaping, concurrent x5 fetches serialized, close idempotent and frees port for re-bind, readOnly baseRevision not mutated.
-- extensions/harness-enforcer now exposes pi_harness_remote (alias harness_remote) hidden tool {action:start|stop|status,port?,host?,projectDir?} delegating to src/remote.ts singleton per session; start launches ephemeral server -> {url,host,port}, status builds RemoteState without starting, stop closes; session_shutdown closes remoteServer; enforcer stays notify+appendEntry only, no sendUserMessage mid-stream regression, no baseRevision or feature-list.json corruption on repeated start/stop.
-
-## [0.5.0] - 2026-08-22
-
-### Added
-- **F4 Goal Loop with GOAL_SPEC.json + Reviewer Worker:** ports pi-long-task goal loop to src/goalSpec.ts (GOAL_SPEC_SCHEMA_VERSION=1, createGoalSpecification/validateGoalSpecification/goalSpecificationToMarkdown), src/goalLoop.ts (GoalLoopState, DEFAULT_GOAL_LOOP_LIMITS {1,50,48h,3h,30min}, createGoalLoopState/normalizeGoalLoopLimits/startGoalIteration/recordGeneratedTodo/WorkerResult/ReviewerResult/goalLoopStopReason/validateGoalLoopState), src/goalState.ts (GoalStateStore with paths {goalRunDir,statePath,tracePath,resultPath,goalSpecPath,iterationsDir} -> tmp/pi-harness/goals/<runId>/, canonical harness/goals/GOAL_SPEC.json via proper-lockfile atomic tmp+rename, saveState/loadState/saveGoalSpecificationWithCanonical/appendTrace/writeIterationSnapshot); tests/goalSpec.test.ts, tests/goalLoop.test.ts, tests/goalState.test.ts covering create/validate/markdown, limits lifecycle reviewer terminal cancellation timeout max_iterations, persistence concurrent writers and baseRevision isolation.
-- extensions/harness-enforcer now exposes pi_goal_task (alias harness_goal_loop) hidden tool delegating to src/goalLoop.ts+src/goalState.ts+src/worker.ts spawnIsolatedWorker; reviewer isolated to tmp/pi-harness/<runId>/review/attempt-N/{prompt.md,output.log,fingerprint.json} with decision parsing {decision: complete|incomplete|blocked|failed, remainingWork[]}; enforcer stays notify+appendEntry only, no sendUserMessage mid-stream regression.
-- Canonical harness/goals/GOAL_SPEC.json mirrors run-scoped tmp/pi-harness/goals/<runId>/GOAL_SPEC.json with proper-lockfile so concurrent goal loops do not corrupt it; harness/goals/ created, tmp/ already ignored.
-
-## [0.4.0] - 2026-08-21
-
-### Added
-- **F3 Worker Isolation per BUILD Task:** `src/worker.ts` with `createWorkerRunDir`, `spawnIsolatedWorker`, `recordAttempt`, `buildFingerprint`, `hashLite`, `proper-lockfile` isolation on `harness/features/feature-list.json` + `harness/config.json`; attempt history to `tmp/pi-harness/<run-id>/<feature>/<task>/attempt-N/{prompt.md,output.log,fingerprint.json}` preserving `baseRevision` and 5-level fields; `tests/worker.test.ts` covering dir creation, `attempt-N` increment, `proper-lockfile` concurrent writes, `baseRevision` preservation, `fingerprint.json` validity and `tmp/pi-harness` isolation.
-- `extensions/harness-enforcer` now exposes `harness_spawn_worker` hidden tool delegating to `src/worker.ts` `spawnIsolatedWorker` so `dev-harness run` isolates per BUILD task via `tmp/pi-harness/<run-id>/` without leaking `gateHistory` to the main session; extension stays `notify`+`appendEntry` only, no `sendUserMessage` mid-stream regression.
-- `tmp/` ignored (`tmp/pi-harness/` worker attempt history does not dirty the repo).
-
-## [0.3.0] - 2026-08-21
+- **Package renamed** `pi-harness` → `infinity-harness`.
+- **Tools renamed.** `harness_task_list` → `infinity_plan`, `pi_goal_task`/`harness_goal_loop` →
+  `infinity_goal`, `pi_harness_remote`/`harness_remote` → `infinity_dashboard`,
+  `harness_spawn_worker` → `infinity_spawn_worker`. New: `infinity_brief`, `infinity_validate`,
+  `infinity_advance`.
+- **Commands renamed** to the `/infinity:*` namespace, and `/infinity:run` / `/infinity:halt` added.
+- **The `cli`, `prompts` and `skills` symlinks are gone.** They pointed at absolute paths inside a
+  sibling `dev-harness` checkout, which made the package impossible to install anywhere else. The
+  logic they reached is now owned TypeScript in `src/core/`. Skills ship from `harness/skills/`.
+- **Node 22+ required** (the test and E2E runners use native TypeScript stripping).
+- **Dependencies trimmed** to `proper-lockfile` and `string-width`; `ajv` and `simple-git` were
+  declared but unused.
 
 ### Fixed
-- **Enforcer stream race (F1 hotfix):** `turn_end` no longer calls `sendUserMessage`/`sendMessage` mid-stream — now `notify`+`appendEntry` only, avoiding OpenAI Responses stream ended error during `high` thinking turns.
-- **BUILD gate infinite dirty:** untracked harness runtime state (`harness/config.json`, `feature-list.json`, `progress.md`, `session-handoff.md` now ignored) so `gateHistory` appends do not block `phase next`.
+
+- **Concurrent plan writes could lose edits.** `writeTaskList` read the plan, checked `baseRevision`,
+  then wrote — three steps with no mutual exclusion, so two writers that both read revision N both
+  passed the check and both wrote N+1. Measured at 2 lost updates in a 6-way fan-out. The whole
+  read-apply-write now happens under an exclusive lock, and fails closed rather than racing.
+- **Plan writes silently dropped task fields.** Round-tripping through the extension rebuilt each
+  task from a fixed shape, discarding `difficulty`, `modelHint`, `criteria` and anything else. Updates
+  now merge onto the stored task, so unknown fields survive.
+- **The tested code was not the shipped code.** The extension carried inlined copies of the plan
+  engine and the widget; the test suite exercised `src/`, which the extension never called. One
+  implementation now, in `src/`.
+- **Status aliases failed dependency validation.** `rework.ts` and `replan.ts` parsed the plan raw, so
+  a task stored as `"done"` never compared equal to `"complete"` and every amendment to such a plan
+  was rejected — with a message claiming a task in flight had unresolved dependencies.
+- **A nested lock deadlocked against itself.** The new sync lock used `<path>.lock`, the same
+  directory `proper-lockfile` uses, so a caller holding the async lock blocked the event loop waiting
+  for a directory it already owned. The sync lock now uses `<path>.ilock`.
+- **Locks were held across whole agent turns** with an 8-second staleness timeout, meaning any turn
+  longer than eight seconds left a lock another process could steal. Critical sections are now
+  milliseconds.
+- **`require()` in an ESM module** meant the rich tool renderers silently never loaded.
+- **`process.cwd()` in the context hook** instead of the session's project directory.
+- **The widget overran its frame below 40 columns.** The progress row now degrades instead of padding
+  past the edge, and unboxed output is clamped to the requested width.
+- **Ambiguous-width glyphs misaligned the widget.** `string-width` reports `⚠ ↷ ▸ ✓ ·` as two columns;
+  terminals draw them in one. Width measurement now pins them.
+- **Truncation destroyed ANSI styling**, bleeding colour into the rest of the line.
+- **`gateHistory` grew without bound** over a long run. Capped at 500 entries.
+- **A type-only import of `AddressInfo`** made the dashboard module fail to load under type stripping.
+- **A raw NUL byte in a source file** made `grep` and `file` treat the module as binary.
 
 ### Added
-- **F2 Enforcer Auto-Loop Hardening:** `session_start` auto-inject lightweight (`notify`+`widget`), `context` hidden checkpoint and periodic reminder every 3 calls, `session_before_compact` `appendEntry` checkpoint, `tool_call` guard blocks phase-skip without `PASS`, `high` not `xhigh` for `dev-harness run` workers.
 
-## [0.2.0] - 2026-08-21
+- **Continuous run driver** (`src/loop.ts`). `/infinity:run` validates, advances, re-briefs and keeps
+  going until the pipeline completes or a guard fires: no-progress detection, wall-clock and
+  iteration ceilings, retry budgets, and a human brake (`/infinity:halt`, `paused`, `harness/STOP`).
+  Every stop names its reason.
+- **New terminal widget.** Phase rail, progress meter, task window centred on the active task,
+  dependency references, subtasks under the task actually being worked. Responsive to ~58 columns,
+  ASCII fallback on non-UTF-8 locales, colour degradation from truecolor to none.
+- **New web dashboard.** Same information design for the browser: stacked progress meters that show
+  stuck work as colour rather than absence, gate panel, alerts strip, 5-second self-refresh with
+  backoff. Read-only, loopback-only, and it never runs the gate.
+- **Deterministic gate suite** with per-phase checks, task-scoped validation, and advisory checks that
+  report without blocking.
+- **E2E suite** (`npm run e2e`): 11 scenarios, 79 assertion groups, over real temp projects, real git
+  repos and real child processes — including a concurrency fan-out with an unlocked control that
+  demonstrates why the lock is load-bearing.
+- **Test runner** (`npm test`): 20 files, plain `node:assert`, no framework.
+- `.bak` recovery for a corrupt plan file.
+- A `LockTimeoutError` a caller can actually act on.
 
-### Added
-- **F1 Visual 5-Level Widget + baseRevision** — Pi TUI now shows `Goal → Feature → Sprint → Task → Subtask` with rolling window (`WIDGET_LIMIT=8`, `COMPLETED_CONTEXT=3`), `+3 more` overflow, `← #1` dependency numbers, and `Progress: x/y`.
-- `harness/features/feature-list.json` extended to 5 levels: `baseRevision`, `goals[]`, `sprints[]`, `tasks[].key`/`dependsOn`/`subtasks[]` with JSON schema validation.
-- `src/widget.ts` ported from `task-tracker` + `pi-long-task` (status icons `○●◐⚠↷`, section headers `▸ Feature`).
-- `harness_task_list` tool skeleton with `baseRevision` optimistic concurrency placeholder (full atomic + hidden `harness:checkpoint` for compaction lands in v0.3.0).
+### Changed
 
-### Fixed
-- `pi-harness` enforcer `session_start` lightweight + `context` injection to avoid `already processing` during `dev-harness run` preflight.
+- **Model routing ships vendor-neutral.** Every slot is empty by default, meaning "use whatever model
+  pi is already configured with". Installing the harness no longer silently redirects work to a
+  specific third-party model.
+- **Pi-only.** Support and references for other agent systems were removed; this is a pi extension
+  and nothing else.
+- The dashboard refuses to bind to a non-loopback interface without an explicit opt-in, and serves a
+  CSP tight enough that an escaping slip cannot become script execution.
+- Documentation rewritten: README, AGENTS.md, and `harness/docs/ARCHITECTURE.md`.
 
-## [0.1.0] - 2026-08-20
-- Initial clean port from `dev-harness` `5.1.0` — `cli`/`skills`/`prompts` via symlink, `extensions/harness-enforcer` with `session_start`/`turn_end`/`tool_call`/`proper-lockfile`.
+---
+
+Earlier releases (0.2.0 – 1.2.0) were developed under the `pi-harness` name and are not carried
+forward here; that history is in the git log.

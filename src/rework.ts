@@ -1,13 +1,38 @@
 /**
- * rework — backward edge with return-to-origin
- * Computes impact BFS via dependsOn DAG, flips origin+impacted to "rework" (reversible), bumps baseRevision, writes harness/rework.json
- * Atomic via proper-lockfile + tmp+rename
+ * infinity-harness — rework: the backward edge, with return-to-origin.
+ *
+ * A task that fails late rarely fails alone: whatever depends on it is suspect
+ * too. `startRework` walks the `dependsOn` graph forward from the origin, flips
+ * the origin and everything it reaches within `maxImpactDepth` to "rework", and
+ * records where the pipeline must return to in `harness/rework.json`.
+ *
+ * Plan I/O, sidecar I/O, config reads, paths and locking all come from
+ * `core/`. This module used to carry private copies of each, and they had
+ * quietly drifted: the private plan loader did a raw `readFileSync` +
+ * `JSON.parse`, so it neither normalised status aliases (a task stored as
+ * "done" never compared equal to "complete") nor fell back to the `.bak` after
+ * a corrupt write, and its saver did a bare tmp+rename with no backup. The
+ * private lock helper wrapped `proper-lockfile` on `<path>.lock` while the
+ * plan writer takes `<path>.ilock`, so the two never actually excluded each
+ * other. One implementation of each now, in `core/`.
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { unlinkSync } from "node:fs";
+import type { FeatureList, Task } from "./core/types.ts";
+import { flattenTasks, loadFeatureList, saveFeatureList } from "./core/featureList.ts";
+import { fileExists, readJsonSafe, writeJsonAtomic } from "./core/fsx.ts";
+import { loadConfig } from "./core/config.ts";
+import { featureListPath, reworkPath } from "./core/paths.ts";
+import { withLockSync } from "./core/lock.ts";
 
+/**
+ * Repo-relative label for the sidecar, kept for callers that display it.
+ * `core/paths.reworkPath()` is what actually resolves the file.
+ */
 export const REWORK_FILE = "harness/rework.json";
+
+export const DEFAULT_MAX_REWORKS = 3;
+export const DEFAULT_IMPACT_DEPTH = 3;
 
 export interface ReworkRecord {
   runId: string;
@@ -30,47 +55,49 @@ export interface StartReworkOpts {
   key?: string;
 }
 
-function projectDirOf(p?: string): string { return p ?? process.cwd(); }
-function reworkPath(projectDir: string): string { return resolve(projectDir, REWORK_FILE); }
-function filePath(projectDir: string): string { return resolve(projectDir, "harness/features/feature-list.json"); }
+export type StartReworkResult = {
+  impacted: string[];
+  baseRevision: number;
+  rework: ReworkRecord;
+};
 
-async function withFileLock<T>(filePathToLock: string, fn: () => Promise<T> | T): Promise<T> {
-  let release: (() => Promise<void>) | null = null;
-  try {
-    const mod: any = await import("proper-lockfile");
-    const lockfile = mod.default ?? mod;
-    try { mkdirSync(dirname(filePathToLock), { recursive: true }); } catch {}
-    if (!existsSync(filePathToLock)) {
-      try { writeFileSync(filePathToLock, "{}", "utf-8"); } catch {}
-    }
-    release = await lockfile.lock(filePathToLock, { retries: { retries: 8, minTimeout: 25, maxTimeout: 100 }, stale: 10000, update: 2000 });
-  } catch {
-    try { mkdirSync(dirname(filePathToLock), { recursive: true }); } catch {}
-    try { if (!existsSync(filePathToLock)) writeFileSync(filePathToLock, "{}", "utf-8"); } catch {}
-    try {
-      const mod2: any = await import("proper-lockfile");
-      const lf2 = mod2.default ?? mod2;
-      release = await lf2.lock(filePathToLock, { retries: { retries: 8, minTimeout: 25, maxTimeout: 100 } });
-    } catch { release = null; }
-  }
-  try { return await fn(); } finally { if (release) try { await release(); } catch {} }
+function projectDirOf(p?: string): string {
+  return p ?? process.cwd();
 }
 
-function loadFeatureList(projectDir: string): any {
-  const p = filePath(projectDir);
-  if (!existsSync(p)) throw new Error("feature-list.json missing: " + p);
-  return JSON.parse(readFileSync(p, "utf-8"));
-}
-function saveFeatureList(projectDir: string, data: any): void {
-  const p = filePath(projectDir);
-  mkdirSync(dirname(p), { recursive: true });
-  const tmp = p + "." + process.pid + ".tmp";
-  writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", "utf-8");
-  renameSync(tmp, p);
-}
-function resolveTaskKey(task: any): string { return task.key ?? task.id; }
+/** The minimum shape the impact walk needs: an identity and its dependencies. */
+export type ImpactTask = Pick<Task, "id" | "key" | "dependsOn">;
 
-export function computeImpact(allTasks: any[], originKey: string, maxDepth: number): string[] {
+/**
+ * Identity used by the rework graph: the stable `key` when set, else the id.
+ *
+ * Deliberately *not* `flattenTasks`' `compositeKey`, which falls back to
+ * `featureId/id`. `dependsOn` entries in the plan are written in this
+ * spelling, and matching them is the whole job here.
+ */
+function taskKey(t: ImpactTask): string {
+  return t.key ?? t.id;
+}
+
+/**
+ * Load the plan through the core loader.
+ *
+ * Keeps the "missing file" error this module has always thrown: a rework
+ * against a project that was never planned is a caller mistake, not an empty
+ * plan to be seeded.
+ */
+function loadPlan(projectDir: string): FeatureList {
+  const { list, path, existed } = loadFeatureList(projectDir);
+  if (!existed) throw new Error("feature-list.json missing: " + path);
+  return list;
+}
+
+/** Breadth-first walk over the reverse-dependency edges, capped at `maxDepth`. */
+export function computeImpact(
+  allTasks: readonly ImpactTask[],
+  originKey: string,
+  maxDepth: number,
+): string[] {
   const impacted: string[] = [];
   const visited = new Set<string>([originKey]);
   let frontier: Array<{ key: string; depth: number }> = [{ key: originKey, depth: 0 }];
@@ -79,10 +106,9 @@ export function computeImpact(allTasks: any[], originKey: string, maxDepth: numb
     for (const cur of frontier) {
       if (cur.depth >= maxDepth) continue;
       for (const t of allTasks) {
-        const k = resolveTaskKey(t);
+        const k = taskKey(t);
         if (visited.has(k)) continue;
-        const deps: string[] = t.dependsOn ?? [];
-        if (deps.includes(cur.key)) {
+        if ((t.dependsOn ?? []).includes(cur.key)) {
           visited.add(k);
           impacted.push(k);
           next.push({ key: k, depth: cur.depth + 1 });
@@ -94,105 +120,155 @@ export function computeImpact(allTasks: any[], originKey: string, maxDepth: numb
   return impacted;
 }
 
-export async function startRework(opts: StartReworkOpts): Promise<{ impacted: string[]; baseRevision: number; rework: ReworkRecord }> {
-  const projectDir = projectDirOf(opts.projectDir);
-  const maxDepth = opts.maxImpactDepth ?? 3;
-  const explicitKey = opts.key ?? opts.taskId;
-  const data0 = loadFeatureList(projectDir);
-  let originKey = explicitKey;
-  const allTasks0: any[] = [];
-  for (const f of data0.features ?? []) for (const t of f.tasks ?? []) allTasks0.push(t);
-  const candidates: string[] = [explicitKey, opts.featureId + "/" + opts.taskId, opts.taskId];
-  let foundById: string | null = null;
-  for (const t of allTasks0) {
-    if (t.id === opts.taskId && t.key) { foundById = t.key; break; }
-    if (t.id === opts.taskId) { foundById = t.id; break; }
-  }
-  if (foundById) candidates.unshift(foundById);
-  for (const cand of candidates) {
-    if (allTasks0.some((t) => resolveTaskKey(t) === cand)) { originKey = cand; break; }
-  }
-  let remainingReworks = 3;
-  try {
-    const cfg = JSON.parse(readFileSync(resolve(projectDir, "harness/config.json"), "utf-8"));
-    remainingReworks = cfg?.rework?.maxReworks ?? cfg?.budgets?.maxReworksPerRun ?? 3;
-  } catch {}
-  const rp = reworkPath(projectDir);
-  let priorCount = 0;
-  if (existsSync(rp)) {
-    try {
-      const prev = JSON.parse(readFileSync(rp, "utf-8"));
-      if (Array.isArray((prev as any).history)) priorCount = (prev as any).history.length;
-      else if ((prev as any).returnTask) priorCount = 1;
-    } catch {}
-  }
-  if (priorCount >= remainingReworks) throw new Error("maxReworksPerRun exceeded: " + priorCount + " >= " + remainingReworks);
+// ── sidecar: harness/rework.json ────────────────────────────────────────────
 
-  const result = await withFileLock(filePath(projectDir), async () => {
-    const data = loadFeatureList(projectDir);
-    const allTasks: any[] = [];
-    for (const f of data.features ?? []) for (const t of f.tasks ?? []) allTasks.push(t);
-    const originExists = allTasks.some((t) => resolveTaskKey(t) === originKey);
-    if (!originExists) throw new Error("origin task not found: " + originKey);
-    const impacted = computeImpact(allTasks, originKey, maxDepth);
+/** On disk this is either one bare record (the first write) or `{ history }`. */
+type ReworkSidecar = { history?: unknown; returnTask?: unknown };
+
+function readSidecar(projectDir: string): ReworkSidecar | null {
+  const raw = readJsonSafe<unknown>(reworkPath(projectDir), null);
+  return raw && typeof raw === "object" ? (raw as ReworkSidecar) : null;
+}
+
+function countPriorReworks(projectDir: string): number {
+  const prev = readSidecar(projectDir);
+  if (!prev) return 0;
+  if (Array.isArray(prev.history)) return prev.history.length;
+  return prev.returnTask ? 1 : 0;
+}
+
+/**
+ * Append a record, promoting a legacy single-record file to `{ history }`.
+ * Locked, because it is a read-modify-write of the sidecar.
+ */
+function appendReworkRecord(projectDir: string, record: ReworkRecord): void {
+  const path = reworkPath(projectDir);
+  withLockSync(path, () => {
+    const prev = readSidecar(projectDir);
+    if (!prev) {
+      writeJsonAtomic(path, { ...record });
+      return;
+    }
+    let history: ReworkRecord[];
+    if (Array.isArray(prev.history)) {
+      history = [...(prev.history as ReworkRecord[])];
+    } else if (prev.returnTask) {
+      const { history: _legacy, ...rest } = prev;
+      history = [rest as unknown as ReworkRecord];
+    } else {
+      history = [];
+    }
+    history.push({ ...record });
+    writeJsonAtomic(path, { history });
+  });
+}
+
+function readMaxReworks(projectDir: string): number {
+  const { config } = loadConfig(projectDir);
+  const rework = config.rework as { maxReworks?: unknown } | undefined;
+  const budgets = config.budgets as { maxReworksPerRun?: unknown } | undefined;
+  if (typeof rework?.maxReworks === "number") return rework.maxReworks;
+  if (typeof budgets?.maxReworksPerRun === "number") return budgets.maxReworksPerRun;
+  return DEFAULT_MAX_REWORKS;
+}
+
+// ── the backward edge ───────────────────────────────────────────────────────
+
+/**
+ * Resolve which spelling of the origin the caller meant.
+ *
+ * Callers pass a bare id, a `key`, or a `featureId/taskId` composite more or
+ * less interchangeably; the plan stores one of them. First match wins, in
+ * order of specificity.
+ */
+function resolveOriginKey(tasks: readonly ImpactTask[], opts: StartReworkOpts): string {
+  const explicitKey = opts.key ?? opts.taskId;
+  const byId = tasks.find((t) => t.id === opts.taskId);
+  const candidates = [
+    ...(byId ? [taskKey(byId)] : []),
+    explicitKey,
+    `${opts.featureId}/${opts.taskId}`,
+    opts.taskId,
+  ];
+  for (const cand of candidates) {
+    if (tasks.some((t) => taskKey(t) === cand)) return cand;
+  }
+  return explicitKey;
+}
+
+export async function startRework(opts: StartReworkOpts): Promise<StartReworkResult> {
+  const projectDir = projectDirOf(opts.projectDir);
+  const maxDepth = opts.maxImpactDepth ?? DEFAULT_IMPACT_DEPTH;
+  const originKey = resolveOriginKey(flattenTasks(loadPlan(projectDir)), opts);
+
+  const maxReworks = readMaxReworks(projectDir);
+  const priorCount = countPriorReworks(projectDir);
+  if (priorCount >= maxReworks) {
+    throw new Error("maxReworksPerRun exceeded: " + priorCount + " >= " + maxReworks);
+  }
+
+  // Read, flip, bump, write — one atomic section. The status flip is a
+  // read-apply-write over the same file every parallel worker edits.
+  const result = withLockSync(featureListPath(projectDir), () => {
+    const list = loadPlan(projectDir);
+    const tasks = flattenTasks(list);
+    if (!tasks.some((t) => taskKey(t) === originKey)) {
+      throw new Error("origin task not found: " + originKey);
+    }
+
+    const impacted = computeImpact(tasks, originKey, maxDepth);
     const toRework = new Set<string>([originKey, ...impacted]);
+
+    // flattenTasks hands back copies, so the flip walks the stored tasks.
     let changed = false;
-    for (const f of data.features ?? []) {
-      for (const t of f.tasks ?? []) {
-        const k = resolveTaskKey(t);
-        if (toRework.has(k) && t.status !== "rework") { t.status = "rework"; changed = true; }
+    for (const feature of list.features) {
+      for (const t of feature.tasks ?? []) {
+        if (toRework.has(taskKey(t)) && t.status !== "rework") {
+          t.status = "rework";
+          changed = true;
+        }
       }
     }
-    if (changed) data.baseRevision = (typeof data.baseRevision === "number" ? data.baseRevision : 0) + 1;
-    saveFeatureList(projectDir, data);
-    const runId = opts.runId ?? ("run-" + Date.now());
+    if (changed) list.baseRevision += 1;
+    saveFeatureList(projectDir, list);
+
     const record: ReworkRecord = {
-      runId, returnFeature: opts.featureId, returnTask: opts.taskId, impacted, reason: opts.reason ?? "rework via startRework",
-      timestamp: new Date().toISOString(), remainingBudgets: { reworks: remainingReworks - priorCount - 1, replans: 2, bounces: 2 }, maxImpactDepth: maxDepth,
+      runId: opts.runId ?? "run-" + Date.now(),
+      returnFeature: opts.featureId,
+      returnTask: opts.taskId,
+      impacted,
+      reason: opts.reason ?? "rework via startRework",
+      timestamp: new Date().toISOString(),
+      remainingBudgets: { reworks: maxReworks - priorCount - 1, replans: 2, bounces: 2 },
+      maxImpactDepth: maxDepth,
     };
-    return { impacted, baseRevision: data.baseRevision as number, record };
+    return { impacted, baseRevision: list.baseRevision, record };
   });
 
-  await withFileLock(rp, async () => {
-    mkdirSync(dirname(rp), { recursive: true });
-    let toWrite: any = { ...result.record };
-    if (existsSync(rp)) {
-      try {
-        const prev = JSON.parse(readFileSync(rp, "utf-8"));
-        if (prev && typeof prev === "object") {
-          let history: any[];
-          if (Array.isArray((prev as any).history)) history = [...(prev as any).history];
-          else if ((prev as any).returnTask) {
-            const { history: _h, ...rest } = prev as any;
-            history = [rest];
-          } else history = [];
-          history.push({ ...result.record });
-          toWrite = { history };
-        }
-      } catch {}
-    }
-    const tmp = rp + "." + process.pid + ".tmp";
-    writeFileSync(tmp, JSON.stringify(toWrite, null, 2) + "\n", "utf-8");
-    try { renameSync(tmp, rp); } catch { writeFileSync(rp, JSON.stringify(toWrite, null, 2) + "\n", "utf-8"); }
-  });
+  appendReworkRecord(projectDir, result.record);
 
   return { impacted: result.impacted, baseRevision: result.baseRevision, rework: result.record };
 }
 
+/** The most recent rework record, or null when there is none to return to. */
 export function loadRework(projectDir?: string): ReworkRecord | null {
-  const p = reworkPath(projectDirOf(projectDir));
-  if (!existsSync(p)) return null;
-  try {
-    const raw = JSON.parse(readFileSync(p, "utf-8"));
-    if ((raw as any).history && Array.isArray((raw as any).history)) {
-      const h = (raw as any).history as ReworkRecord[];
-      return h[h.length - 1] ?? null;
-    }
-    return raw as ReworkRecord;
-  } catch { return null; }
+  const prev = readSidecar(projectDirOf(projectDir));
+  if (!prev) return null;
+  if (Array.isArray(prev.history)) {
+    const history = prev.history as ReworkRecord[];
+    return history[history.length - 1] ?? null;
+  }
+  return prev as unknown as ReworkRecord;
 }
 
 export async function clearRework(projectDir?: string): Promise<void> {
-  const p = reworkPath(projectDirOf(projectDir));
-  await withFileLock(p, async () => { if (existsSync(p)) try { unlinkSync(p); } catch {} });
+  const path = reworkPath(projectDirOf(projectDir));
+  withLockSync(path, () => {
+    if (!fileExists(path)) return;
+    try {
+      unlinkSync(path);
+    } catch {
+      /* already gone — the point is that it is not there afterwards */
+    }
+  });
 }

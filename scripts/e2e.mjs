@@ -347,8 +347,19 @@ process.stdout.write(JSON.stringify({ key, revisions, stale, lockedCount, error 
  * always locks — but it measures what the lock is actually buying.
  */
 const UNLOCKED_WRITER = `
-import { loadFeatureList, flattenTasks } from ${SRC_URL("core/featureList.ts")};
-import { writeTaskList } from ${SRC_URL("taskList.ts")};
+import { loadFeatureList, saveFeatureList, flattenTasks } from ${SRC_URL("core/featureList.ts")};
+import { applyTaskList } from ${SRC_URL("taskList.ts")};
+
+// Deliberately composes the primitives by hand — read, apply, save — with no
+// mutual exclusion, which is exactly what writeTaskList used to do. This is
+// the control: it shows the race is real, and therefore that the lock inside
+// writeTaskList is load-bearing rather than decorative.
+const writeTaskList = (dir, input) => {
+  const { list } = loadFeatureList(dir);
+  const result = applyTaskList(list, input);
+  if (result.changed) saveFeatureList(dir, result.list);
+  return result;
+};
 
 const [dir, key, stamp] = process.argv.slice(2);
 const revisions = [];
@@ -1313,19 +1324,19 @@ async function scenarioConcurrency() {
   });
 
   /**
-   * `writeTaskList` reads the plan, checks `baseRevision`, then writes — three
-   * steps, no mutual exclusion. Two processes that both read revision N both
-   * pass the check and both write N+1, and one set of edits is gone; worse, a
-   * writer that read an older revision can land after a newer one and move the
-   * revision *backwards* on disk. The lock the extension wraps around the call
-   * is what closes that window.
+   * The control experiment.
    *
-   * Only the invariants that survive without the lock are asserted here —
-   * atomicity of a single write is a property of writeJsonAtomic, not of the
-   * lock. Everything the lock is actually buying is measured and printed,
-   * because a race outcome is not something to assert on.
+   * `writeTaskList` now takes an exclusive lock across the whole
+   * read-apply-write. To show that the lock is what makes the fan-out safe —
+   * rather than luck, or `baseRevision` doing more than it can — this runs the
+   * same six writers against the primitives composed by hand, with no lock.
+   *
+   * The race outcome itself is timing-dependent, so it is measured and
+   * reported rather than asserted. What IS asserted is the contrast: the
+   * locked path above lost nothing, and any loss here is attributable to the
+   * missing lock alone, since every other ingredient is identical.
    */
-  await step("without the lock the same fan-out is a check-then-act race — measured, not assumed", async () => {
+  await step("the lock is load-bearing: the same fan-out composed by hand can lose updates", async () => {
     const bare = mkProject("concurrency-unlocked");
     seedFanOutPlan(bare, WRITERS, 10);
     const { results: raw, poll: bpoll } = await fanOut(bare, unlockedScript, WRITERS);
@@ -1344,13 +1355,11 @@ async function scenarioConcurrency() {
 
     if (lost.length || reused || regressions) {
       warn(
-        `unlocked writers lost ${lost.length}/${WRITERS} update(s); ${reused} writer(s) were handed a revision ` +
-          `another writer already owned; the revision on disk went backwards ${regressions} time(s). ` +
-          `baseRevision is a check-then-act guard, not a compare-and-swap, so the extension's withLock() ` +
-          `is load-bearing (see report)`,
+        `unlocked: lost ${lost.length}/${WRITERS} update(s), ${reused} duplicate revision(s), ` +
+          `${regressions} backwards step(s) — the locked path above lost none of these`,
       );
     } else {
-      warn("this run happened not to interleave (0 lost, 0 reused, 0 regressions) — the race is timing-dependent");
+      warn(`unlocked: this run did not interleave — the race is timing-dependent, the lock is not`);
     }
   });
 }

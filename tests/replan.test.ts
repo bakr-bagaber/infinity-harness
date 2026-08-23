@@ -67,4 +67,32 @@ function writeFeatureList(dir: string, tasks: any[], baseRevision = 0) {
   } finally { rmSync(proj, { recursive: true, force: true }); }
 }
 
+// --- a status alias is not an unresolved dependency ---
+// This module used to parse feature-list.json raw, so a task stored as "done"
+// never compared equal to "complete" and validateDeps rejected every amendment
+// to a plan that used an alias — with the nonsense message that a task in
+// flight had unresolved dependencies. Plan reads now go through the core
+// loader, which normalises aliases on the way in.
+{
+  const proj = tmpProject();
+  try {
+    writeFeatureList(proj, [
+      { id: "task-012", key: "schema-rework", description: "A", status: "done", dependsOn: [] },
+      { id: "task-013", key: "rework-replan", description: "B", status: "in_progress", dependsOn: ["schema-rework"] },
+    ], 1);
+    const res = await amendPlan({
+      projectDir: proj,
+      reason: "alias",
+      addTasks: [{ featureId: "feature-006", task: { id: "task-014", key: "router-core", description: "C", status: "pending" } }],
+    });
+    assert.equal(res.added.tasks, 1, "an aliased status must not read as an unresolved dependency");
+    assert.equal(res.baseRevision, 2);
+    const file = JSON.parse(readFileSync(join(proj, "harness", "features", "feature-list.json"), "utf-8"));
+    const statuses = new Map(file.features[0].tasks.map((t: any) => [t.key, t.status]));
+    assert.equal(statuses.get("schema-rework"), "complete", '"done" is normalised to the canonical status on write');
+    assert.equal(statuses.get("rework-replan"), "in_progress", "the dependent is left where it was");
+    console.log("✓ status aliases normalise instead of failing dependency validation");
+  } finally { rmSync(proj, { recursive: true, force: true }); }
+}
+
 console.log("All replan tests PASS");
