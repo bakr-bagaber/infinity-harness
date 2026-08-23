@@ -53,10 +53,13 @@ Requires **Node 22+** and [pi](https://github.com/earendil-works/pi-coding-agent
 
 ```bash
 # from npm — project-local, so the team shares it via .pi/settings.json
-pi install infinity-harness -l
+pi install npm:infinity-harness -l
 
 # or globally
-pi install infinity-harness
+pi install npm:infinity-harness
+
+# straight from the repo
+pi install git:github.com/bakr-bagaber/infinity-harness
 
 # or from a checkout
 pi install ./infinity-harness -l
@@ -202,6 +205,11 @@ task.modelHint → byTask → byDifficulty → byFeature → bySprint → byPhas
 
 `master` is never assigned directly; it's reachable only through one-step consultation after the
 normal ladder is exhausted.
+
+**Reasoning models need headroom.** A reasoning model emits nothing on the content channel until it
+has finished thinking — measured at ~370 reasoning tokens to answer "reply with one word". If you
+route a tier to one, give its workers a generous timeout; a tight budget returns an empty completion
+that looks like a broken endpoint but is only a small cap.
 
 ## Tools the agent gets
 
