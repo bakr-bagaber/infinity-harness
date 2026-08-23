@@ -2631,7 +2631,15 @@ const PROBE_TIMEOUT_MS = 6000;
 
 class SkipLeg extends Error {}
 
-async function liveFetch(path, init = {}, timeoutMs = 20_000) {
+/**
+ * Default request timeout for the live legs.
+ *
+ * A reasoning model reading a full brief thinks for a long time before the
+ * first content token. 20s was enough to probe /models and nothing else.
+ */
+const LIVE_TIMEOUT_MS = Number(process.env.INFINITY_E2E_TIMEOUT_MS ?? 180_000);
+
+async function liveFetch(path, init = {}, timeoutMs = LIVE_TIMEOUT_MS) {
   return fetch(LIVE_BASE_URL.replace(/\/$/, "") + path, {
     ...init,
     headers: {
