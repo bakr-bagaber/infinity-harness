@@ -15,16 +15,16 @@ producing instructions for each. Validate after each task before advancing.
 
 ## Process
 1. Read `harness/progress.md`, `AGENTS.md`, and `harness/features/feature-list.json`
-2. Run `the infinity_brief tool` to get the current task brief (feature, task, criteria)
+2. Run `infinity_brief` to get the current task brief (feature, task, criteria)
 3. For each incomplete feature → for each pending task:
    a. Implement the task **test-first** (see `harness/skills/tdd.md`): failing
       test → minimal code to pass → next slice
-   b. Run `the infinity_validate tool --feature <id> --task <id>` to validate
+   b. Run `infinity_validate` with `{feature, task}` to validate
    c. If PASS → task marked complete, advance to next task
    d. If FAIL → fix issues, re-validate (retry up to `retry.tasks.maxRetries`)
 4. When all tasks in a feature pass → feature marked complete
 5. When all features pass → phase gate passes
-6. Run `the infinity_advance tool` to advance to VERIFY
+6. Run `infinity_advance` to advance to VERIFY
 
 ## Rationalizations to Avoid
 | Excuse | Rebuttal |
@@ -39,9 +39,9 @@ producing instructions for each. Validate after each task before advancing.
 - Tests that only test the implementation, not the behavior
 
 ## Verification
-- [ ] Each task validated with `the infinity_validate tool --feature X --task Y`
+- [ ] Each task validated with `infinity_validate` scoped to that feature and task
 - [ ] All features marked `passes: true` in feature-list.json
-- [ ] `the infinity_validate tool` passes (full phase gates)
+- [ ] `infinity_validate` passes (full phase gates)
 
 ## Handoff
-On gate pass: `the infinity_advance tool` (Generator → Evaluator for VERIFY)
+On gate pass: `infinity_advance` (Generator → Evaluator for VERIFY)

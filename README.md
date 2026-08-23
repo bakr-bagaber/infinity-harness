@@ -270,7 +270,7 @@ infinity-harness/
 │   ├── model-router.json          optional routing
 │   ├── docs/                      architecture · decisions · phase and role docs
 │   └── skills/                    28 craft skills the brief points at
-├── tests/                         22 files, plain node:assert
+├── tests/                         23 files, plain node:assert
 └── scripts/run-tests.mjs
 ```
 
@@ -282,7 +282,7 @@ there is one implementation, and the adapter calls it.
 ```bash
 npm install
 npm run check    # tsc --noEmit
-npm test         # 22 test files
+npm test         # 23 test files
 npm run e2e      # end-to-end against a live model
 ```
 

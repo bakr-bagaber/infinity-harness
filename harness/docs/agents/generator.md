@@ -10,4 +10,4 @@ You implement. You produce artifacts. You self-check.
 - In BUILD: implement ONE task at a time, then validate
 - In VERIFY: run the full test suite
 - In SIMPLIFY: adopt the Simplifier persona (see simplifier.md)
-- When done: call `the infinity_validate tool`
+- When done: call `infinity_validate`

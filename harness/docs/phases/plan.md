@@ -23,8 +23,8 @@ a unit of work that BUILD can implement and VERIFY can validate independently.
    needs `definitionOfDone` (user-visible outcomes). Gates reject
    placeholders.
 5. Commit the plan (`git commit -am "plan: feature list"`)
-6. Run `the infinity_validate tool` to check gates
-7. If PASS → `the infinity_advance tool` to advance to BUILD
+6. Run `infinity_validate` to check gates
+7. If PASS → `infinity_advance` to advance to BUILD
 
 > The sprint contract was agreed in DEFINE. If PLAN reveals the scope was
 > wrong, renegotiate it now (`contract propose` → `contract review`) — not
@@ -44,7 +44,7 @@ a unit of work that BUILD can implement and VERIFY can validate independently.
 ## Verification
 - [ ] `feature-list.json` exists with features and tasks
 - [ ] Sprint contract proposed and agreed
-- [ ] `the infinity_validate tool` passes
+- [ ] `infinity_validate` passes
 
 ## Handoff
-On gate pass: `the infinity_advance tool` (Planner → Generator for BUILD)
+On gate pass: `infinity_advance` (Planner → Generator for BUILD)

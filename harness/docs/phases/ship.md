@@ -10,13 +10,13 @@ clean working tree, and ensure all ship gates pass.
 
 ## Process
 1. Read `harness/progress.md` and `AGENTS.md`
-2. Run `the infinity_status command` to see current state
+2. Run `/infinity:status` to see current state
 3. Finalize `CHANGELOG.md` with version, date, and changes
 4. Verify working tree is clean: `git status`
 5. Create version tag: `git tag v<version>`
 6. Ensure LICENSE, CONTRIBUTING.md exist
-7. Run `the infinity_validate tool` to check ship gates
-8. If PASS → `the infinity_advance tool` (pipeline complete!)
+7. Run `infinity_validate` to check ship gates
+8. If PASS → `infinity_advance` (pipeline complete!)
 9. Create checkpoint: `infinity-harness checkpoint create release-<version>`
 
 ## Rationalizations to Avoid
@@ -37,7 +37,7 @@ clean working tree, and ensure all ship gates pass.
 - [ ] Version tag created: `git tag -l "v*"`
 - [ ] CHANGELOG.md updated with version + changes
 - [ ] README.md, LICENSE, CONTRIBUTING.md exist
-- [ ] `the infinity_validate tool` passes
+- [ ] `infinity_validate` passes
 
 ## Handoff
-On gate pass: Pipeline complete! `the infinity_status command` shows "Pipeline complete".
+On gate pass: Pipeline complete! `/infinity:status` shows "Pipeline complete".

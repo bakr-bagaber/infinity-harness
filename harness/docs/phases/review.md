@@ -14,7 +14,7 @@ up-to-date with upstream.
 
 ## Process
 1. Read `harness/progress.md`, `AGENTS.md`, and `harness/evaluator-rubric.md`
-2. Run `the infinity_status command` to see current state
+2. Run `/infinity:status` to see current state
 3. Run the two-axis review from `harness/skills/code-review.md`:
    spec axis (against `specs/prd.md` + sprint contract + acceptance criteria)
    and standards axis (repo conventions + smell baseline). Fix what's real.
@@ -22,8 +22,8 @@ up-to-date with upstream.
    - Architecture, test coverage, code quality, documentation, performance, security
 5. Check documentation: README.md, CHANGELOG.md, architecture docs
 6. Ensure branch is up-to-date: `git push` if needed
-7. Run `the infinity_validate tool` to check gates
-8. If PASS → `the infinity_advance tool` to advance to SHIP
+7. Run `infinity_validate` to check gates
+8. If PASS → `infinity_advance` to advance to SHIP
 
 ## Rationalizations to Avoid
 | Excuse | Rebuttal |
@@ -41,7 +41,7 @@ up-to-date with upstream.
 - [ ] Evaluator rubric score >= 8/12
 - [ ] README.md, CHANGELOG.md exist and are current
 - [ ] Branch up-to-date with upstream
-- [ ] `the infinity_validate tool` passes
+- [ ] `infinity_validate` passes
 
 ## Handoff
-On gate pass: `the infinity_advance tool` (Evaluator → Generator for SHIP)
+On gate pass: `infinity_advance` (Evaluator → Generator for SHIP)

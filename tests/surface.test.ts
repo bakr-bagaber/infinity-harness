@@ -1,0 +1,201 @@
+/**
+ * Every name we tell someone to type is a name that exists.
+ *
+ * This file exists because the brief spent months ending with:
+ *
+ *   THE LOOP
+ *     2. Run: harness validate
+ *
+ * `harness` is a command line that stopped existing when the CLI was ported
+ * into `src/`. Every brief — the text injected at session start, the thing the
+ * whole design rests on — closed by telling the model to run a command that
+ * would fail. Four shipped skills had the same disease, pointing at an
+ * `infinity-harness capability …` CLI this package never had.
+ *
+ * Nothing caught either one, because a wrong string in a template is invisible
+ * to a type checker and a passing test. So: extract the tools and commands the
+ * extension actually registers, then hold every document and every rendered
+ * brief to that list.
+ */
+
+import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { buildBrief, renderBrief } from "../src/core/brief.ts";
+
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const extensionSource = readFileSync(
+  join(repoRoot, "extensions", "infinity-harness", "index.ts"),
+  "utf-8",
+);
+
+// What the adapter actually hands to pi.
+const TOOLS = new Set(
+  [...extensionSource.matchAll(/registerTool\(\{\s*\n\s*name:\s*"([a-z0-9_]+)"/g)].map((m) => m[1]!),
+);
+const COMMANDS = new Set(
+  [...extensionSource.matchAll(/registerCommand\("([a-z0-9:_-]+)"/g)].map((m) => m[1]!),
+);
+
+{
+  assert.ok(TOOLS.size >= 5, `expected the tool set, parsed ${TOOLS.size}: ${[...TOOLS]}`);
+  assert.ok(COMMANDS.size >= 9, `expected the command set, parsed ${COMMANDS.size}: ${[...COMMANDS]}`);
+  assert.ok(TOOLS.has("infinity_validate"));
+  assert.ok(COMMANDS.has("infinity:run"));
+  console.log(`✓ the extension registers ${TOOLS.size} tools and ${COMMANDS.size} commands`);
+}
+
+/** Every `infinity_x` / `/infinity:x` mentioned in a piece of text. */
+function mentioned(text: string): { tools: string[]; commands: string[] } {
+  return {
+    tools: [...new Set([...text.matchAll(/\binfinity_[a-z0-9_]+/g)].map((m) => m[0]))],
+    commands: [...new Set([...text.matchAll(/\/infinity:[a-z0-9-]+/g)].map((m) => m[0].slice(1)))],
+  };
+}
+
+function checkText(label: string, text: string): string[] {
+  const { tools, commands } = mentioned(text);
+  const bad: string[] = [];
+  for (const tool of tools) if (!TOOLS.has(tool)) bad.push(`${label}: no such tool ${tool}`);
+  for (const cmd of commands) if (!COMMANDS.has(cmd)) bad.push(`${label}: no such command /${cmd}`);
+  return bad;
+}
+
+// ── the brief ──────────────────────────────────────────────────────────────
+{
+  const dir = mkdtempSync(join(tmpdir(), "pi-surface-"));
+  mkdirSync(join(dir, "harness", "features"), { recursive: true });
+  const write = (phase: string, tasksDone: boolean) => {
+    writeFileSync(
+      join(dir, "harness", "config.json"),
+      JSON.stringify({ currentPhase: phase, phases: { enabled: ["define", "plan", "build", "verify", "review", "ship"] } }),
+    );
+    writeFileSync(
+      join(dir, "harness", "features", "feature-list.json"),
+      JSON.stringify({
+        revision: 1,
+        features: [
+          {
+            id: "feature-001",
+            name: "Checkout",
+            status: "in_progress",
+            criteria: ["it charges the right amount"],
+            tasks: [
+              {
+                id: 1,
+                description: "handle partial refunds across split tenders",
+                status: tasksDone ? "complete" : "pending",
+              },
+            ],
+          },
+        ],
+      }),
+    );
+  };
+
+  const problems: string[] = [];
+  for (const phase of ["define", "plan", "build", "verify", "review", "ship"]) {
+    write(phase, false);
+    const brief = await buildBrief(dir);
+    const text = renderBrief(brief);
+    problems.push(...checkText(`brief(${phase})`, text));
+    // The whole point of the brief is that the model knows what to do next.
+    assert.match(text, /THE LOOP/, `brief(${phase}) lost its instructions`);
+    assert.ok(
+      mentioned(text).tools.length > 0,
+      `brief(${phase}) tells the model to act but names no tool`,
+    );
+  }
+
+  // The paused and complete briefs return early — they must still be clean.
+  write("ship", true);
+  const brief = await buildBrief(dir);
+  problems.push(...checkText("brief(complete)", renderBrief(brief)));
+
+  assert.deepEqual(problems, [], problems.join("\n"));
+  rmSync(dir, { recursive: true, force: true });
+  console.log("✓ every brief names tools and commands the extension registers");
+}
+
+// ── the documents ──────────────────────────────────────────────────────────
+{
+  // CHANGELOG is deliberately absent: a changelog's job is to say what a
+  // release removed or renamed, so it has to be able to name things that no
+  // longer exist. Everything else here is instructions someone will follow.
+  const docs: string[] = [join(repoRoot, "README.md"), join(repoRoot, "AGENTS.md")];
+  const walk = (dir: string) => {
+    for (const name of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, name.name);
+      if (name.isDirectory()) walk(full);
+      else if (name.name.endsWith(".md")) docs.push(full);
+    }
+  };
+  walk(join(repoRoot, "harness", "docs"));
+  walk(join(repoRoot, "harness", "skills"));
+
+  const problems: string[] = [];
+  for (const doc of docs) {
+    problems.push(...checkText(doc.slice(repoRoot.length + 1), readFileSync(doc, "utf-8")));
+  }
+  assert.deepEqual(problems, [], problems.join("\n"));
+  console.log(`✓ ${docs.length} shipped documents name only tools and commands that exist`);
+}
+
+// ── the CLI that isn't ─────────────────────────────────────────────────────
+// This package has no executable. Nothing shipped may tell anyone to run one.
+{
+  const problems: string[] = [];
+  const check = (label: string, text: string) => {
+    for (const [, cmd] of text.matchAll(/\b(?:infinity-harness|dev-harness|pi-harness)\s+([a-z][a-z-]*)/g)) {
+      // `pi install infinity-harness` and prose like "infinity-harness fixes"
+      // are fine; an imperative verb after the package name is not.
+      if (["capability", "validate", "status", "phase", "run", "init", "plan"].includes(cmd)) {
+        problems.push(`${label}: names a CLI that does not exist — "${cmd}"`);
+      }
+    }
+  };
+  const files: string[] = [join(repoRoot, "README.md"), join(repoRoot, "AGENTS.md")];
+  const walk = (dir: string) => {
+    for (const name of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, name.name);
+      if (name.isDirectory()) walk(full);
+      else if (name.name.endsWith(".md")) files.push(full);
+    }
+  };
+  walk(join(repoRoot, "harness"));
+  for (const file of files) check(file.slice(repoRoot.length + 1), readFileSync(file, "utf-8"));
+  assert.deepEqual(problems, [], problems.join("\n"));
+  console.log("✓ nothing shipped tells anyone to run a command line this package does not have");
+}
+
+// ── the rename artefact ────────────────────────────────────────────────────
+// A mechanical rename once turned "the `harness validate` command" into
+// "`the infinity_validate tool`" in 36 places across 11 shipped documents —
+// broken English in the very files the brief tells the agent to read, and in
+// three of them a tool name that never existed.
+{
+  const files: string[] = [];
+  const walk = (dir: string) => {
+    for (const name of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, name.name);
+      if (name.isDirectory()) walk(full);
+      else if (name.name.endsWith(".md")) files.push(full);
+    }
+  };
+  walk(join(repoRoot, "harness"));
+  files.push(join(repoRoot, "README.md"), join(repoRoot, "AGENTS.md"));
+
+  const problems: string[] = [];
+  for (const file of files) {
+    const text = readFileSync(file, "utf-8");
+    for (const [hit] of text.matchAll(/`the (?:infinity|harness|pi)[a-z_:-]* (?:tool|command)`/g)) {
+      problems.push(`${file.slice(repoRoot.length + 1)}: ${hit}`);
+    }
+  }
+  assert.deepEqual(problems, [], problems.join("\n"));
+  console.log("✓ no document carries the mechanical-rename artefact");
+}
+
+console.log("surface.test.ts ✓");

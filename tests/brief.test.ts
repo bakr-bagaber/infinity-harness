@@ -65,7 +65,7 @@ function tmpProject(mutate: (c: HarnessConfig) => void, list: FeatureList): stri
     assert.deepEqual(brief.progress, { tasksDone: 1, tasksTotal: 4, featuresDone: 0, featuresTotal: 1 });
     assert.deepEqual(brief.retries, { task: 1, feature: 0, phase: 2, max: 10 });
     assert.equal(brief.gate, null, "the gate is not run unless asked — it costs a lint/test run");
-    assert.equal(brief.validateCommand, "harness validate");
+    assert.equal(brief.validateCommand, "infinity_validate", "the brief names a tool that exists");
 
     // A blocked task is something the human needs to know about.
     assert.equal(brief.notes.length, 1, brief.notes.join(" | "));
@@ -134,7 +134,7 @@ function tmpProject(mutate: (c: HarnessConfig) => void, list: FeatureList): stri
     // The loop instructions are the whole contract with the agent.
     assert.match(text, /THE LOOP/);
     assert.match(text, /1\. Do the work described above\./);
-    assert.match(text, /2\. Run: harness validate/);
+    assert.match(text, /2\. Call the infinity_validate tool/);
     assert.match(text, /3\. FAIL → fix the listed checks and validate again\./);
     assert.match(text, /4\. PASS → the harness advances the phase and issues the next brief\./);
     assert.match(text, /Do not edit harness\/config.json by hand/);

@@ -25,6 +25,16 @@ import { readText } from "./fsx.ts";
 import { loadSkills, matchSkills } from "./skills.ts";
 
 /**
+ * What the agent calls to have its work judged.
+ *
+ * This said `harness validate` for a long time — a command line that has not
+ * existed since the CLI was ported into `src/`. A brief that ends by telling
+ * the model to run a command that does not exist is a brief that ends in a
+ * failed shell call and a confused retry, every single turn.
+ */
+const VALIDATE_TOOL = "infinity_validate";
+
+/**
  * Two is the number that gets read. One hides a better match; five is a
  * reading list, and a reading list is a thing you skip.
  */
@@ -95,7 +105,7 @@ export async function buildBrief(targetDir: string, options: BuildBriefOptions =
         }
       : null,
     criteria: collectCriteria(feature, nextTask?.criteria),
-    validateCommand: "harness validate",
+    validateCommand: VALIDATE_TOOL,
     gate,
     progress: {
       tasksDone: progress.tasksDone,
@@ -252,7 +262,7 @@ export function renderBrief(brief: Brief, config?: HarnessConfig): string {
   L.push("");
   L.push("THE LOOP");
   L.push("  1. Do the work described above.");
-  L.push(`  2. Run: ${brief.validateCommand}`);
+  L.push(`  2. Call the ${brief.validateCommand} tool (a human types /infinity:validate).`);
   L.push("  3. FAIL → fix the listed checks and validate again.");
   L.push("  4. PASS → the harness advances the phase and issues the next brief.");
   L.push("");

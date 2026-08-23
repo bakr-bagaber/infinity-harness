@@ -24,7 +24,7 @@ provenance: { origin: "mattpocock/skills", license: MIT, adapted: true }
    trade-off. Do **not** invent new behaviour. Always resolve; never
    `--abort`.
 4. **Run the project's automated checks** — typecheck, then tests, then
-   lint (`the infinity_validate tool` runs the configured set). Fix anything the
+   lint (`infinity_validate` runs the configured set). Fix anything the
    merge broke.
 5. **Finish the merge/rebase.** Stage everything and commit. If rebasing,
    continue until all commits are rebased. Record anything surprising:

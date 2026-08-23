@@ -29,7 +29,7 @@ catch any of these tells:
    what you're trying to achieve, the exact error/failure, the attempts
    made, and what each attempt ruled out. Writing this usually exposes the
    gap — half the time you solve it here.
-2. **Re-read the brief and the skill** (`the infinity_brief tool`; the skill it
+2. **Re-read the brief and the skill** (`infinity_brief`; the skill it
    references). Stuck often means a constraint was missed, not that the
    problem is hard.
 3. **Reframe ONCE** — one genuinely different angle, not a variation:

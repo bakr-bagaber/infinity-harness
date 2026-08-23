@@ -33,8 +33,8 @@ feature list.
      these criteria really prove the sprint worked?)
 8. **Create a feature branch**: `git checkout -b feature/<short-slug>` (the
    gate rejects work on main/master)
-9. Run `the infinity_validate tool` to check gates
-10. If PASS → `the infinity_advance tool` to advance to PLAN
+9. Run `infinity_validate` to check gates
+10. If PASS → `infinity_advance` to advance to PLAN
 
 ## Rationalizations to Avoid
 | Excuse | Rebuttal |
@@ -52,7 +52,7 @@ feature list.
 - [ ] Sprint contract agreed with non-placeholder verification criteria
 - [ ] On a feature branch (not main/master)
 - [ ] Folder structure agreed and documented
-- [ ] `the infinity_validate tool` passes
+- [ ] `infinity_validate` passes
 
 ## Handoff
-On gate pass: `the infinity_advance tool` (Planner → continues as Planner for PLAN)
+On gate pass: `infinity_advance` (Planner → continues as Planner for PLAN)

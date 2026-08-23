@@ -4,6 +4,38 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.2] — 2026-08-23
+
+Everything here is one bug: the package told people to run commands it does not have. 2.0.1 fixed
+some of them; this fixes the rest, and adds the test that makes the whole class impossible.
+
+### Fixed
+
+- **Every brief ended by telling the model to run a command that does not exist.** The last thing
+  each brief said was `2. Run: harness validate` — a CLI that stopped existing when it was ported
+  into `src/`. The brief is injected at session start and after every phase change; the model read
+  that instruction, ran it, and got "command not found" every single turn. It now names the
+  `infinity_validate` tool, and `/infinity:validate` for the human.
+- **Three phase docs referenced `infinity_status`, which is not a tool.** It is `/infinity:status`.
+- **36 mechanical-rename artefacts across 11 shipped documents** — "Run `the infinity_validate tool`"
+  and friends, in the phase and role docs the brief points the agent at every phase.
+- **`capability-acquisition.md` did not actually get rewritten in 2.0.1.** A `git rm` earlier in the
+  same command failed, `&&` short-circuited, and the heredoc that was supposed to replace the file
+  never ran — so 2.0.1 shipped the old text, still pointing at `infinity-harness capability add …`
+  and at MCP servers pi cannot use. Rewritten, and verified this time.
+- **`cli-design.md` used `infinity-harness init` as its example error message.**
+
+### Added
+
+- **`tests/surface.test.ts`** — the guard for all of it. It parses the tools and commands the
+  extension actually registers, then holds every rendered brief and all 48 shipped documents to that
+  list: no `infinity_*` tool or `/infinity:*` command may be named unless it exists, nothing may
+  point at a command line this package does not have, and the rename artefact cannot come back. The
+  changelog is exempt — its job is to name what a release removed. It found four defects the moment
+  it was written.
+
+---
+
 ## [2.0.1] — 2026-08-23
 
 ### Fixed
@@ -72,10 +104,10 @@ changed, and the extension no longer depends on an external repository.
 ### Breaking
 
 - **Package renamed** `pi-harness` → `infinity-harness`.
-- **Tools renamed.** `harness_task_list` → `infinity_plan`, `pi_goal_task`/`harness_goal_loop` →
-  `infinity_goal`, `pi_harness_remote`/`harness_remote` → `infinity_dashboard`,
-  `harness_spawn_worker` → `infinity_spawn_worker`. New: `infinity_brief`, `infinity_validate`,
-  `infinity_advance`.
+- **Tools renamed.** `harness_task_list` → `infinity_plan`, `pi_harness_remote`/`harness_remote` →
+  `infinity_dashboard`. New: `infinity_brief`, `infinity_validate`, `infinity_advance`. The goal-loop
+  and worker-spawn tools were not carried over — their modules ship but nothing registers them (see
+  the reachability guard in the `package` E2E scenario).
 - **Commands renamed** to the `/infinity:*` namespace, and `/infinity:run` / `/infinity:halt` added.
 - **The `cli`, `prompts` and `skills` symlinks are gone.** They pointed at absolute paths inside a
   sibling `dev-harness` checkout, which made the package impossible to install anywhere else. The
