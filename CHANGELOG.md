@@ -4,6 +4,19 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.4] — 2026-08-23
+
+### Changed
+
+- **A domain skill now has to be pulled in by the task's own vocabulary.** Run against a real project
+  the matcher offered `cli-design` for *"serialise plan writes so two workers cannot race on the
+  lock"* — because the goal above it read "ship the payments rewrite behind a flag", and `flags` is
+  on that skill's tag list. One incidental word is not vocabulary. A `domain` or `meta` skill must
+  now clear the bar on tag hits alone; the phase ranks it but never qualifies it. `process` skills
+  are unchanged — belonging to the phase is the whole point of them.
+
+---
+
 ## [2.0.3] — 2026-08-23
 
 ### Fixed

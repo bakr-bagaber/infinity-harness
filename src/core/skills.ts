@@ -330,25 +330,26 @@ export function matchSkills(skills: SkillMeta[], options: MatchOptions = {}): Sk
       if (hit && !hits.includes(t)) hits.push(t);
     }
 
-    const position = phase ? skill.phases.indexOf(phase) : -1;
-    const phaseCounts = position >= 0 && (skill.kind === "process" || hits.length > 0);
-    if (phaseCounts) {
-      score += Math.max(1, PHASE_WEIGHT - position);
-      reasons.push(`${phase} phase`);
+    // `meta` is on every meta skill's tag list, so counting it like any other
+    // hit would surface all of them constantly. They have to be asked for.
+    const counted = skill.kind === "meta" ? hits.filter((h) => h !== "meta") : hits;
+    const tagScore = TAG_WEIGHT * Math.min(counted.length, MAX_TAG_HITS);
+
+    // A domain skill has to be pulled in by the task's own vocabulary, and one
+    // incidental word is not vocabulary. "Ship the payments rewrite behind a
+    // flag" should not summon the CLI-design skill because `flags` is on its
+    // tag list. The phase ranks a domain skill; it never qualifies one.
+    if (skill.kind !== "process" && tagScore < MIN_SCORE) continue;
+
+    score += tagScore;
+    if (counted.length) {
+      reasons.push(`matches ${counted.slice(0, MAX_TAG_HITS).map((h) => `"${h}"`).join(", ")}`);
     }
 
-    if (hits.length && skill.kind !== "meta") {
-      score += TAG_WEIGHT * Math.min(hits.length, MAX_TAG_HITS);
-    } else if (hits.length) {
-      // A meta skill has to be asked for: `meta` is on all of their tag lists,
-      // so counting it like any other hit would surface all four constantly.
-      const real = hits.filter((h) => h !== "meta");
-      if (real.length === 0) continue;
-      score += TAG_WEIGHT * Math.min(real.length, MAX_TAG_HITS);
-    }
-    if (hits.length) {
-      const shown = hits.filter((h) => h !== "meta" || skill.kind !== "meta").slice(0, MAX_TAG_HITS);
-      if (shown.length) reasons.push(`matches ${shown.map((h) => `"${h}"`).join(", ")}`);
+    const position = phase ? skill.phases.indexOf(phase) : -1;
+    if (position >= 0 && (skill.kind === "process" || counted.length > 0)) {
+      score += Math.max(1, PHASE_WEIGHT - position);
+      reasons.unshift(`${phase} phase`);
     }
 
     // Naming the skill in the task means it, and outranks any guess.

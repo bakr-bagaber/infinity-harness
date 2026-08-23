@@ -362,6 +362,21 @@ function skill(name: string, description: string, extra = "kind: process"): stri
   console.log("✓ tags match their own plurals");
 }
 
+// A domain skill has to be pulled in by the task's own vocabulary. One
+// incidental word is not vocabulary: "ship the payments rewrite behind a flag"
+// must not summon the CLI-design skill because `flags` is on its tag list.
+{
+  const skills = loadSkills();
+  const names = matchSkills(skills, {
+    phase: "build",
+    text: "serialise plan writes so two workers cannot race on the lock \n Checkout flow \n Ship the payments rewrite behind a flag",
+    limit: 10,
+  }).map((m) => m.skill.name);
+  assert.ok(names.includes("concurrency-async"), names.join(", "));
+  assert.ok(!names.includes("cli-design"), `one word summoned a whole domain skill: ${names.join(", ")}`);
+  console.log("✓ a domain skill needs real vocabulary, not one incidental word");
+}
+
 // One incidental tag hit is not a recommendation.
 {
   const skills = loadSkills();
