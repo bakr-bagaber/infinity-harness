@@ -168,6 +168,12 @@ export type HarnessConfig = {
   };
   phases: { enabled: Phase[] };
   roles: { strict: boolean };
+  /** Budgets that bound an unattended continuous run. See src/loop.ts. */
+  loop: {
+    maxIterations: number;
+    maxWallClockMs: number;
+    noProgressLimit: number;
+  };
   retry: {
     tasks: RetryBucket;
     features: RetryBucket;

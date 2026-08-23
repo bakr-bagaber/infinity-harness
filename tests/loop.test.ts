@@ -106,9 +106,10 @@ const RUN = "run-under-test";
   assert.deepEqual(budgetFrom(c), { maxIterations: 7, maxWallClockMs: 60_000, noProgressLimit: 2 });
 
   // Nonsense never silently disables a guard.
-  for (const bad of [0, -1, "10", null, Number.NaN, Number.POSITIVE_INFINITY]) {
+  for (const bad of [0, -1, "10", null, Number.NaN, Number.POSITIVE_INFINITY] as unknown[]) {
     const junk = defaultConfig();
-    junk.loop = { maxIterations: bad, maxWallClockMs: bad, noProgressLimit: bad };
+    // Deliberately ill-typed: this is what a hand-edited config can contain.
+    junk.loop = { maxIterations: bad, maxWallClockMs: bad, noProgressLimit: bad } as HarnessConfig["loop"];
     assert.deepEqual(
       budgetFrom(junk),
       {
@@ -263,7 +264,7 @@ const RUN = "run-under-test";
 // ── the iteration ceiling ends the run ─────────────────────────────────────
 {
   const dir = tmpProject((c) => {
-    c.loop = { maxIterations: 10 };
+    c.loop = { ...c.loop, maxIterations: 10 };
   });
   try {
     saveLoopState(dir, { ...newLoopState(RUN), iterations: 10 });
@@ -301,7 +302,7 @@ const RUN = "run-under-test";
 
     // A shorter configured budget bites sooner.
     const cfg = loadConfig(dir).config;
-    cfg.loop = { maxWallClockMs: 30 * 60 * 1000 };
+    cfg.loop = { ...cfg.loop, maxWallClockMs: 30 * 60 * 1000 };
     writeFileSync(join(dir, "harness", "config.json"), JSON.stringify(cfg, null, 2), "utf-8");
     saveLoopState(dir, newLoopState(RUN, new Date(Date.now() - 60 * 60 * 1000)));
     const tight = await decideNext({ targetDir: dir, runId: RUN });
@@ -334,7 +335,7 @@ const RUN = "run-under-test";
   // The gate cannot pass and the tree never changes: the agent is spinning.
   const dir = tmpProject((c) => {
     c.commands.test = "exit 1";
-    c.loop = { noProgressLimit: 3 };
+    c.loop = { ...c.loop, noProgressLimit: 3 };
   });
   try {
     // The first failing iteration establishes the baseline: there is nothing
@@ -378,7 +379,7 @@ const RUN = "run-under-test";
 {
   const dir = tmpProject((c) => {
     c.commands.test = "exit 1";
-    c.loop = { noProgressLimit: 3 };
+    c.loop = { ...c.loop, noProgressLimit: 3 };
   });
   try {
     const one = await decideNext({ targetDir: dir, runId: RUN });
@@ -437,7 +438,7 @@ const RUN = "run-under-test";
 // ── skipGate hands the decision to the caller's verdict ────────────────────
 {
   const dir = tmpProject((c) => {
-    c.loop = { noProgressLimit: 2 };
+    c.loop = { ...c.loop, noProgressLimit: 2 };
   });
   try {
     const first = await decideNext({ targetDir: dir, runId: RUN, skipGate: true });

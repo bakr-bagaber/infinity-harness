@@ -10,6 +10,32 @@ Renamed from `pi-harness` to **infinity-harness**, and rebuilt from a working pr
 something shippable. This is a breaking release: tool names, command names and the package name all
 changed, and the extension no longer depends on an external repository.
 
+### Added in 2.0.0 (continued)
+
+- **Full configuration from inside pi.** `/infinity:config` opens an interactive menu covering models,
+  pipeline, project commands, gates, loop budgets and retry budgets; `/infinity:config show` prints
+  the lot as text. The menu is generated from one schema (`src/core/settings.ts`), so an option
+  cannot exist in the file format and be missing from the UI.
+- **Model tiers are picked from pi's own models.** `/infinity:config` → Models offers the models pi
+  has configured and can authenticate — session-scoped ones when scoping is set — for each difficulty
+  tier, the master model and the default. Any tier can be handed back to "pi's current model".
+  `/infinity:models` shows the available list next to the current routing.
+- Values are bounds-checked before they are written, durations accept `24h` / `90m`, and the phase
+  list is toggled item by item and stored in pipeline order rather than click order.
+
+### Security
+
+- A model reference is interpolated into a worker's shell command, so it is now validated against a
+  strict character set and refused rather than escaped. A typo cannot become a command substitution.
+
+### Changed in 2.0.0 (continued)
+
+- **`strict: true`.** The whole tree typechecks under TypeScript strict mode, with ambient types added
+  for `proper-lockfile` (which ships none).
+- Verified installable from npm: `pi install infinity-harness`. pi loads extensions through `jiti`,
+  which transpiles TypeScript at runtime, so the package ships `.ts` with no build step. (Plain
+  `node` refuses to type-strip inside `node_modules`; pi does not use plain `node` for this.)
+
 ### Breaking
 
 - **Package renamed** `pi-harness` → `infinity-harness`.

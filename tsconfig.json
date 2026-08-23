@@ -6,12 +6,12 @@
     "esModuleInterop": true,
     "allowJs": true,
     "checkJs": false,
-    "strict": false,
+    "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "types": ["node"]
   },
-  "include": ["extensions/**/*", "src/**/*", "tests/**/*"],
+  "include": ["extensions/**/*", "src/**/*", "tests/**/*", "types/**/*"],
   "exclude": ["node_modules", "cli"]
 }

@@ -201,10 +201,13 @@ export async function amendPlan(opts: AmendPlanOpts): Promise<AmendPlanResult> {
     let addedFeatures = 0;
     let addedTasks = 0;
 
+    // `sprints` is optional on the type; loadFeatureList always normalises it
+    // to an array, so bind it once rather than asserting at each use.
+    const sprints = (list.sprints ??= []);
     for (const s of opts.addSprints ?? []) {
       if (!s.id || !s.name) throw new Error("sprint requires id and name");
-      if (list.sprints.some((x) => x.id === s.id)) throw new Error(`duplicate sprint id: ${s.id}`);
-      list.sprints.push({
+      if (sprints.some((x) => x.id === s.id)) throw new Error(`duplicate sprint id: ${s.id}`);
+      sprints.push({
         id: s.id,
         name: s.name,
         ...(s.goalId ? { goalId: s.goalId } : {}),

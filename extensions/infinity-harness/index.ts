@@ -31,6 +31,8 @@ import { writeTaskList, summarizeApply, type TaskInput } from "../../src/taskLis
 import { renderWidget, renderStatusLine, type WidgetState } from "../../src/ui/widget.ts";
 import { createStyler, detectGlyphs } from "../../src/ui/theme.ts";
 import { decideNext, stopFilePath } from "../../src/loop.ts";
+import { runConfigMenu, renderSettings, type ModelChoice, type Prompter } from "../../src/ui/config.ts";
+import { SETTINGS, readAll, readSetting, formatValue } from "../../src/core/settings.ts";
 
 const CHECKPOINT = "infinity:checkpoint";
 const WIDGET_KEY = "infinity-harness";
@@ -104,6 +106,51 @@ export default function (pi: ExtensionAPI): void {
     const brief = await buildBrief(dir, { includeGate });
     return renderBrief(brief, config);
   };
+
+  // -- configuration --------------------------------------------------------
+
+  /**
+   * The models this session can actually use.
+   *
+   * Prefers `scopedModels` when the user has scoped the session, because those
+   * are the models they deliberately chose; otherwise every model pi holds
+   * working credentials for. Models without auth are excluded — offering one
+   * would produce a tier that fails at the first task rather than at setup.
+   */
+  const availableModels = (ctx: ExtensionContext): ModelChoice[] => {
+    try {
+      const scoped = ctx.scopedModels ?? [];
+      const models =
+        scoped.length > 0
+          ? scoped.map((s) => s.model)
+          : (ctx.modelRegistry?.getAvailable?.() ?? []);
+
+      const seen = new Set<string>();
+      const out: ModelChoice[] = [];
+      for (const m of models) {
+        if (!m?.id || !m?.provider) continue;
+        const ref = `${m.provider}/${m.id}`;
+        if (seen.has(ref)) continue;
+        seen.add(ref);
+        const bits: string[] = [ref];
+        if (m.name && m.name !== m.id) bits.push(`· ${m.name}`);
+        if (m.contextWindow) bits.push(`· ${Math.round(m.contextWindow / 1000)}k ctx`);
+        if (m.reasoning) bits.push("· reasoning");
+        out.push({ ref, label: bits.join(" ") });
+      }
+      out.sort((a, b) => a.ref.localeCompare(b.ref));
+      return out;
+    } catch {
+      return [];
+    }
+  };
+
+  /** Adapt pi's UI to the prompter the config flow expects. */
+  const prompterFor = (ctx: ExtensionContext): Prompter => ({
+    select: (title, opts) => ctx.ui.select(title, opts),
+    input: (title, placeholder) => ctx.ui.input(title, placeholder),
+    notify: (message, level) => notify(ctx, message, level ?? "info"),
+  });
 
   // -- lifecycle ------------------------------------------------------------
 
@@ -729,6 +776,67 @@ export default function (pi: ExtensionAPI): void {
       });
       notify(ctx, value ? "infinity-harness: resumed." : "Could not resume — config unreadable.", value ? "info" : "error");
       refreshWidget(ctx);
+    },
+  });
+
+  pi.registerCommand("infinity:config", {
+    description: "Configure the harness — models per difficulty tier, gates, commands, loop budgets",
+    handler: async (args: string, ctx: ExtensionContext) => {
+      const dir = projectDir(ctx);
+      if (!isHarnessProject(dir)) {
+        notify(ctx, "No harness in this project (harness/config.json not found).", "warning");
+        return;
+      }
+
+      // `\/infinity:config show` prints everything without prompting, which is
+      // what you want over SSH, in a log, or when the UI has no dialogs.
+      if (args.trim() === "show" || !ctx.hasUI) {
+        notify(ctx, renderSettings(dir), "info");
+        if (!ctx.hasUI && args.trim() !== "show") {
+          notify(ctx, "This mode has no dialogs — edit harness/config.json directly.", "warning");
+        }
+        return;
+      }
+
+      const changed = await runConfigMenu({
+        targetDir: dir,
+        prompt: prompterFor(ctx),
+        models: () => availableModels(ctx),
+      });
+
+      if (changed.length === 0) {
+        notify(ctx, "infinity-harness: no changes.", "info");
+      } else {
+        notify(ctx, `infinity-harness: updated ${changed.join(", ")}`, "info");
+      }
+      refreshWidget(ctx);
+    },
+  });
+
+  pi.registerCommand("infinity:models", {
+    description: "Show which models pi has available, and how the harness is routing them",
+    handler: async (_args: string, ctx: ExtensionContext) => {
+      const dir = projectDir(ctx);
+      const models = availableModels(ctx);
+      const lines: string[] = [];
+
+      lines.push(`Models pi can use (${models.length})`);
+      if (models.length === 0) {
+        lines.push("  none — check provider auth, or run `pi models`");
+      } else {
+        for (const m of models) lines.push(`  ${m.label}`);
+      }
+
+      if (isHarnessProject(dir)) {
+        lines.push("", "Routing");
+        const io = readAll(dir);
+        const group = SETTINGS.find((g) => g.id === "models");
+        for (const s of group?.settings ?? []) {
+          lines.push(`  ${s.label.padEnd(28)} ${formatValue(s, readSetting(io, s))}`);
+        }
+        lines.push("", "Change these with /infinity:config.");
+      }
+      notify(ctx, lines.join("\n"), "info");
     },
   });
 

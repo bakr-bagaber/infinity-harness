@@ -328,12 +328,17 @@ function writeRaw(dir: string, text: string): void {
   setKey(c, "gates.checks", ["lint"]);
   assert.deepEqual(c.gates.checks, ["lint"]);
 
-  // Missing intermediates are created.
+  // Setting one key in an existing section leaves its siblings alone — the
+  // config TUI writes a single setting at a time and must not blank the rest.
   setKey(c, "loop.maxIterations", 25);
-  assert.deepEqual(c.loop, { maxIterations: 25 });
-  setKey(c, "loop.nested.deep.value", "x");
-  assert.equal(getKey(c, "loop.nested.deep.value"), "x");
-  assert.equal(getKey(c, "loop.maxIterations"), 25, "creating a sibling does not wipe the branch");
+  assert.equal(c.loop.maxIterations, 25);
+  assert.equal(c.loop.noProgressLimit, 3, "a sibling in the same section survives");
+
+  // Missing intermediates are created all the way down.
+  setKey(c, "custom.nested.deep.value", "x");
+  assert.equal(getKey(c, "custom.nested.deep.value"), "x");
+  setKey(c, "custom.nested.other", 1);
+  assert.equal(getKey(c, "custom.nested.deep.value"), "x", "creating a sibling does not wipe the branch");
 
   // A scalar standing where an object is needed is replaced.
   setKey(c, "maxRetries.deeper", 1);

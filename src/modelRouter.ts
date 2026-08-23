@@ -6,6 +6,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { writeJsonAtomic } from "./core/fsx.ts";
 
 export const ROUTER_FILE = "harness/model-router.json";
 export const ROUTER_VERSION = 1;
@@ -56,6 +57,16 @@ export const DEFAULT_ROUTER: RouterConfig = {
 export const DIFFICULTY_LADDER: Array<"easy" | "moderate" | "difficult"> = ["easy", "moderate", "difficult"];
 
 function routerPath(projectDir = process.cwd()): string { return resolve(projectDir, ROUTER_FILE); }
+
+/**
+ * Persist the router config.
+ *
+ * Written atomically and read fresh on every resolution, so an edit made from
+ * the config TUI takes effect on the next task without restarting the session.
+ */
+export function saveRouterConfig(projectDir: string, cfg: RouterConfig): void {
+  writeJsonAtomic(routerPath(projectDir), cfg);
+}
 
 export function loadRouterConfig(projectDir?: string): RouterConfig {
   const p = routerPath(projectDir);

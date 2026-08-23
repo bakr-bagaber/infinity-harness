@@ -49,6 +49,11 @@ export function defaultConfig(): HarnessConfig {
     },
     phases: { enabled: [...DEFAULT_ENABLED_PHASES] },
     roles: { strict: false },
+    loop: {
+      maxIterations: 2000,
+      maxWallClockMs: 24 * 60 * 60 * 1000,
+      noProgressLimit: 3,
+    },
     retry: {
       tasks: { enabled: true, maxRetries: null },
       features: { enabled: false, maxRetries: DEFAULT_FEATURE_RETRIES },

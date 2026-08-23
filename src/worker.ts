@@ -265,6 +265,20 @@ function renderCommand(template: string, promptFile: string): string {
   return template.replaceAll("{promptfile}", promptFile).replaceAll("{prompt}", `"$(cat ${promptFile})"`);
 }
 
+/**
+ * A model reference is interpolated into a shell command, so anything outside
+ * the characters a real reference uses is refused rather than escaped. The
+ * value comes from a config file a human edits; a typo should not become a
+ * command substitution.
+ */
+const MODEL_REF_RE = /^[A-Za-z0-9._:@\/-]{1,120}$/;
+
+export function safeModelRef(model: string | undefined): string | null {
+  const v = (model ?? "").trim();
+  if (!v) return null;
+  return MODEL_REF_RE.test(v) ? v : null;
+}
+
 export async function spawnIsolatedWorker(opts: SpawnWorkerOpts): Promise<SpawnWorkerResult> {
   const projectDir = opts.projectDir ?? process.cwd();
   const baseRevision = readBaseRevision(projectDir);
@@ -294,10 +308,13 @@ export async function spawnIsolatedWorker(opts: SpawnWorkerOpts): Promise<SpawnW
   }
 
   let cmd = renderCommand(opts.command, promptPath);
-  if (opts.model && cmd.includes(" pi ") && !cmd.includes("--model")) {
-    cmd = cmd.replace(" pi ", ` pi --model ${opts.model} `);
-  } else if (opts.model && cmd.startsWith("pi ") && !cmd.includes("--model")) {
-    cmd = cmd.replace("pi ", `pi --model ${opts.model} `);
+  // An empty model means "inherit whatever model pi is already on" — the
+  // router's default — so no flag is injected at all.
+  const model = safeModelRef(opts.model);
+  if (model && cmd.includes(" pi ") && !cmd.includes("--model")) {
+    cmd = cmd.replace(" pi ", ` pi --model ${model} `);
+  } else if (model && cmd.startsWith("pi ") && !cmd.includes("--model")) {
+    cmd = cmd.replace("pi ", `pi --model ${model} `);
   }
   const timeoutMs = opts.timeoutMs ?? 5 * 60 * 1000;
 

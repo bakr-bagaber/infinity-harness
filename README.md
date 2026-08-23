@@ -52,14 +52,20 @@ honest over a very long run.
 Requires **Node 22+** and [pi](https://github.com/earendil-works/pi-coding-agent).
 
 ```bash
-# project-local, so the whole team shares it via .pi/settings.json
-pi install ./infinity-harness -l
+# from npm — project-local, so the team shares it via .pi/settings.json
+pi install infinity-harness -l
 
 # or globally
-pi install ./infinity-harness
+pi install infinity-harness
+
+# or from a checkout
+pi install ./infinity-harness -l
 
 pi list   # confirm it loaded
 ```
+
+The package ships TypeScript. pi loads extensions through `jiti`, which
+transpiles at runtime, so there is no build step and nothing to compile.
 
 ## Use it
 
@@ -74,11 +80,36 @@ what to do next. Do the work, then:
 ```
 /infinity:validate     run the gate for this phase
 /infinity:run          hand it the wheel: validate → advance → re-brief, until done or stuck
+/infinity:config       change any setting, including which model runs which tier
+/infinity:models       what models pi has, and how they are being routed
 /infinity:dashboard    open the live web view
 /infinity:halt         take the wheel back
 ```
 
 `/infinity:run` is the point of the tool. It keeps the loop turning without you.
+
+## Configuration
+
+Everything is configurable from inside pi:
+
+```
+/infinity:config        interactive menu
+/infinity:config show   print the whole configuration as text
+```
+
+The menu is generated from a single schema, so every option the file format
+supports is reachable from the UI — the two cannot drift. Editing
+`harness/config.json` and `harness/model-router.json` by hand stays entirely
+valid; the menu is the same data with prompts and bounds checking attached.
+
+| Group | Covers |
+|---|---|
+| **Models** | Which model runs each difficulty tier, the master model, consultation budget |
+| **Pipeline** | Which phases run, copilot vs autopilot, role strictness, pause |
+| **Project commands** | lint / test / coverage / build — what the gate actually runs |
+| **Gates** | Enable, coverage threshold, placeholder rejection |
+| **Continuous run** | Iteration ceiling, wall-clock budget, no-progress strikes |
+| **Retry budgets** | Attempts per task, feature and phase |
 
 ## The pipeline
 
@@ -154,11 +185,16 @@ The dashboard is strictly read-only and binds to `127.0.0.1`. It never writes, a
 
 ## Model routing (optional)
 
-`harness/model-router.json` can send cheap tasks to a small model and hard ones to a large one. It
-ships **disabled with every slot empty**, meaning "use whatever model pi is already configured with" —
-installing the harness never silently redirects your work to someone else's model.
+Send cheap tasks to a small model and hard ones to a large one. Pick them with `/infinity:config` →
+**Models**: the list offered is the models **pi itself has configured and can authenticate**, so you
+choose from what you already have rather than typing ids from memory. `/infinity:models` shows that
+list alongside the current routing.
 
-Set `enabled: true` and fill in the ids you want. Resolution order:
+Routing ships **disabled with every slot empty**, meaning "use whatever model pi is already
+configured with" — installing the harness never silently redirects your work to someone else's
+model. Any tier can be handed back to that default at any time.
+
+Resolution order:
 
 ```
 task.modelHint → byTask → byDifficulty → byFeature → bySprint → byPhase → byRole → default
