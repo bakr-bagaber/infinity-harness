@@ -19,13 +19,38 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildBrief, renderBrief } from "../src/core/brief.ts";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+/**
+ * The markdown this repository actually ships, from git rather than from a
+ * directory walk.
+ *
+ * A walk finds what the harness *wrote* as well as what we publish. Run the
+ * pipeline in this repo once and `harness/session-handoff.md` and
+ * `harness/.run-prompt.md` appear — git-ignored scratch, full of whatever
+ * commands were current when they were generated. Holding those to today's
+ * command list fails the suite for anyone who has actually used the tool, and
+ * says nothing about the package.
+ */
+function trackedMarkdown(...dirs: string[]): string[] {
+  const listed = execFileSync("git", ["ls-files", "-z", "--", ...dirs], {
+    cwd: repoRoot,
+    encoding: "utf-8",
+  });
+  const files = listed
+    .split("\0")
+    .filter((f) => f.endsWith(".md"))
+    .map((f) => join(repoRoot, f));
+  assert.ok(files.length > 0, `git ls-files found no markdown under ${dirs.join(", ")}`);
+  return files;
+}
 const extensionSource = readFileSync(
   join(repoRoot, "extensions", "infinity-harness", "index.ts"),
   "utf-8",
@@ -124,16 +149,11 @@ function checkText(label: string, text: string): string[] {
   // CHANGELOG is deliberately absent: a changelog's job is to say what a
   // release removed or renamed, so it has to be able to name things that no
   // longer exist. Everything else here is instructions someone will follow.
-  const docs: string[] = [join(repoRoot, "README.md"), join(repoRoot, "AGENTS.md")];
-  const walk = (dir: string) => {
-    for (const name of readdirSync(dir, { withFileTypes: true })) {
-      const full = join(dir, name.name);
-      if (name.isDirectory()) walk(full);
-      else if (name.name.endsWith(".md")) docs.push(full);
-    }
-  };
-  walk(join(repoRoot, "harness", "docs"));
-  walk(join(repoRoot, "harness", "skills"));
+  const docs = [
+    join(repoRoot, "README.md"),
+    join(repoRoot, "AGENTS.md"),
+    ...trackedMarkdown("harness/docs", "harness/skills"),
+  ];
 
   const problems: string[] = [];
   for (const doc of docs) {
@@ -156,15 +176,11 @@ function checkText(label: string, text: string): string[] {
       }
     }
   };
-  const files: string[] = [join(repoRoot, "README.md"), join(repoRoot, "AGENTS.md")];
-  const walk = (dir: string) => {
-    for (const name of readdirSync(dir, { withFileTypes: true })) {
-      const full = join(dir, name.name);
-      if (name.isDirectory()) walk(full);
-      else if (name.name.endsWith(".md")) files.push(full);
-    }
-  };
-  walk(join(repoRoot, "harness"));
+  const files = [
+    join(repoRoot, "README.md"),
+    join(repoRoot, "AGENTS.md"),
+    ...trackedMarkdown("harness"),
+  ];
   for (const file of files) check(file.slice(repoRoot.length + 1), readFileSync(file, "utf-8"));
   assert.deepEqual(problems, [], problems.join("\n"));
   console.log("✓ nothing shipped tells anyone to run a command line this package does not have");
@@ -176,16 +192,11 @@ function checkText(label: string, text: string): string[] {
 // broken English in the very files the brief tells the agent to read, and in
 // three of them a tool name that never existed.
 {
-  const files: string[] = [];
-  const walk = (dir: string) => {
-    for (const name of readdirSync(dir, { withFileTypes: true })) {
-      const full = join(dir, name.name);
-      if (name.isDirectory()) walk(full);
-      else if (name.name.endsWith(".md")) files.push(full);
-    }
-  };
-  walk(join(repoRoot, "harness"));
-  files.push(join(repoRoot, "README.md"), join(repoRoot, "AGENTS.md"));
+  const files = [
+    join(repoRoot, "README.md"),
+    join(repoRoot, "AGENTS.md"),
+    ...trackedMarkdown("harness"),
+  ];
 
   const problems: string[] = [];
   for (const file of files) {

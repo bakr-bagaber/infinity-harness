@@ -4,6 +4,18 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.3] — 2026-08-23
+
+### Fixed
+
+- **`npm test` failed in any project that had actually been used.** The surface guard added in 2.0.2
+  walked the filesystem for documents to check, so it also read the files the harness *writes* —
+  `harness/session-handoff.md`, `harness/.run-prompt.md` — which are git-ignored scratch carrying
+  whatever commands were current when they were generated. It now asks git what the repository
+  ships. A test that fails because you ran the tool is a test people turn off.
+
+---
+
 ## [2.0.2] — 2026-08-23
 
 Everything here is one bug: the package told people to run commands it does not have. 2.0.1 fixed
