@@ -41,6 +41,7 @@
     "typescript": "^5.5.0"
   },
   "scripts": {
+    "test": "node scripts/run-tests.mjs",
     "build": "tsc --noEmit",
     "check": "tsc --noEmit",
     "lint": "eslint extensions/"

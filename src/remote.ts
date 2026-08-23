@@ -1,18 +1,32 @@
 /**
- * remote — read-only HTTP view of harness state
+ * infinity-harness — the read-only dashboard server.
  *
- * Reuses src/widget.ts (buildWidgetLines) and reads harness/features/feature-list.json
- * via readFileSync (no baseRevision increment). Exposes buildRemoteState and
- * createRemoteServer (node:http 127.0.0.1 ephemeral -> GET / HTML + GET /api/harness JSON + GET /api/health).
- * Reads are lock-free; writes already use proper-lockfile+tmp+rename.
+ * A developer running the harness unattended wants to glance at progress
+ * without attaching to the terminal session. This serves that view over plain
+ * HTTP on loopback.
+ *
+ * Two properties are non-negotiable:
+ *
+ *   - **Read-only.** Nothing here writes, and nothing bumps `baseRevision`.
+ *     Opening the dashboard must never perturb the run it is observing.
+ *   - **Loopback by default.** The page exposes source paths, task text and
+ *     gate output. Binding it to a public interface would leak the project.
+ *     A non-loopback host has to be asked for explicitly.
  */
 
 import { createServer, type Server } from "node:http";
-import { existsSync, readFileSync } from "node:fs";
+import type { AddressInfo } from "node:net";
 import { resolve } from "node:path";
-import { buildWidgetLines, type FeatureList } from "./widget.ts";
 
-// ── types ───────────────────────────────────────────────────────────────────
+import type { FeatureList, Feature, Goal, GateResult, Phase } from "./core/types.ts";
+import { loadFeatureList, computeProgress } from "./core/featureList.ts";
+import { loadConfig } from "./core/config.ts";
+import { modelRouterPath, reworkPath } from "./core/paths.ts";
+import { readJsonSafe } from "./core/fsx.ts";
+import { renderDashboard, escapeHtml, type DashboardState } from "./ui/dashboard.ts";
+
+export { escapeHtml };
+
 export interface RemoteOptions {
   projectDir?: string;
   host?: string;
@@ -21,12 +35,18 @@ export interface RemoteOptions {
 
 export interface RemoteState {
   baseRevision: number;
-  features: any[];
-  goals: any[];
-  widgetLines: string[];
+  phase: Phase | null;
+  enabledPhases: readonly string[] | null;
+  paused: boolean;
+  features: Feature[];
+  goals: Goal[];
+  list: FeatureList;
+  progress: ReturnType<typeof computeProgress>;
+  gate: GateResult | null;
+  retries: { task: number; max: number };
   timestamp: string;
-  router: { enabled: boolean; budgets: any; byDifficulty: any; default?: string } | null;
-  rework: { active: boolean; impactedCount: number; returnFeature?: string; returnTask?: string; impacted?: string[] } | null;
+  router: unknown;
+  rework: unknown;
 }
 
 export interface RemoteServer {
@@ -36,312 +56,189 @@ export interface RemoteServer {
   close(): Promise<void>;
 }
 
-// ── html escaping ───────────────────────────────────────────────────────────
-export function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-// ── buildRemoteState ────────────────────────────────────────────────────────
+/**
+ * Snapshot everything the dashboard needs, from disk, without mutating a thing.
+ *
+ * The gate is *not* run here — running lint and tests because someone opened a
+ * web page would be a surprising and expensive side effect. The last recorded
+ * verdict from `gateHistory` is reported instead, which is what the human
+ * actually wants: what the harness last decided.
+ */
 export function buildRemoteState(projectDir?: string): RemoteState {
   const dir = projectDir ? resolve(projectDir) : process.cwd();
-  let data: any = null;
-  let baseRevision = 0;
-  let features: any[] = [];
-  let goals: any[] = [];
-  let sprints: any[] = [];
-  try {
-    const fp = resolve(dir, "harness", "features", "feature-list.json");
-    if (existsSync(fp)) {
-      const raw = readFileSync(fp, "utf-8");
-      data = JSON.parse(raw);
-      baseRevision = typeof data.baseRevision === "number" ? data.baseRevision : 0;
-      features = Array.isArray(data.features) ? data.features : [];
-      goals = Array.isArray(data.goals) ? data.goals : [];
-      sprints = Array.isArray(data.sprints) ? data.sprints : [];
-      try {
-        const goalSpecPath = resolve(dir, "harness", "goals", "GOAL_SPEC.json");
-        if (existsSync(goalSpecPath)) {
-          const graw = readFileSync(goalSpecPath, "utf-8");
-          const gspec = JSON.parse(graw);
-          if (goals.length === 0 && gspec && gspec.originalGoal) {
-            goals = [
-              {
-                id: gspec.goalRunId ?? "goal-goalSpec",
-                title: gspec.summary ?? gspec.originalGoal,
-                description: gspec.originalGoal,
-              },
-            ];
-          }
-        }
-      } catch {}
-    }
-  } catch {
-    // read/parse failure -> empty state
-  }
+  const { list } = loadFeatureList(dir);
+  const { config } = loadConfig(dir);
 
-  let widgetLines: string[] = [];
-  try {
-    const fl: FeatureList = {
-      version: data?.version ?? "0.1",
-      baseRevision,
-      goals,
-      sprints,
-      features,
-    } as FeatureList;
-    widgetLines = buildWidgetLines(fl, { width: 80 });
-  } catch {
-    widgetLines = [`Progress: 0/0`];
-  }
-
-  let router: RemoteState["router"] = null;
-  try {
-    const routerPath = resolve(dir, "harness", "model-router.json");
-    if (existsSync(routerPath)) {
-      const rraw = readFileSync(routerPath, "utf-8");
-      const rcfg = JSON.parse(rraw);
-      router = {
-        enabled: !!rcfg.enabled,
-        budgets: rcfg.budgets ?? null,
-        byDifficulty: rcfg.byDifficulty ?? null,
-        default: typeof rcfg.default === "string" ? rcfg.default : undefined,
-      };
-    }
-  } catch {}
-
-  let rework: RemoteState["rework"] = null;
-  try {
-    const reworkPath = resolve(dir, "harness", "rework.json");
-    if (existsSync(reworkPath)) {
-      const rraw2 = readFileSync(reworkPath, "utf-8");
-      const rj: any = JSON.parse(rraw2);
-      let rec: any = null;
-      if (Array.isArray((rj as any).history) && (rj as any).history.length) {
-        const h = (rj as any).history;
-        rec = h[h.length - 1];
-      } else if (rraw2.trim().startsWith("[")) {
-        const arr = rj as any[];
-        rec = arr.length ? arr[arr.length - 1] : null;
-      } else {
-        rec = rj;
+  const lastGate = [...(config.gateHistory ?? [])].reverse()[0] ?? null;
+  const gate: GateResult | null = lastGate
+    ? {
+        phase: lastGate.phase,
+        overall: lastGate.result === "pass",
+        failures: lastGate.result === "pass" ? [] : ["see terminal for detail"],
+        checks: [
+          {
+            name: `last recorded gate (${lastGate.timestamp})`,
+            pass: lastGate.result === "pass",
+            detail:
+              lastGate.result === "pass"
+                ? `passed on ${lastGate.phase}`
+                : `failed on ${lastGate.phase} — run validate for the per-check breakdown`,
+          },
+        ],
+        ...(lastGate.feature ? { feature: lastGate.feature } : {}),
+        ...(lastGate.task ? { task: lastGate.task } : {}),
       }
-      if (rec && rec.returnTask) {
-        rework = {
-          active: true,
-          impactedCount: Array.isArray(rec.impacted) ? rec.impacted.length : 0,
-          returnFeature: rec.returnFeature,
-          returnTask: rec.returnTask,
-          impacted: Array.isArray(rec.impacted) ? rec.impacted : [],
-        };
-      } else {
-        rework = { active: false, impactedCount: 0 };
-      }
-    } else {
-      rework = { active: false, impactedCount: 0 };
-    }
-  } catch {
-    rework = { active: false, impactedCount: 0 };
-  }
+    : null;
 
   return {
-    baseRevision,
-    features,
-    goals,
-    widgetLines,
+    baseRevision: list.baseRevision,
+    phase: config.currentPhase,
+    enabledPhases: config.phases?.enabled ?? null,
+    paused: Boolean(config.paused),
+    features: list.features ?? [],
+    goals: list.goals ?? [],
+    list,
+    progress: computeProgress(list),
+    gate,
+    retries: { task: config.taskRetryCount ?? 0, max: config.maxRetries ?? 10 },
     timestamp: new Date().toISOString(),
-    router,
-    rework,
+    router: readJsonSafe<unknown>(modelRouterPath(dir), null),
+    rework: readJsonSafe<unknown>(reworkPath(dir), null),
   };
 }
 
-// ── html builder ────────────────────────────────────────────────────────────
+function toDashboardState(s: RemoteState): DashboardState {
+  return {
+    list: s.list,
+    phase: s.phase,
+    enabledPhases: s.enabledPhases,
+    paused: s.paused,
+    gate: s.gate,
+    baseRevision: s.baseRevision,
+    timestamp: s.timestamp,
+    retries: s.retries,
+    router: s.router,
+    rework: s.rework,
+  };
+}
+
 export function buildHtml(state: RemoteState): string {
-  const esc = escapeHtml;
-  const linesEsc = state.widgetLines.map(esc).join("\n");
-  const features = state.features ?? [];
-  const goals = state.goals ?? [];
-
-  const goalsHtml = goals.length
-    ? `<section><h2>Goals (${goals.length})</h2><ul>` +
-      goals
-        .map(
-          (g: any) =>
-            `<li>${esc(String(g.title ?? g.id ?? ""))}${g.description ? " — " + esc(String(g.description)) : ""}</li>`,
-        )
-        .join("") +
-      `</ul></section>`
-    : `<section><h2>Goals</h2><p>(none)</p></section>`;
-
-  const featuresHtml = features.length
-    ? `<section><h2>Features (${features.length})</h2>` +
-      features
-        .map((f: any) => {
-          const tasks = Array.isArray(f.tasks) ? f.tasks : [];
-          const done = tasks.filter((t: any) => t.status === "complete" || t.status === "done").length;
-          const total = tasks.length;
-          const taskRows = tasks
-            .map((t: any) => {
-              const label = esc(String(t.description ?? t.key ?? t.id ?? ""));
-              const status = esc(String(t.status ?? ""));
-              const deps =
-                Array.isArray(t.dependsOn) && t.dependsOn.length
-                  ? ` \u2190 ${t.dependsOn.map((d: any) => esc(String(d))).join(", ")}`
-                  : "";
-              return `<tr><td>${esc(String(t.key ?? t.id))}</td><td>${label}${deps}</td><td>${status}</td></tr>`;
-            })
-            .join("");
-          return (
-            `<div class="feature"><h3>${esc(String(f.name ?? f.id))} <small>Progress: ${done}/${total}</small></h3>` +
-            (tasks.length
-              ? `<table><thead><tr><th>key</th><th>subject</th><th>status</th></tr></thead><tbody>${taskRows}</tbody></table>`
-              : `<p>(no tasks)</p>`) +
-            `</div>`
-          );
-        })
-        .join("") +
-      `</section>`
-    : `<section><h2>Features</h2><p>(none)</p></section>`;
-
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>pi-harness \u2014 baseRevision ${state.baseRevision}</title>
-<style>
-  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;margin:24px;line-height:1.5;color:#111;background:#fff}
-  h1{font-size:20px;margin:0 0 8px}
-  h2{font-size:16px;margin:16px 0 8px}
-  h3{font-size:14px;margin:12px 0 6px}
-  pre{white-space:pre-wrap;word-break:break-word;background:#f6f8fa;border:1px solid #e1e4e8;border-radius:6px;padding:12px;overflow:auto}
-  table{border-collapse:collapse;width:100%;margin:8px 0}
-  th,td{border:1px solid #e1e4e8;padding:6px 8px;text-align:left;font-size:13px}
-  th{background:#f6f8fa}
-  small{color:#666;font-weight:400}
-  .meta{color:#666;font-size:13px}
-  section{margin-top:16px}
-</style>
-</head>
-<body>
-<h1>pi-harness \u2014 baseRevision ${state.baseRevision}</h1>
-<p class="meta">timestamp: ${esc(state.timestamp)} \u00b7 <a href="/api/harness">/api/harness</a> \u00b7 <a href="/api/health">/api/health</a></p>
-<pre id="widget">${linesEsc}</pre>
-${goalsHtml}
-${featuresHtml}
-<script>
-(function(){
-  var interval=2000;
-  async function poll(){
-    try{
-      var r=await fetch("/api/harness",{cache:"no-store"});
-      if(!r.ok) return;
-      var j=await r.json();
-      var pre=document.getElementById("widget");
-      if(pre && Array.isArray(j.widgetLines)) pre.textContent=j.widgetLines.join("\\n");
-      var h1=document.querySelector("h1");
-      if(h1) h1.textContent="pi-harness \\u2014 baseRevision "+j.baseRevision;
-    }catch(e){}
-  }
-  setInterval(poll, interval);
-})();
-</script>
-</body>
-</html>`;
+  return renderDashboard(toDashboardState(state));
 }
 
-// ── server ──────────────────────────────────────────────────────────────────
-function getVersion(projectDir: string): string {
-  try {
-    const pkgPath = resolve(projectDir, "package.json");
-    if (existsSync(pkgPath)) {
-      const raw = readFileSync(pkgPath, "utf-8");
-      const j = JSON.parse(raw);
-      if (typeof j.version === "string" && j.version) return j.version;
-    }
-  } catch {}
-  return "0.0.0";
+/** JSON payload for `/api/harness`. Excludes the full list to stay compact. */
+export function buildApiPayload(state: RemoteState): Record<string, unknown> {
+  return {
+    baseRevision: state.baseRevision,
+    phase: state.phase,
+    paused: state.paused,
+    progress: state.progress,
+    retries: state.retries,
+    timestamp: state.timestamp,
+    gate: state.gate,
+    router: state.router,
+    rework: state.rework,
+    features: state.features.map((f) => ({
+      id: f.id,
+      name: f.name,
+      passes: f.passes ?? false,
+      tasks: (f.tasks ?? []).map((t) => ({
+        id: t.id,
+        key: t.key ?? t.id,
+        description: t.description,
+        status: t.status,
+        dependsOn: t.dependsOn ?? [],
+        subtasks: t.subtasks ?? [],
+      })),
+    })),
+    goals: state.goals,
+  };
 }
+
+const LOOPBACK = new Set(["127.0.0.1", "::1", "localhost"]);
 
 export async function createRemoteServer(opts?: RemoteOptions): Promise<RemoteServer> {
   const projectDir = opts?.projectDir ? resolve(opts.projectDir) : process.cwd();
   const host = opts?.host ?? "127.0.0.1";
-  const requestedPort = typeof opts?.port === "number" ? opts.port : 0;
+  const port = opts?.port ?? 0;
 
-  const server: Server = createServer((req, res) => {
-    const method = (req.method ?? "GET").toUpperCase();
-    const url = req.url ?? "/";
-    const path = url.split("?")[0];
-
-    if (method !== "GET") {
-      res.writeHead(405, {
-        "Content-Type": "application/json; charset=utf-8",
-        "Cache-Control": "no-store",
-      });
-      res.end(JSON.stringify({ error: { code: "METHOD_NOT_ALLOWED", message: "Only GET allowed" } }));
-      return;
-    }
-
-    if (path === "/" || path === "/index.html") {
-      try {
-        const state = buildRemoteState(projectDir);
-        const html = buildHtml(state);
-        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
-        res.end(html);
-      } catch (e: any) {
-        res.writeHead(500, { "Content-Type": "application/json; charset=utf-8" });
-        res.end(JSON.stringify({ error: { code: "INTERNAL", message: e?.message ?? String(e) } }));
-      }
-      return;
-    }
-
-    if (path === "/api/harness") {
-      try {
-        const state = buildRemoteState(projectDir);
-        res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
-        res.end(JSON.stringify(state));
-      } catch (e: any) {
-        res.writeHead(500, { "Content-Type": "application/json; charset=utf-8" });
-        res.end(JSON.stringify({ error: { code: "INTERNAL", message: e?.message ?? String(e) } }));
-      }
-      return;
-    }
-
-    if (path === "/api/health") {
-      const version = getVersion(projectDir);
-      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
-      res.end(JSON.stringify({ ok: true, version }));
-      return;
-    }
-
-    res.writeHead(404, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
-    res.end(JSON.stringify({ error: { code: "NOT_FOUND", message: "Not found: " + path } }));
-  });
-
-  await new Promise<void>((resolvePromise, reject) => {
-    server.once("error", reject);
-    server.listen(requestedPort, host, () => {
-      server.off("error", reject);
-      resolvePromise();
-    });
-  });
-
-  const addr = server.address() as any;
-  const actualPort = typeof addr === "object" && addr !== null ? addr.port : requestedPort;
-  const actualHost = typeof addr === "object" && addr !== null ? addr.address : host;
-  const url = `http://${actualHost}:${actualPort}`;
-
-  let closed = false;
-  async function close(): Promise<void> {
-    if (closed) return;
-    closed = true;
-    await new Promise<void>((resolveClose, rejectClose) => {
-      server.close((err) => (err ? rejectClose(err) : resolveClose()));
-    });
+  if (!LOOPBACK.has(host) && process.env.INFINITY_HARNESS_ALLOW_REMOTE !== "1") {
+    throw new Error(
+      `refusing to bind the dashboard to ${host}: it exposes project source and task text. ` +
+        `Set INFINITY_HARNESS_ALLOW_REMOTE=1 if you really mean to.`,
+    );
   }
 
-  return { url, host: actualHost, port: actualPort, close };
+  const server: Server = createServer((req, res) => {
+    // Read-only surface: anything that is not a GET is refused outright.
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      res.writeHead(405, { "content-type": "text/plain; charset=utf-8", allow: "GET, HEAD" });
+      res.end("method not allowed");
+      return;
+    }
+
+    const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+    const noStore = { "cache-control": "no-store" };
+
+    try {
+      if (url.pathname === "/api/health") {
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", ...noStore });
+        res.end(JSON.stringify({ ok: true, timestamp: new Date().toISOString() }));
+        return;
+      }
+      if (url.pathname === "/api/harness") {
+        const payload = buildApiPayload(buildRemoteState(projectDir));
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", ...noStore });
+        res.end(JSON.stringify(payload, null, 2));
+        return;
+      }
+      if (url.pathname === "/") {
+        const html = buildHtml(buildRemoteState(projectDir));
+        res.writeHead(200, {
+          "content-type": "text/html; charset=utf-8",
+          // The page renders untrusted model output; a tight CSP means an
+          // escaping slip cannot become script execution.
+          "content-security-policy":
+            "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src data:",
+          "x-content-type-options": "nosniff",
+          ...noStore,
+        });
+        res.end(html);
+        return;
+      }
+      res.writeHead(404, { "content-type": "text/plain; charset=utf-8", ...noStore });
+      res.end("not found");
+    } catch (e) {
+      res.writeHead(500, { "content-type": "text/plain; charset=utf-8", ...noStore });
+      res.end(`dashboard error: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  });
+
+  await new Promise<void>((res, rej) => {
+    server.once("error", rej);
+    server.listen(port, host, () => {
+      server.removeListener("error", rej);
+      res();
+    });
+  });
+
+  const addr = server.address() as AddressInfo;
+  const shownHost = addr.address === "::1" ? "[::1]" : addr.address;
+
+  let closed = false;
+  return {
+    url: `http://${shownHost}:${addr.port}`,
+    host: addr.address,
+    port: addr.port,
+    close: async () => {
+      if (closed) return;
+      closed = true;
+      await new Promise<void>((res) => {
+        server.close(() => res());
+        // Idle keep-alive sockets would otherwise hold the server open past
+        // session shutdown, leaking a port for the life of the process.
+        server.closeAllConnections?.();
+      });
+    },
+  };
 }

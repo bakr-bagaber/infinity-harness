@@ -142,14 +142,14 @@ assert.equal(hashLite(""), 0);
   }
 }
 
-// --- baseRevision preserved through file helpers (integration with harnessTaskList) ---
+// --- baseRevision preserved through file helpers (integration with taskList) ---
 {
   const proj = tmpProject();
   try {
-    // Use harnessTaskList to create a file, then fingerprint should see its revision
-    const { applyToFile } = await import("../src/harnessTaskList.ts");
+    // Use the plan editor to create a file, then fingerprint should see its revision
+    const { writeTaskList } = await import("../src/taskList.ts");
     // initial file rev 0 -> create task
-    const r1 = applyToFile(proj, { tasks: [{ key: "a", subject: "A", status: "pending" }] });
+    const r1 = writeTaskList(proj, { tasks: [{ key: "a", subject: "A", status: "pending" }] });
     assert.equal(r1.revision, 1);
     const fp = buildFingerprint({ projectDir: proj, runId: "run-d", featureId: "f", taskId: "t", attempt: 1 });
     assert.equal(fp.baseRevision, 1);
@@ -170,8 +170,8 @@ assert.equal(hashLite(""), 0);
 {
   const proj = tmpProject();
   try {
-    const { applyToFile, loadHarnessState } = await import("../src/harnessTaskList.ts");
-    applyToFile(proj, { tasks: [{ key: "a", subject: "A", status: "pending" }] });
+    const { writeTaskList } = await import("../src/taskList.ts");
+    writeTaskList(proj, { tasks: [{ key: "a", subject: "A", status: "pending" }] });
     // simulate two workers trying to update concurrently with lock
     const worker = async (id: number) => {
       return withFeatureListLock(proj, async () => {
@@ -306,8 +306,8 @@ assert.equal(hashLite(""), 0);
 {
   const proj = tmpProject();
   try {
-    const { applyToFile } = await import("../src/harnessTaskList.ts");
-    applyToFile(proj, { tasks: [{ key: "a", subject: "A", status: "pending" }] });
+    const { writeTaskList } = await import("../src/taskList.ts");
+    writeTaskList(proj, { tasks: [{ key: "a", subject: "A", status: "pending" }] });
     const before = readFileSync(join(proj, "harness", "features", "feature-list.json"), "utf-8");
     const res = await spawnIsolatedWorker({
       projectDir: proj,
