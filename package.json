@@ -1,7 +1,7 @@
 {
   "name": "infinity-harness",
   "version": "2.0.0",
-  "description": "A pi agent extension that runs a gated build pipeline unattended — enforces phases, validates with deterministic gates, and keeps working for hours or days without losing the plan.",
+  "description": "A pi agent extension that runs a gated build pipeline unattended \u2014 enforces phases, validates with deterministic gates, and keeps working for hours or days without losing the plan.",
   "type": "module",
   "keywords": [
     "pi-package",
@@ -15,7 +15,7 @@
   "author": "Bakr Bagaber",
   "repository": {
     "type": "git",
-    "url": "https://github.com/bakr-bagaber/pi-harness"
+    "url": "git+https://github.com/bakr-bagaber/infinity-harness.git"
   },
   "pi": {
     "extensions": [
@@ -28,10 +28,10 @@
   "files": [
     "extensions/",
     "src/",
+    "types/",
     "harness/skills/",
     "harness/docs/",
-    "harness/templates/",
-    "scripts/",
+    "harness/model-router.json",
     "README.md",
     "LICENSE",
     "CHANGELOG.md"
@@ -53,5 +53,9 @@
     "check": "tsc --noEmit",
     "build": "tsc --noEmit",
     "e2e": "node scripts/e2e.mjs"
+  },
+  "homepage": "https://github.com/bakr-bagaber/infinity-harness#readme",
+  "bugs": {
+    "url": "https://github.com/bakr-bagaber/infinity-harness/issues"
   }
 }
