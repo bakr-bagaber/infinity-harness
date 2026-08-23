@@ -4,6 +4,7 @@ description: Command-line tool design — argument conventions, output contracts
 tags: [cli, command, terminal, flags, arguments, stdout, stdin, shell, script, tool]
 when: task builds or extends a command-line interface
 phases: [plan, build]
+kind: domain
 provenance: { origin: built-in }
 ---
 

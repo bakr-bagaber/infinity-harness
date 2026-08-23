@@ -4,6 +4,7 @@ description: Structured pass before claiming done — criteria re-check, real ru
 tags: [meta, review, verify, done, quality, check, playbook]
 when: before running validate on any task — every time
 phases: [build, verify, simplify]
+kind: process
 provenance: { origin: built-in, notes: frontier-playbook }
 ---
 

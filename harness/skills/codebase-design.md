@@ -4,6 +4,7 @@ description: Deep modules — small interfaces hiding lots of behavior, seams, t
 tags: [design, architecture, module, interface, seam, refactor, coupling, abstraction, api]
 when: designing module boundaries, planning features, refactoring for clarity
 phases: [plan, simplify]
+kind: process
 provenance: { origin: "mattpocock/skills", license: MIT, adapted: true }
 ---
 

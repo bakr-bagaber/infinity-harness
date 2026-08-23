@@ -186,6 +186,32 @@ verdict. It refreshes itself every 5 seconds and reconnects with backoff if the 
 The dashboard is strictly read-only and binds to `127.0.0.1`. It never writes, and never bumps
 `baseRevision` — opening it can't perturb the run you're watching.
 
+## Craft skills
+
+28 short documents on how to do the work well — how to write a test worth
+keeping, how to debug something intermittent, how to design a module boundary.
+They ship with the package, so pi loads them wherever it's installed and the
+model can invoke any of them by name.
+
+A model with 28 skills available and no idea which one applies reads none of
+them, so **the brief names the ones that match the work in hand**. Each skill
+declares what it's for:
+
+```yaml
+kind: domain                                     # process | domain | meta
+phases: [plan, build, verify]                    # the phase it leads counts most
+tags: [concurrency, race, lock, mutex, deadlock] # vocabulary a task would use
+```
+
+A `process` skill belongs to its phase — TDD is the right answer for a BUILD
+task whatever the task says. A `domain` skill has to share vocabulary with the
+task: nobody needs the database skill because they happen to be in BUILD. So a
+task called *"serialise plan writes so two workers can't race on the lock"*
+gets `concurrency-async`, and a bare BUILD task gets `tdd`.
+
+When nothing matches, the brief has no skills section. An empty section is
+honest; a padded one teaches the model to skip it.
+
 ## Model routing (optional)
 
 Send cheap tasks to a small model and hard ones to a large one. Pick them with `/infinity:config` →
@@ -229,6 +255,7 @@ infinity-harness/
 ├── src/
 │   ├── core/                      types · paths · fsx · config · phases · gates · brief
 │   │                              · featureList (the SSOT) · lock · exec
+│   │                              · skills (match) · skillsAudit (guard)
 │   ├── ui/                        theme · widget (terminal) · dashboard (web)
 │   ├── loop.ts                    the continuous-run driver and its stop conditions
 │   ├── taskList.ts                atomic plan editor
@@ -242,8 +269,8 @@ infinity-harness/
 │   ├── config.json                pipeline state and settings
 │   ├── model-router.json          optional routing
 │   ├── docs/                      architecture · decisions · phase and role docs
-│   └── skills/                    29 craft skills the brief points at
-├── tests/                         20 files, plain node:assert
+│   └── skills/                    28 craft skills the brief points at
+├── tests/                         22 files, plain node:assert
 └── scripts/run-tests.mjs
 ```
 
@@ -255,7 +282,7 @@ there is one implementation, and the adapter calls it.
 ```bash
 npm install
 npm run check    # tsc --noEmit
-npm test         # 20 test files
+npm test         # 22 test files
 npm run e2e      # end-to-end against a live model
 ```
 

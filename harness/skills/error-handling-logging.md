@@ -4,6 +4,7 @@ description: Error taxonomy, fail-loud handling, structured logging that debugs 
 tags: [error, exception, logging, log, observability, retry, crash, handling, monitoring, trace]
 when: task defines error paths, adds logging, or hardens failure behavior
 phases: [build, verify]
+kind: domain
 provenance: { origin: built-in }
 ---
 

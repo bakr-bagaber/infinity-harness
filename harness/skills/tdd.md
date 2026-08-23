@@ -4,6 +4,7 @@ description: Red → green test-driven loop — what a good test is, seams, anti
 tags: [tdd, test, testing, unit, integration, red-green, seam, mock, coverage]
 when: implementing any BUILD task, or fixing a bug that needs a regression test
 phases: [build, verify]
+kind: process
 provenance: { origin: "mattpocock/skills", license: MIT, adapted: true }
 ---
 

@@ -4,6 +4,7 @@ description: Pin down domain terminology — glossary discipline and decision re
 tags: [domain, glossary, terminology, naming, model, ubiquitous, language, adr, decision]
 when: defining specs, resolving fuzzy or conflicting terms, recording decisions
 phases: [define, plan]
+kind: process
 provenance: { origin: "mattpocock/skills", license: MIT, adapted: true }
 ---
 

@@ -4,6 +4,65 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1] — 2026-08-23
+
+### Fixed
+
+- **pi printed a skill conflict on every start.** `harness/skills/README.md` was a README, and pi
+  loads *every* `.md` in a declared skills directory as a skill — so every session opened with
+  `[Skill conflicts] … description is required`. The README moved to `harness/docs/skills.md`, and
+  `tests/skills.test.ts` now audits the shipped skills against pi's own rules (frontmatter present,
+  `description` non-empty and within length, `name` lowercase-and-hyphens, matching its filename, no
+  duplicates, no UTF-8 BOM hiding the header). A warning the user saw at runtime is a failure we see
+  at test time.
+- **Four shipped skills told the agent to run a CLI that does not exist.**
+  `capability-acquisition`, `building-tools`, `writing-skills` and the deleted MCP skill all
+  instructed the model to register capabilities with `infinity-harness capability add …` — a command
+  from the `dev-harness` ancestor that this package never had. An agent following them got stuck at
+  3am on a command not found. Rewritten around what pi actually provides: a skill file in
+  `.pi/skills/`, a script in the repo, or an extension via `pi install`.
+
+### Removed
+
+- **`building-mcp-servers.md`**, and every other reference to MCP. pi has no MCP client — no
+  dependency, no configuration, no code — so a skill about scaffolding MCP servers and registering
+  them could only send the agent somewhere pi cannot follow. This is a pi extension; MCP was
+  another system's answer.
+- **`harness/capability/sources.json` and `harness/tools/`.** Neither was read by any code, neither
+  was published, and both documented the same missing CLI.
+
+### Added
+
+- **The brief names the skills that match the work.** The docs claimed it did; nothing implemented
+  it. Every skill now declares a `kind` — `process` (belongs to its phase), `domain` (needs to share
+  vocabulary with the task) or `meta` (asked for explicitly) — and the brief ranks them by phase
+  position, tag hits and name mentions, showing the best two. A task about *"two workers racing on
+  the lock"* gets `concurrency-async`; a bare BUILD task gets `tdd`; a task that matches nothing gets
+  no section at all, because a padded section teaches the model to skip it.
+- **`src/core/skills.ts`** — skill loading, header parsing and matching, resolved from the package so
+  it works in an install with no project setup.
+- **`src/core/skillsAudit.ts`** — pi's validation rules, reproduced strictly enough that a clean
+  audit means a clean start. Also catches what pi does not: a duplicate name (pi keys skills by name,
+  so one silently ceases to exist), a mistyped phase, a missing `kind`, and a name that disagrees
+  with its filename.
+- **A `package` E2E scenario** — `npm pack`, extracted and inspected. Every bug it looks for was
+  found by a user after install and by nothing in this repository: a file pi rejects, a symlink out
+  of the tree, a module the extension imports that npm did not publish, a UTF-8 BOM. The repo working
+  tree is not the product; the tarball is.
+- **A reachability guard.** "The tested code was not the shipped code" was this project's worst bug.
+  The `package` scenario now also walks every import from the extension entry point and fails on any
+  *new* module that ships without a path to it. Nine modules are unreachable today — `worker`,
+  `unstuck`, `review`, `rework`, `replan`, the three `goal*` modules and the audit itself — and they
+  are named in the test with the reason, so the debt is visible and cannot grow quietly.
+
+### Changed
+
+- `prototype` now leads with PLAN rather than BUILD — it answers a design question before you commit
+  to one, and the phase a skill leads with is what decides its rank.
+- Tag matching tolerates plurals, so a task about "two workers" matches the `worker` tag.
+
+---
+
 ## [2.0.0] — 2026-08-23
 
 Renamed from `pi-harness` to **infinity-harness**, and rebuilt from a working prototype into

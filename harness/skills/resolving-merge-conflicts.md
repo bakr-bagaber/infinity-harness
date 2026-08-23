@@ -4,6 +4,7 @@ description: Resolve git merge/rebase conflicts by original intent, verify, and 
 tags: [git, merge, rebase, conflict, branch, hunk]
 when: an in-progress git merge or rebase has conflicting hunks
 phases: []
+kind: process
 provenance: { origin: "mattpocock/skills", license: MIT, adapted: true }
 ---
 

@@ -4,6 +4,7 @@ description: Relational database craft — schema design, migrations, transactio
 tags: [database, db, sql, postgres, postgresql, mysql, sqlite, schema, migration, transaction, index, query, orm, persistence, storage]
 when: task touches persistent data, schemas, queries, or migrations
 phases: [plan, build, verify]
+kind: domain
 provenance: { origin: built-in }
 ---
 

@@ -223,6 +223,8 @@ export type Brief = {
   gate: GateResult | null;
   progress: { tasksDone: number; tasksTotal: number; featuresDone: number; featuresTotal: number };
   retries: { task: number; feature: number; phase: number; max: number };
+  /** Craft skills worth reading before starting this task, best match first. */
+  skills: { name: string; description: string; why: string }[];
   notes: string[];
 };
 

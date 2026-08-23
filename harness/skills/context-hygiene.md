@@ -4,6 +4,7 @@ description: Externalize state before it decays — write discoveries down, re-r
 tags: [meta, context, memory, handoff, session, notes, playbook]
 when: any long session, and always before ending one
 phases: []
+kind: process
 provenance: { origin: built-in, notes: frontier-playbook }
 ---
 

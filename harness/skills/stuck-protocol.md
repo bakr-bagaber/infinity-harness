@@ -4,6 +4,7 @@ description: What to do after repeated failures — stop, write down, reframe on
 tags: [meta, stuck, retry, failure, escalate, blocked, playbook]
 when: the same step has failed 2-3 times, or you notice you are looping
 phases: []
+kind: process
 provenance: { origin: built-in, notes: frontier-playbook }
 ---
 

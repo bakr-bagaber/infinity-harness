@@ -1,60 +1,56 @@
 ---
 name: building-tools
-description: Project tool standards — idempotent, self-documenting, non-interactive executables
-tags: [meta, tool, script, cli, automation, executable]
-when: a repeatable action deserves a registered executable instead of ad-hoc shell
+description: Project script standards — idempotent, self-documenting, non-interactive executables
+tags: [meta, tool, script, cli, automation, executable, makefile]
+when: a repeatable action deserves a script instead of the same shell dance twice
 phases: []
+kind: meta
 provenance: { origin: built-in }
 ---
 
 # Building Tools
 
-A tool is a registered executable under `harness/tools/` that future
-sessions (and other agents) can find and run. Build one when you catch
-yourself doing the same multi-step shell dance twice.
+Build one when you catch yourself doing the same multi-step shell dance
+twice. The bar is not "it worked once on my machine" — an unattended agent
+will run this at 3am with no one watching.
 
-## Process
+There is nothing to register. A script in the repo, named in `AGENTS.md` or
+`package.json`, is discoverable by the next session; a script nobody can
+find is a script nobody runs.
 
-1. `infinity-harness capability create tool <name>` → stub at
-   `harness/tools/<name>.sh` (any language works — .mjs, .py; the stub is
-   bash).
-2. Implement to the standards below.
-3. Register:
-
-   ```
-   infinity-harness capability add tool harness/tools/<name>.sh \
-     --run "bash harness/tools/<name>.sh" \
-     --tags db,fixtures --description "Reset local db to fixtures"
-   ```
-
-## Standards (the registration bar)
+## Standards
 
 - **Idempotent** — running it twice is safe and converges to the same state.
-- **`--help` works** — prints usage + purpose, exits 0. (`capability
-  doctor` checks exactly this.)
-- **`--json` where output is consumed** — machine-readable when another
-  tool or agent reads the result.
-- **Exit codes:** 0 success · 1 operation failed · 2 usage error.
-- **Never interactive** — no prompts, no confirmations; flags only. An
-  unattended agent runs this at 3am.
-- **Fail loud and specific** — errors name the thing that's wrong and the
-  likely fix, on stderr.
-- **Self-contained** — resolve paths relative to the project root, not the
-  caller's cwd.
+- **`--help` works** — prints usage and purpose, exits 0. This is the first
+  thing anyone runs, human or model.
+- **`--json` where output is consumed** — machine-readable when something
+  downstream reads the result. Humans get the summary line.
+- **Exit codes** — `0` success · `1` the operation failed · `2` you were
+  called wrong. An agent branches on these; get them right.
+- **Never interactive** — no prompts, no confirmations, no "are you sure".
+  Flags only.
+- **Fail loud and specific** — errors name the thing that is wrong and the
+  likely fix, on stderr. "Error: 1" costs someone an hour.
+- **Self-contained** — resolve paths from the project root, not the
+  caller's cwd. Check prerequisites at startup and fail with the install
+  command.
 
 ## Anti-patterns
 
-- **The snowflake** — works only on the author's machine (hardcoded paths,
-  undeclared deps). Fix: check prerequisites at startup, fail with install
+- **The snowflake** — hardcoded paths, undeclared dependencies, works only
+  where it was written. Fix: check prerequisites first, fail with
   instructions.
 - **The chatterbox** — pages of output hiding the result. Fix: one summary
   line by default, `--verbose` for the rest.
-- **The mutation surprise** — destructive with no dry-run. Fix: anything
-  destructive gets `--dry-run` and defaults to showing what it would do.
+- **The mutation surprise** — destructive with no dry run. Fix: anything
+  destructive gets `--dry-run`, and says what it would do.
+- **The second source of truth** — a script that keeps its own copy of state
+  the project already stores. Fix: read the real file.
 
 ## Checklist
 
-- [ ] Idempotent (ran it twice to prove it)
-- [ ] `--help` exit 0; exit codes correct
-- [ ] Registered with ≥2 tags + description
-- [ ] `infinity-harness capability doctor --type tool` passes
+- [ ] Ran it twice; the second run was a no-op
+- [ ] `--help` exits 0 and explains the purpose
+- [ ] Exit codes are 0 / 1 / 2 and mean what they should
+- [ ] No prompt, no confirmation, no TTY assumption
+- [ ] Named somewhere a cold reader will find it

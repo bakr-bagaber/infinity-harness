@@ -4,6 +4,7 @@ description: Performance work — measure first, fix the biggest cost, cache wit
 tags: [performance, slow, latency, profiling, optimize, cache, memory, benchmark, throughput, speed]
 when: something is slow, memory-hungry, or a task sets performance targets
 phases: [verify, build]
+kind: domain
 provenance: { origin: built-in }
 ---
 

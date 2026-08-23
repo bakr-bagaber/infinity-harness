@@ -4,6 +4,7 @@ description: Authentication, authorization, secrets, and the injection/XSS/CSRF 
 tags: [auth, authentication, authorization, security, login, password, token, jwt, session, oauth, secret, csrf, xss, injection, permission]
 when: task touches login, sessions, tokens, permissions, user input, or secrets
 phases: [plan, build, verify]
+kind: domain
 provenance: { origin: built-in }
 ---
 

@@ -4,6 +4,7 @@ description: Test infrastructure — fixtures, isolation, flaky-test policy, CI 
 tags: [test, testing, fixture, ci, flaky, coverage, mock, isolation, pipeline, suite]
 when: task sets up test tooling, fixtures, CI, or fights slow/flaky suites
 phases: [build, verify]
+kind: domain
 provenance: { origin: built-in }
 ---
 

@@ -4,6 +4,7 @@ description: Configuration discipline — env-driven config, validation at boot,
 tags: [config, configuration, environment, env, secret, settings, deploy, dotenv, variable]
 when: task adds configuration, environment handling, or deployment settings
 phases: [build, ship]
+kind: domain
 provenance: { origin: built-in }
 ---
 

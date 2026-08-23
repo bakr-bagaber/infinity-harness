@@ -4,6 +4,7 @@ description: HTTP/REST API design — resources, status codes, errors, versionin
 tags: [api, http, rest, endpoint, route, json, status, error, versioning, pagination, webhook, request, response]
 when: task designs or implements HTTP endpoints or consumes external APIs
 phases: [plan, build]
+kind: domain
 provenance: { origin: built-in }
 ---
 

@@ -4,6 +4,7 @@ description: Two-axis review (spec fidelity + standards/smells) with the Fowler 
 tags: [review, quality, smell, refactor, standards, spec, diff, audit]
 when: reviewing a diff, a branch, or the whole delivery before shipping
 phases: [review, simplify]
+kind: process
 provenance: { origin: "mattpocock/skills", license: MIT, adapted: true }
 ---
 

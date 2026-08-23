@@ -22,6 +22,13 @@ import { runChecks } from "./gates.ts";
 import { getPhaseOrder, nextPhase, isFinalPhase } from "./phases.ts";
 import * as P from "./paths.ts";
 import { readText } from "./fsx.ts";
+import { loadSkills, matchSkills } from "./skills.ts";
+
+/**
+ * Two is the number that gets read. One hides a better match; five is a
+ * reading list, and a reading list is a thing you skip.
+ */
+const SKILL_SUGGESTIONS = 2;
 
 const PHASE_INTENT: Record<Phase, string> = {
   init: "Set up the project skeleton and confirm the harness can see it.",
@@ -102,8 +109,37 @@ export async function buildBrief(targetDir: string, options: BuildBriefOptions =
       phase: config.phaseRetryCount ?? 0,
       max: retry.tasks.max,
     },
+    skills: suggestSkills(phase, {
+      goal: (list.goals ?? [])[0]?.title ?? null,
+      feature: feature?.name ?? null,
+      task: nextTask?.description ?? null,
+      criteria: collectCriteria(feature, nextTask?.criteria),
+    }),
     notes,
   };
+}
+
+/**
+ * Which craft skills to point at, given what is being worked on.
+ *
+ * The skills ship with the package, so this works in an install with no
+ * project-level setup. If they are missing — someone vendored `src/` alone —
+ * the brief simply has no SKILLS section rather than failing to build.
+ */
+function suggestSkills(
+  phase: Phase | null,
+  work: { goal: string | null; feature: string | null; task: string | null; criteria: string[] },
+): Brief["skills"] {
+  const text = [work.task, work.feature, work.goal, ...work.criteria].filter(Boolean).join(" \n ");
+  try {
+    return matchSkills(loadSkills(), { phase, text, limit: SKILL_SUGGESTIONS }).map((m) => ({
+      name: m.skill.name,
+      description: m.skill.description,
+      why: m.why,
+    }));
+  } catch {
+    return [];
+  }
 }
 
 function collectCriteria(
@@ -187,6 +223,15 @@ export function renderBrief(brief: Brief, config?: HarnessConfig): string {
     L.push("");
     L.push("ACCEPTANCE CRITERIA");
     for (const c of brief.criteria) L.push(`  - ${c}`);
+  }
+
+  if (brief.skills.length) {
+    L.push("");
+    L.push("SKILLS   read before you start — invoke by name");
+    for (const s of brief.skills) {
+      L.push(`  - ${s.name} — ${s.description}`);
+      if (s.why) L.push(`    (${s.why})`);
+    }
   }
 
   if (brief.gate) {

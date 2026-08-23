@@ -4,6 +4,7 @@ description: Feedback-loop-first debugging discipline for hard bugs and regressi
 tags: [debug, debugging, bug, error, failure, crash, flaky, slow, performance, regression, bisect]
 when: something is broken, throwing, failing intermittently, or slow
 phases: [verify, build]
+kind: process
 provenance: { origin: "mattpocock/skills", license: MIT, adapted: true }
 ---
 

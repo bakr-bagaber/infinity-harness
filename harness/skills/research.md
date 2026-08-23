@@ -4,6 +4,7 @@ description: Answer factual questions from primary sources; capture cited findin
 tags: [research, docs, documentation, investigate, source, facts, api, spec, evidence]
 when: a factual question about an API, library, protocol, or tool blocks progress
 phases: [define, plan, build]
+kind: process
 provenance: { origin: "mattpocock/skills", license: MIT, adapted: true }
 ---
 

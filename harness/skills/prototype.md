@@ -3,7 +3,8 @@ name: prototype
 description: Throwaway code that answers a design question fast, then gets deleted
 tags: [prototype, spike, experiment, explore, poc, throwaway, design]
 when: a state model, logic shape, or UI direction cannot be judged on paper
-phases: [build, plan]
+phases: [plan, build]
+kind: process
 provenance: { origin: "mattpocock/skills", license: MIT, adapted: true }
 ---
 

@@ -42,11 +42,13 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 // ── bootstrap ───────────────────────────────────────────────────────────────
@@ -2706,6 +2708,184 @@ async function probeLiveEndpoint() {
  */
 const LIVE_MAX_TOKENS = Number(process.env.INFINITY_E2E_MAX_TOKENS ?? 3000);
 
+// ────────────────────────────────────────────────────────────────────────────
+// package — what npm actually ships
+//
+// Every bug this scenario exists to catch was found by a user, after install,
+// and not by anything running in this repository:
+//
+//   - a README beside the skills, which made pi print a `[Skill conflicts]`
+//     block on every start
+//   - a UTF-8 BOM on a JSON file, which made every read fail
+//   - symlinks into a sibling checkout, which made the package impossible to
+//     install anywhere else
+//
+// The repo working tree is not the product. The tarball is. So this packs it
+// for real and inspects what comes out.
+// ────────────────────────────────────────────────────────────────────────────
+async function scenarioPackage() {
+  const { auditSkillsDir, formatAudit } = await import(
+    pathToFileURL(join(REPO_ROOT, "src", "core", "skillsAudit.ts")).href,
+  );
+
+  const workdir = mkTempDir("package");
+  let tarball;
+  await step("npm pack produces a tarball", async () => {
+    const res = spawnSync("npm", ["pack", "--pack-destination", workdir, "--silent"], {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      timeout: 120_000,
+    });
+    assert.equal(res.status, 0, `npm pack failed: ${res.stderr || res.stdout}`);
+    const files = readdirSync(workdir).filter((f) => f.endsWith(".tgz"));
+    assert.equal(files.length, 1, `expected one tarball, got ${files.join(", ")}`);
+    tarball = join(workdir, files[0]);
+  });
+
+  const root = join(workdir, "package");
+  await step("it extracts with no symlink and no path escaping the package", async () => {
+    const listing = execFileSync("tar", ["-tvzf", tarball], { encoding: "utf-8" });
+    for (const line of listing.split("\n")) {
+      if (!line.trim()) continue;
+      assert.ok(!line.startsWith("l"), `tarball contains a symlink: ${line}`);
+      const name = line.slice(line.indexOf("package/"));
+      assert.ok(name.startsWith("package/"), `entry outside the package root: ${line}`);
+      assert.ok(!name.includes(".."), `entry escapes the package root: ${line}`);
+    }
+    execFileSync("tar", ["-xzf", tarball, "-C", workdir]);
+    assert.ok(existsSync(root), "the tarball extracted to package/");
+  });
+
+  const packed = JSON.parse(readFileSync(join(root, "package.json"), "utf-8"));
+  const local = JSON.parse(readFileSync(join(REPO_ROOT, "package.json"), "utf-8"));
+
+  await step("what pi is told to load is actually inside it", async () => {
+    assert.equal(packed.version, local.version, "the packed version is the repo's version");
+    for (const entry of packed.pi?.extensions ?? []) {
+      assert.ok(existsSync(join(root, entry)), `pi.extensions "${entry}" is not in the tarball`);
+    }
+    for (const entry of packed.pi?.skills ?? []) {
+      assert.ok(existsSync(join(root, entry)), `pi.skills "${entry}" is not in the tarball`);
+    }
+    for (const file of ["README.md", "LICENSE", "CHANGELOG.md"]) {
+      assert.ok(existsSync(join(root, file)), `${file} is not in the tarball`);
+    }
+    // The symlinks that made 1.x uninstallable pointed at a sibling checkout.
+    for (const gone of ["cli", "prompts", "skills"]) {
+      assert.ok(!existsSync(join(root, gone)), `${gone}/ is back in the package`);
+    }
+  });
+
+  await step("the shipped skills load cleanly in pi — no conflict block on start", async () => {
+    for (const entry of packed.pi?.skills ?? []) {
+      const audit = auditSkillsDir(join(root, entry));
+      assert.equal(audit.problems.length, 0, `${entry} in the tarball:\n${formatAudit(audit, root)}`);
+      assert.ok(audit.skills.length > 0, `${entry} ships no skills`);
+    }
+  });
+
+  let reachable;
+  await step("every module the extension imports is in the tarball too", async () => {
+    // A file left out of package.json "files" is invisible here and fatal
+    // after install, where the first import throws instead of the last test
+    // failing.
+    const entry = join(root, packed.pi.extensions[0], "infinity-harness", "index.ts");
+    assert.ok(existsSync(entry), `extension entry point missing: ${entry}`);
+
+    // Static and dynamic: `src/remote.ts` is deliberately deferred behind
+    // `await import(...)` so the dashboard's HTTP server never loads unless
+    // someone opens it.
+    const SPEC = /(?:\bfrom\s*|\bimport\s*\(?\s*)["'](\.[^"']+)["']/g;
+    const seen = new Set();
+    const queue = [entry];
+    while (queue.length) {
+      const file = queue.pop();
+      if (seen.has(file)) continue;
+      seen.add(file);
+      const source = readFileSync(file, "utf-8");
+      for (const [, spec] of source.matchAll(SPEC)) {
+        const resolved = resolve(dirname(file), spec);
+        assert.ok(
+          existsSync(resolved),
+          `${relative(root, file)} imports "${spec}", which npm did not publish`,
+        );
+        if (resolved.endsWith(".ts")) queue.push(resolved);
+      }
+    }
+    reachable = seen;
+    assert.ok(seen.size >= 20, `expected the src tree to be reachable, walked ${seen.size}`);
+  });
+
+  await step("nothing new ships that the extension cannot reach", async () => {
+    // "The tested code was not the shipped code" was this project's worst bug:
+    // the extension carried inlined copies of modules the tests exercised in
+    // `src/`, so the suite was green about code nobody ran. This is the guard
+    // against the mirror image — a module that ships, typechecks and passes
+    // tests while no code path in the running product can reach it.
+    //
+    // Everything on this list is real, tested, and currently unreachable from
+    // the extension. It is debt, recorded here so it cannot grow quietly and
+    // cannot be mistaken for shipped behaviour.
+    const KNOWN_UNREACHABLE = new Map([
+      ["src/core/skillsAudit.ts", "build-time guard; runs in tests, not in pi"],
+      ["src/worker.ts", "isolated per-task workers — no command spawns one yet"],
+      ["src/unstuck.ts", "escalation ladder — the loop counts strikes but never consults it"],
+      ["src/review.ts", "review bounce guard — only unstuck.ts would call it"],
+      ["src/rework.ts", "backward rework — no tool or command exposes it"],
+      ["src/replan.ts", "mid-build amendment — no tool or command exposes it"],
+      ["src/goalLoop.ts", "goal-loop coordinator, ported and not yet wired"],
+      ["src/goalSpec.ts", "goal spec helpers, ported and not yet wired"],
+      ["src/goalState.ts", "goal-loop persistence, ported and not yet wired"],
+    ]);
+
+    const shipped = [];
+    const walk = (dir) => {
+      for (const name of readdirSync(dir)) {
+        const full = join(dir, name);
+        if (statSync(full).isDirectory()) walk(full);
+        else if (name.endsWith(".ts")) shipped.push(full);
+      }
+    };
+    walk(join(root, "src"));
+
+    const orphans = shipped
+      .filter((f) => !reachable.has(f))
+      .map((f) => relative(root, f).split("\\").join("/"));
+    const unexpected = orphans.filter((f) => !KNOWN_UNREACHABLE.has(f));
+    assert.deepEqual(
+      unexpected,
+      [],
+      `these modules ship but nothing in the extension can reach them:\n  ${unexpected.join("\n  ")}`,
+    );
+
+    const fixed = [...KNOWN_UNREACHABLE.keys()].filter((f) => !orphans.includes(f));
+    assert.deepEqual(fixed, [], `wired in at last — delete from KNOWN_UNREACHABLE: ${fixed.join(", ")}`);
+    out(`      note: ${orphans.length} shipped module(s) are unreachable from the extension (documented debt)`);
+  });
+
+  await step("no shipped text file carries a UTF-8 BOM", async () => {
+    // Windows editors add one, JSON.parse rejects it, and the failure reads as
+    // "config is missing or unreadable" with no clue why.
+    const offenders = [];
+    const walk = (dir) => {
+      for (const name of readdirSync(dir)) {
+        const full = join(dir, name);
+        if (statSync(full).isDirectory()) {
+          walk(full);
+          continue;
+        }
+        if (!/\.(ts|json|md|mjs)$/.test(name)) continue;
+        const head = readFileSync(full).subarray(0, 3);
+        if (head[0] === 0xef && head[1] === 0xbb && head[2] === 0xbf) offenders.push(relative(root, full));
+      }
+    };
+    walk(root);
+    assert.deepEqual(offenders, [], `BOM found in: ${offenders.join(", ")}`);
+  });
+
+  rmSync(workdir, { recursive: true, force: true });
+}
+
 async function scenarioLive() {
   if (NO_LIVE) throw new SkipLeg("--no-live");
 
@@ -2823,6 +3003,7 @@ const SCENARIOS = [
   ["widget", "rendering across empty, huge, long, CJK, ASCII and narrow", scenarioWidget],
   ["edges", "adversarial plans and inputs", scenarioEdges],
   ["extension", "the pi adapter driven through its real tools, commands and hooks", scenarioExtension],
+  ["package", "what npm actually ships, unpacked and inspected", scenarioPackage],
   ["live", "one real model call (skipped when the endpoint is unreachable)", scenarioLive],
 ];
 

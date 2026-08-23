@@ -4,6 +4,7 @@ description: "Atomic infinity_plan pattern with omission deletion, baseRevision 
 tags: [harness, pi-todo, atomic, baseRevision, omission, deletion, compaction, widget, task-list, dependency]
 when: "implementing infinity_plan, atomic revisioning, Pi widget with session persistence or task dependencies"
 phases: [build, verify]
+kind: domain
 provenance: { origin: "https://github.com/99percentpeople/pi-extensions", license: MIT, adapted: true, url: "https://github.com/99percentpeople/pi-extensions", contentHash: abf626df6a74a6fb }
 ---
 

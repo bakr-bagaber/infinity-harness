@@ -4,6 +4,7 @@ description: The capability ladder — HAVE, ACQUIRE, CREATE, KEEP — for skill
 tags: [meta, capability, acquire, search, skill, mcp, tool, ladder, library]
 when: a task needs knowledge, system access, or an executable the project lacks
 phases: []
+kind: meta
 provenance: { origin: built-in }
 ---
 

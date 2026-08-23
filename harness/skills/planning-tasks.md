@@ -4,6 +4,7 @@ description: Break specs into tracer-bullet vertical slices with checkable accep
 tags: [plan, planning, slice, ticket, decompose, criteria, backlog, breakdown, refactor]
 when: writing or restructuring the feature list from a spec
 phases: [plan]
+kind: process
 provenance: { origin: "mattpocock/skills", license: MIT, adapted: true }
 ---
 

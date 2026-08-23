@@ -4,6 +4,7 @@ description: Concurrency and async correctness — races, idempotency, queues, c
 tags: [concurrency, async, race, parallel, queue, lock, mutex, retry, idempotent, worker, thread, promise, deadlock, atomic]
 when: task involves parallel work, background jobs, shared state, or retried operations
 phases: [plan, build, verify]
+kind: domain
 provenance: { origin: built-in }
 ---
 

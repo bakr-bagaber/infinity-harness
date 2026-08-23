@@ -4,6 +4,7 @@ description: Frontend craft — state discipline, componentization, accessibilit
 tags: [frontend, ui, component, react, vue, svelte, state, form, accessibility, a11y, css, browser, render]
 when: task builds or changes user interface
 phases: [plan, build]
+kind: domain
 provenance: { origin: built-in }
 ---
 

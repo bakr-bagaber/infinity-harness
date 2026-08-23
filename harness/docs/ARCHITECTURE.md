@@ -153,7 +153,7 @@ Every stop carries a reason. A human coming back finds an explanation, not a mys
 ## Verification
 
 - `npm test` — 20 unit files, plain `node:assert`, no framework.
-- `npm run e2e` — 11 scenarios over real temp projects, real git repos, real child processes: the
+- `npm run e2e` — 12 scenarios over real temp projects, real git repos, real child processes: the
   full pipeline walkthrough, loop convergence, every stop condition, SIGKILL-and-restart, a 6-way
   concurrent write fan-out with an unlocked control, data round-trip, the dashboard, widget
   rendering across shapes, adversarial input, and the extension adapter itself.

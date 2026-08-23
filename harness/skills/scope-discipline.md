@@ -4,6 +4,7 @@ description: The contract is the boundary — park ideas, resist drive-by fixes,
 tags: [meta, scope, creep, contract, focus, discipline, playbook]
 when: mid-task ideas, adjacent problems, or "while I'm here" temptations appear
 phases: []
+kind: process
 provenance: { origin: built-in, notes: frontier-playbook }
 ---
 

@@ -4,6 +4,7 @@ description: How to author a skill worth keeping — scope, structure, frontmatt
 tags: [meta, skill, writing, author, documentation, checklist]
 when: creating a new skill or adapting an acquired one
 phases: []
+kind: meta
 provenance: { origin: "mattpocock/skills writing-great-skills", license: MIT, adapted: true }
 ---
 
@@ -54,7 +55,7 @@ Frontmatter uses a strict subset: `key: value`, `key: [a, b]`,
 
 ## Checklist
 
-- [ ] Frontmatter passes: `infinity-harness capability add skill <path>` (it validates)
+- [ ] Frontmatter is complete: `name` matching the filename, `description`, `kind`, `tags`, `when`, `phases`
 - [ ] A cold reader knows exactly what to do and how to check they did it
 - [ ] Every rule is checkable; every anti-pattern has a fix
 - [ ] Attribution line present if adapted from elsewhere
