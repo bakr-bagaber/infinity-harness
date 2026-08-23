@@ -329,7 +329,8 @@ function byName(checks: readonly CheckResult[], name: string): CheckResult {
 // ── phase → check mapping ──────────────────────────────────────────────────
 {
   assert.deepEqual(getPhaseCheckNames("init"), ["gitrepo", "configexists"]);
-  assert.deepEqual(getPhaseCheckNames("define"), ["featurecriteria"]);
+  assert.deepEqual(getPhaseCheckNames("define"), ["featurecriteria", "skillsload"]);
+  assert.ok(getPhaseCheckNames("review").includes("skillsload"), "review re-checks the skills too");
   assert.deepEqual(getPhaseCheckNames("build"), ["lint", "tests", "coverage", "noplaceholders", "taskscomplete"]);
   assert.ok(getPhaseCheckNames("ship").includes("tagged"), "shipping demands a tag");
   assert.ok(getPhaseCheckNames("ship").includes("changelog"));

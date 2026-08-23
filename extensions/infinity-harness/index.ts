@@ -25,6 +25,7 @@ import { buildBrief, renderBrief } from "../../src/core/brief.ts";
 import { runChecks } from "../../src/core/gates.ts";
 import { advancePhase } from "../../src/core/phases.ts";
 import { configPath } from "../../src/core/paths.ts";
+import { readJsonSafe } from "../../src/core/fsx.ts";
 import { withLock } from "../../src/core/lock.ts";
 import {
   DEFAULT_ENABLED_PHASES,
@@ -35,10 +36,26 @@ import {
 import { writeTaskList, summarizeApply, type TaskInput } from "../../src/taskList.ts";
 import { renderWidget, renderStatusLine, type WidgetState } from "../../src/ui/widget.ts";
 import { createStyler, detectGlyphs } from "../../src/ui/theme.ts";
-import { decideNext, stopFilePath } from "../../src/loop.ts";
+import { decideNext, stopFilePath, loopStatePath } from "../../src/loop.ts";
 import { runConfigMenu, renderSettings, type ModelChoice, type Prompter } from "../../src/ui/config.ts";
 import { SETTINGS, readAll, readSetting, formatValue } from "../../src/core/settings.ts";
 import { detectStack, describeInit, initHarness, type StackId } from "../../src/core/init.ts";
+import { startRework, loadRework, clearRework } from "../../src/rework.ts";
+import { amendPlan, loadReplanHistory, type ReplanTaskInput } from "../../src/replan.ts";
+import { chooseUnstuckStrategy } from "../../src/unstuck.ts";
+import { escalationSummary } from "../../src/escalate.ts";
+import { spawnIsolatedWorker } from "../../src/worker.ts";
+import {
+  startGoal,
+  loadGoal,
+  reviewGoal,
+  cancelGoal,
+  recordPipelinePass,
+  viewOf,
+  describeGoal,
+  type ReviewInput,
+} from "../../src/goal.ts";
+import { flattenTasks } from "../../src/core/featureList.ts";
 
 const CHECKPOINT = "infinity:checkpoint";
 const WIDGET_KEY = "infinity-harness";
@@ -79,6 +96,14 @@ export default function (pi: ExtensionAPI): void {
     try {
       const { list } = loadFeatureList(dir);
       const { config } = loadConfig(dir);
+      const spent = escalationSummary(dir);
+      const loop = readJsonSafe<{ escalations?: { strategy: string }[] } | null>(
+        loopStatePath(dir),
+        null,
+      );
+      const lastRung = loop?.escalations?.[loop.escalations.length - 1]?.strategy ?? null;
+      const pass = typeof config.goalPass === "number" ? config.goalPass : null;
+      const maxPasses = typeof config.goalMaxPasses === "number" ? config.goalMaxPasses : null;
       return {
         list,
         phase: config.currentPhase,
@@ -86,6 +111,11 @@ export default function (pi: ExtensionAPI): void {
         paused: Boolean(config.paused),
         revision: list.baseRevision,
         retries: { task: config.taskRetryCount ?? 0, max: config.maxRetries ?? 10 },
+        goalPass: pass && maxPasses ? { current: pass, max: maxPasses } : null,
+        escalation:
+          lastRung || spent.reworks || spent.replans
+            ? { strategy: lastRung, reworks: spent.reworks, replans: spent.replans }
+            : null,
       };
     } catch {
       return null;
@@ -750,6 +780,9 @@ export default function (pi: ExtensionAPI): void {
    */
   const NO_HARNESS = "No harness in this project yet. Run /infinity:init to create one.";
 
+  /** The escalation ladder, in the order it climbs. */
+  const DEFAULT_LADDER = ["retry", "reframe", "consult", "rework", "replan", "master"];
+
   /** Everything the pipeline can run. INIT is not a phase you choose. */
   const SELECTABLE_PHASES: Phase[] = ["define", "plan", "build", "verify", "simplify", "review", "ship"];
 
@@ -867,6 +900,411 @@ export default function (pi: ExtensionAPI): void {
     },
   });
 
+
+  // -- escalation, rework, replan --------------------------------------------
+
+  pi.registerTool({
+    name: "infinity_rework",
+    label: "Rework",
+    description:
+      "Send a task and everything that depends on it back to `rework`. Use when work built on a task " +
+      "turns out not to hold up: the dependents were built on the broken thing, so they are suspect " +
+      "until re-proved. Bounded by the rework budget.",
+    parameters: {
+      type: "object",
+      required: ["task"],
+      properties: {
+        task: { type: "string", description: 'Task key, e.g. "feature-001/task-003"' },
+        reason: { type: "string", description: "Why this is going backwards" },
+        maxImpactDepth: { type: "integer", minimum: 1, maximum: 10 },
+      },
+    } as never,
+    async execute(
+      _id: string,
+      params: { task: string; reason?: string; maxImpactDepth?: number },
+      _signal,
+      _onUpdate,
+      ctx,
+    ) {
+      const dir = projectDir(ctx);
+      const { list } = loadFeatureList(dir);
+      const target = flattenTasks(list).find(
+        (t) => t.compositeKey === params.task || t.key === params.task || t.id === params.task,
+      );
+      if (!target) {
+        return {
+          content: [{ type: "text", text: `No task matches "${params.task}".` }],
+          details: { error: "no-such-task" },
+          isError: true,
+        };
+      }
+      try {
+        const result = await startRework({
+          projectDir: dir,
+          featureId: target.featureId,
+          taskId: target.id,
+          key: target.key,
+          reason: params.reason ?? "rework requested",
+          runId,
+          maxImpactDepth: params.maxImpactDepth,
+        });
+        refreshWidget(ctx as ExtensionContext);
+        const downstream = result.impacted.length
+          ? `Also flipped ${result.impacted.length} dependent task(s): ${result.impacted.join(", ")}`
+          : "Nothing depends on it, so this is contained.";
+        return {
+          content: [
+            {
+              type: "text",
+              text: `${target.compositeKey} is back in rework (plan revision ${result.baseRevision}).\n${downstream}\nFix the root task first, then re-prove the rest.`,
+            },
+          ],
+          details: result,
+        };
+      } catch (e) {
+        return {
+          content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }],
+          details: { error: "rework-failed" },
+          isError: true,
+        };
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "infinity_replan",
+    label: "Replan",
+    description:
+      "Add sprints, features or tasks to the plan mid-run, without resubmitting the whole task list. " +
+      "Use when the work turns out to need something that was never planned — the plan is the record, " +
+      "and building what it does not contain leaves it lying. Bounded by the replan budget.",
+    parameters: {
+      type: "object",
+      properties: {
+        reason: { type: "string", description: "What the plan was missing" },
+        addFeatures: {
+          type: "array",
+          maxItems: 20,
+          items: {
+            type: "object",
+            required: ["id", "name"],
+            properties: {
+              id: { type: "string" },
+              name: { type: "string" },
+              description: { type: "string" },
+              difficulty: { type: "string", enum: ["easy", "moderate", "difficult"] },
+            },
+          },
+        },
+        addTasks: {
+          type: "array",
+          maxItems: 50,
+          items: {
+            type: "object",
+            required: ["featureId", "task"],
+            properties: {
+              featureId: { type: "string" },
+              task: {
+                type: "object",
+                required: ["id", "description"],
+                properties: {
+                  id: { type: "string" },
+                  key: { type: "string" },
+                  description: { type: "string" },
+                  status: { type: "string", enum: ["pending", "in_progress", "complete", "blocked", "rework"] },
+                  dependsOn: { type: "array", items: { type: "string" } },
+                  difficulty: { type: "string", enum: ["easy", "moderate", "difficult"] },
+                  acceptanceCriteria: { type: "array", items: { type: "string" } },
+                },
+              },
+            },
+          },
+        },
+      },
+    } as never,
+    async execute(
+      _id: string,
+      params: {
+        reason?: string;
+        addFeatures?: { id: string; name: string; description?: string; difficulty?: string }[];
+        addTasks?: { featureId: string; task: ReplanTaskInput }[];
+      },
+      _signal,
+      _onUpdate,
+      ctx,
+    ) {
+      const dir = projectDir(ctx);
+      try {
+        const result = await amendPlan({
+          projectDir: dir,
+          reason: params.reason ?? "mid-run amendment",
+          addFeatures: params.addFeatures,
+          addTasks: params.addTasks,
+        });
+        refreshWidget(ctx as ExtensionContext);
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                `Plan amended to revision ${result.baseRevision}: ` +
+                `+${result.added.features} feature(s), +${result.added.tasks} task(s), ` +
+                `+${result.added.sprints} sprint(s).`,
+            },
+          ],
+          details: result,
+        };
+      } catch (e) {
+        return {
+          content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }],
+          details: { error: "replan-failed" },
+          isError: true,
+        };
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "infinity_unstuck",
+    label: "Unstuck",
+    description:
+      "Ask the escalation ladder what to try next: retry, reframe, consult a stronger model, rework, " +
+      "replan, or master. Read-only — it recommends, it does not act. /infinity:run consults it " +
+      "automatically when a run stalls; call it yourself when you are stuck and want the next rung.",
+    parameters: { type: "object", properties: {} } as never,
+    async execute(_id: string, _params: unknown, _signal, _onUpdate, ctx) {
+      const dir = projectDir(ctx);
+      const { list } = loadFeatureList(dir);
+      const task = flattenTasks(list).find((t) => t.status === "in_progress" || t.status === "rework");
+      const choice = chooseUnstuckStrategy({
+        projectDir: dir,
+        featureId: task?.featureId,
+        taskId: task?.id,
+        currentDifficulty: task?.difficulty ?? null,
+        requireDeltaForRework: false,
+      });
+      const spent = escalationSummary(dir);
+      const text = choice.strategy
+        ? `Next rung: ${choice.strategy} — ${choice.reason}` +
+          (choice.nextModel ? `\nModel: ${choice.nextModel}` : "") +
+          `\nSpent so far: ${spent.reworks} rework(s), ${spent.replans} replan(s)` +
+          (spent.returnTo ? `, returning to ${spent.returnTo}` : "")
+        : `The ladder has nothing left: ${choice.reason}. This needs a human.`;
+      return { content: [{ type: "text", text }], details: { ...choice, spent } };
+    },
+  });
+
+  pi.registerTool({
+    name: "infinity_spawn_worker",
+    label: "Spawn Worker",
+    description:
+      "Run one task in an isolated worker: its own attempt directory, prompt, output log and " +
+      "fingerprint under tmp/. Use for a task worth attempting without the current conversation's " +
+      "context — a clean-room retry. Records the attempt whether or not a command is configured.",
+    parameters: {
+      type: "object",
+      required: ["task", "prompt"],
+      properties: {
+        task: { type: "string", description: 'Task key, e.g. "feature-001/task-003"' },
+        prompt: { type: "string", description: "The complete instruction for the isolated worker" },
+        command: { type: "string", description: "Shell command to run; {promptfile} is substituted" },
+        model: { type: "string", description: "Model reference for the worker" },
+        timeoutMs: { type: "integer", minimum: 1000, maximum: 3_600_000 },
+      },
+    } as never,
+    async execute(
+      _id: string,
+      params: { task: string; prompt: string; command?: string; model?: string; timeoutMs?: number },
+      _signal,
+      _onUpdate,
+      ctx,
+    ) {
+      const dir = projectDir(ctx);
+      const { list } = loadFeatureList(dir);
+      const target = flattenTasks(list).find(
+        (t) => t.compositeKey === params.task || t.key === params.task || t.id === params.task,
+      );
+      if (!target) {
+        return {
+          content: [{ type: "text", text: `No task matches "${params.task}".` }],
+          details: { error: "no-such-task" },
+          isError: true,
+        };
+      }
+      try {
+        const result = await spawnIsolatedWorker({
+          projectDir: dir,
+          runId,
+          featureId: target.featureId,
+          taskId: target.id,
+          prompt: params.prompt,
+          command: params.command,
+          model: params.model,
+          timeoutMs: params.timeoutMs,
+        });
+        const ran = params.command
+          ? `exit ${result.exitCode}${result.timedOut ? " (timed out)" : ""}`
+          : "recorded only — no command configured";
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                `Worker attempt ${result.attempt} for ${target.compositeKey}: ${ran}\n` +
+                `${result.attemptDir}\n\n${result.output.slice(-4000) || "(no output)"}`,
+            },
+          ],
+          details: result,
+        };
+      } catch (e) {
+        return {
+          content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }],
+          details: { error: "worker-failed" },
+          isError: true,
+        };
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "infinity_goal",
+    label: "Goal",
+    description:
+      "The outer loop. `start` states a goal and opens pass 1; `status` reports where it is; " +
+      "`review` judges whether the work so far actually meets the goal and, if it does not, rewinds " +
+      "the pipeline for another pass with the remaining work named; `cancel` stops pursuing it. " +
+      "The phase gate decides whether the WORK is done; this decides whether the GOAL is done.",
+    parameters: {
+      type: "object",
+      required: ["action"],
+      properties: {
+        action: { type: "string", enum: ["start", "status", "review", "cancel"] },
+        goal: { type: "string", description: "start: what this whole run is for, in one sentence" },
+        maxIterations: { type: "integer", minimum: 1, maximum: 50, description: "start: how many passes at most" },
+        decision: {
+          type: "string",
+          enum: ["complete", "incomplete", "blocked", "failed"],
+          description: "review: does the work meet the goal?",
+        },
+        rationale: { type: "string", description: "review: why, judged against the goal not the plan" },
+        remainingWork: {
+          type: "array",
+          items: { type: "string" },
+          description: "review: required unless complete — what is still missing. The next pass is planned from this.",
+        },
+        reason: { type: "string", description: "cancel: why" },
+      },
+    } as never,
+    async execute(
+      _id: string,
+      params: {
+        action: string;
+        goal?: string;
+        maxIterations?: number;
+        decision?: ReviewInput["decision"];
+        rationale?: string;
+        remainingWork?: string[];
+        reason?: string;
+      },
+      _signal,
+      _onUpdate,
+      ctx,
+    ) {
+      const dir = projectDir(ctx);
+      try {
+        if (params.action === "start") {
+          if (!params.goal?.trim()) {
+            return {
+              content: [{ type: "text", text: "A goal needs to say something." }],
+              details: { error: "no-goal" },
+              isError: true,
+            };
+          }
+          const { state } = await startGoal({
+            targetDir: dir,
+            goal: params.goal,
+            runId: `goal-${runId}`,
+            maxIterations: params.maxIterations,
+          });
+          refreshWidget(ctx as ExtensionContext);
+          const view = viewOf(state);
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  `Goal set: ${view.goal}\nPass 1 of at most ${view.maxIterations}. The pipeline is at the ` +
+                  `first phase — define what this needs, plan it, build it. When the pipeline completes, ` +
+                  `call infinity_goal with action "review" and judge it against the goal, not the plan.`,
+              },
+            ],
+            details: view,
+          };
+        }
+
+        if (params.action === "status") {
+          const state = await loadGoal(dir);
+          if (!state) {
+            return {
+              content: [{ type: "text", text: "No goal is being pursued in this project." }],
+              details: { active: false },
+            };
+          }
+          const view = viewOf(state);
+          const remaining = view.remainingWork.length
+            ? `\nStill missing:\n${view.remainingWork.map((w) => `  - ${w}`).join("\n")}`
+            : "";
+          return {
+            content: [{ type: "text", text: `${describeGoal(view)}\nPhase: ${view.phase}${remaining}` }],
+            details: view,
+          };
+        }
+
+        if (params.action === "review") {
+          if (!params.decision || !params.rationale?.trim()) {
+            return {
+              content: [{ type: "text", text: "A review needs a decision and a rationale." }],
+              details: { error: "incomplete-review" },
+              isError: true,
+            };
+          }
+          const outcome = await reviewGoal(dir, {
+            decision: params.decision,
+            rationale: params.rationale,
+            remainingWork: params.remainingWork,
+          });
+          refreshWidget(ctx as ExtensionContext);
+          if (!outcome.terminal) {
+            // Rewinding the pipeline means the next brief is a different one.
+            pi.sendUserMessage(await briefText(dir), { deliverAs: "followUp" });
+          }
+          return { content: [{ type: "text", text: outcome.message }], details: viewOf(outcome.state) };
+        }
+
+        if (params.action === "cancel") {
+          const state = await cancelGoal(dir, params.reason ?? "cancelled by request");
+          refreshWidget(ctx as ExtensionContext);
+          return {
+            content: [{ type: "text", text: state ? `Goal cancelled: ${state.goal}` : "No goal to cancel." }],
+            details: state ? viewOf(state) : { active: false },
+          };
+        }
+
+        return {
+          content: [{ type: "text", text: `Unknown action "${params.action}".` }],
+          details: { error: "unknown-action" },
+          isError: true,
+        };
+      } catch (e) {
+        return {
+          content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }],
+          details: { error: "goal-failed" },
+          isError: true,
+        };
+      }
+    },
+  });
+
   // -- commands -------------------------------------------------------------
 
   pi.registerCommand("infinity:status", {
@@ -926,6 +1364,140 @@ export default function (pi: ExtensionAPI): void {
       );
       const text = await briefText(dir);
       pi.sendUserMessage(text, { deliverAs: "followUp" });
+    },
+  });
+
+  pi.registerCommand("infinity:goal", {
+    description: "State a goal and pursue it across passes — or review, cancel, or check one",
+    handler: async (args: string, ctx: ExtensionContext) => {
+      const dir = projectDir(ctx);
+      if (!isHarnessProject(dir)) {
+        notify(ctx, NO_HARNESS, "warning");
+        return;
+      }
+      const text = args.trim();
+
+      if (text === "" || text === "status") {
+        const state = await loadGoal(dir);
+        if (!state) {
+          notify(ctx, 'No goal set. `/infinity:goal <what you want built>` starts one.', "info");
+          return;
+        }
+        const view = viewOf(state);
+        const remaining = view.remainingWork.length
+          ? `\nStill missing:\n${view.remainingWork.map((w) => `  - ${w}`).join("\n")}`
+          : "";
+        notify(ctx, `${describeGoal(view)}\nPhase: ${view.phase}${remaining}`, "info");
+        return;
+      }
+
+      if (text === "cancel") {
+        const state = await cancelGoal(dir, "cancelled from /infinity:goal");
+        notify(ctx, state ? `Goal cancelled: ${state.goal}` : "No goal to cancel.", "info");
+        refreshWidget(ctx);
+        return;
+      }
+
+      try {
+        const { state } = await startGoal({ targetDir: dir, goal: text, runId: `goal-${runId}` });
+        refreshWidget(ctx);
+        notify(
+          ctx,
+          `Goal set: ${state.goal}\nPass 1 of at most ${state.limits.maxIterations}. ` +
+            `The pipeline is back at its first phase.`,
+          "info",
+        );
+        pi.sendUserMessage(await briefText(dir), { deliverAs: "followUp" });
+      } catch (e) {
+        notify(ctx, e instanceof Error ? e.message : String(e), "error");
+      }
+    },
+  });
+
+  pi.registerCommand("infinity:unstuck", {
+    description: "What the escalation ladder would try next, and what it has spent",
+    handler: async (_args: string, ctx: ExtensionContext) => {
+      const dir = projectDir(ctx);
+      if (!isHarnessProject(dir)) {
+        notify(ctx, NO_HARNESS, "warning");
+        return;
+      }
+      const { list } = loadFeatureList(dir);
+      const task = flattenTasks(list).find((t) => t.status === "in_progress" || t.status === "rework");
+      const choice = chooseUnstuckStrategy({
+        projectDir: dir,
+        featureId: task?.featureId,
+        taskId: task?.id,
+        currentDifficulty: task?.difficulty ?? null,
+        requireDeltaForRework: false,
+      });
+      const spent = escalationSummary(dir);
+      const rework = loadRework(dir);
+      const lines = [
+        choice.strategy
+          ? `Next rung: ${choice.strategy} — ${choice.reason}`
+          : `The ladder has nothing left: ${choice.reason}`,
+        choice.nextModel ? `Model: ${choice.nextModel}` : null,
+        `Spent: ${spent.reworks} rework(s), ${spent.replans} replan(s)`,
+        rework ? `Returning to ${rework.returnFeature}/${rework.returnTask} — ${rework.reason}` : null,
+        `Ladder: ${DEFAULT_LADDER.join(" → ")}`,
+      ].filter((l): l is string => l !== null);
+      notify(ctx, lines.join("\n"), "info");
+    },
+  });
+
+  pi.registerCommand("infinity:rework", {
+    description: "Send a task and its dependents back to rework",
+    handler: async (args: string, ctx: ExtensionContext) => {
+      const dir = projectDir(ctx);
+      if (!isHarnessProject(dir)) {
+        notify(ctx, NO_HARNESS, "warning");
+        return;
+      }
+      const key = args.trim();
+      const { list } = loadFeatureList(dir);
+      const tasks = flattenTasks(list);
+
+      if (key === "clear") {
+        await clearRework(dir);
+        notify(ctx, "Rework record cleared.", "info");
+        refreshWidget(ctx);
+        return;
+      }
+
+      let target = tasks.find((t) => t.compositeKey === key || t.key === key || t.id === key);
+      if (!target && ctx.hasUI) {
+        const rows = tasks.map((t) => `${t.compositeKey} [${t.status}] ${t.description}`);
+        const picked = await ctx.ui.select("Send which task back to rework?", rows);
+        if (picked === undefined) return;
+        target = tasks[rows.indexOf(picked)];
+      }
+      if (!target) {
+        notify(ctx, key ? `No task matches "${key}".` : "Name a task: /infinity:rework <task-key>", "warning");
+        return;
+      }
+
+      try {
+        const result = await startRework({
+          projectDir: dir,
+          featureId: target.featureId,
+          taskId: target.id,
+          key: target.key,
+          reason: "rework from /infinity:rework",
+          runId,
+        });
+        refreshWidget(ctx);
+        notify(
+          ctx,
+          `${target.compositeKey} → rework (revision ${result.baseRevision}). ` +
+            (result.impacted.length
+              ? `${result.impacted.length} dependent task(s) went with it: ${result.impacted.join(", ")}`
+              : "Nothing depends on it."),
+          "info",
+        );
+      } catch (e) {
+        notify(ctx, e instanceof Error ? e.message : String(e), "error");
+      }
     },
   });
 

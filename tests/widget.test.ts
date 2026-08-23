@@ -328,3 +328,54 @@ function manyTasks(n: number, activeAt: number): FeatureList {
 
 assert.equal(DEFAULT_WIDTH, 76);
 console.log("All widget tests PASS");
+
+// ── the outer loop is visible ──────────────────────────────────────────────
+// A second pass at a goal looks identical to a first one in every other part
+// of the display — which is exactly when someone glances at the terminal,
+// sees a half-full progress bar, and walks away thinking it is nearly done.
+{
+  const base: WidgetState = {
+    list: {
+      version: "2.0",
+      baseRevision: 3,
+      goals: [{ id: "goal-001", title: "Ship the rewrite" }],
+      sprints: [],
+      features: [
+        {
+          id: "feature-001",
+          name: "F",
+          tasks: [{ id: "task-001", description: "work", status: "in_progress" }],
+        },
+      ],
+    },
+    phase: "build",
+  };
+
+  const plain = renderWidget(base, { width: 76 }).join("\n");
+  assert.ok(!/pass \d+\//.test(plain), "no goal loop, no pass counter");
+
+  const second = renderWidget({ ...base, goalPass: { current: 2, max: 5 } }, { width: 76 }).join("\n");
+  assert.match(second, /pass 2\/5/, "a second pass says so");
+
+  // A single-pass goal is just a run; a counter would be noise.
+  const single = renderWidget({ ...base, goalPass: { current: 1, max: 1 } }, { width: 76 }).join("\n");
+  assert.ok(!/pass 1\/1/.test(single));
+
+  const escalating = renderWidget(
+    { ...base, escalation: { strategy: "rework", reworks: 1, replans: 0 } },
+    { width: 76 },
+  ).join("\n");
+  assert.match(escalating, /rework/, "the last rung of the ladder is visible");
+
+  // It still fits, which is the whole constraint on this surface.
+  for (const w of [58, 60, 76, 120]) {
+    const lines = renderWidget(
+      { ...base, goalPass: { current: 3, max: 9 }, escalation: { strategy: "replan", reworks: 2, replans: 1 } },
+      { width: w, boxed: true },
+    );
+    for (const line of lines) {
+      assert.equal(width(line), w, `boxed widget must be exactly ${w} columns`);
+    }
+  }
+  console.log("✓ the goal pass and the last escalation are visible, and still fit");
+}

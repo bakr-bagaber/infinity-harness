@@ -32,6 +32,13 @@ import { buildBrief, renderBrief } from "./core/brief.ts";
 import { harnessDir } from "./core/paths.ts";
 import { readJsonSafe, writeJsonAtomic, fileExists } from "./core/fsx.ts";
 import { run } from "./core/exec.ts";
+import {
+  emptyEscalationState,
+  escalate,
+  describeEscalation,
+  type EscalationState,
+} from "./escalate.ts";
+import { loadGoal, recordPipelinePass, viewOf } from "./goal.ts";
 
 export const LOOP_STATE_FILE = "loop-state.json";
 export const STOP_FILE = "STOP";
@@ -52,7 +59,25 @@ export type LoopState = {
   lastDecision: string | null;
   stoppedAt: string | null;
   stopReason: string | null;
+  /** Where this run sits on the escalation ladder. */
+  escalation: EscalationState;
+  /** Every rung taken, so the human coming back can see the shape of it. */
+  escalations: { at: string; strategy: string; reason: string; applied: string | null }[];
 };
+
+/** Escalation history kept in the loop state. Older entries tell no story. */
+export const ESCALATION_HISTORY_LIMIT = 50;
+
+/**
+ * Consecutive stalled gate failures before the ladder is consulted.
+ *
+ * One is enough. A stalled failure means the gate failed AND nothing in the
+ * tree moved — the agent produced no work at all — and there is no reason to
+ * let that repeat before doing something about it. The no-progress limit still
+ * governs when the run gives up entirely; this only governs when it starts
+ * trying something different.
+ */
+export const ESCALATE_AFTER_STALLS = 1;
 
 export type LoopBudget = {
   maxIterations: number;
@@ -85,12 +110,21 @@ export function newLoopState(runId: string, now = new Date()): LoopState {
     lastDecision: null,
     stoppedAt: null,
     stopReason: null,
+    escalation: emptyEscalationState(),
+    escalations: [],
   };
 }
 
 export function loadLoopState(targetDir: string, runId: string, now = new Date()): LoopState {
   const stored = readJsonSafe<LoopState | null>(loopStatePath(targetDir), null);
-  if (stored && stored.runId === runId) return stored;
+  if (stored && stored.runId === runId) {
+    // A state file written before the ladder existed has neither field.
+    return {
+      ...stored,
+      escalation: { ...emptyEscalationState(), ...(stored.escalation ?? {}) },
+      escalations: Array.isArray(stored.escalations) ? stored.escalations : [],
+    };
+  }
   return newLoopState(runId, now);
 }
 
@@ -143,6 +177,8 @@ export async function fingerprint(targetDir: string): Promise<string> {
 }
 
 export type DecideOptions = {
+  /** Skip the escalation ladder. Tests use it to isolate the base loop. */
+  skipEscalation?: boolean;
   targetDir: string;
   runId: string;
   now?: Date;
@@ -205,11 +241,17 @@ export async function decideNext(options: DecideOptions): Promise<{ decision: Lo
   const allTasksDone = progress.tasksTotal > 0 && progress.tasksDone === progress.tasksTotal;
 
   if (isFinalPhase(config.currentPhase, config.phases?.enabled) && allTasksDone) {
-    return finish({
-      action: "stop",
-      reason: "complete",
-      detail: `Pipeline complete: ${progress.tasksDone}/${progress.tasksTotal} tasks across ${progress.featuresTotal} feature(s).`,
-    });
+    const detail = `Pipeline complete: ${progress.tasksDone}/${progress.tasksTotal} tasks across ${progress.featuresTotal} feature(s).`;
+
+    // A finished pipeline is not necessarily a met goal. When a goal is being
+    // pursued, the run does not stop here — it hands the work to the outer
+    // loop, which asks the only question the gate cannot: is the thing that
+    // was actually asked for done? Without this the harness declares victory
+    // on whatever happened to be planned.
+    const goalReview = await requestGoalReview(targetDir, detail);
+    if (goalReview) return finish(goalReview);
+
+    return finish({ action: "stop", reason: "complete", detail });
   }
 
   const exhausted = isRetryExhausted(config);
@@ -295,8 +337,63 @@ export async function decideNext(options: DecideOptions): Promise<{ decision: Lo
 
   if (previous === null || previous !== fp) {
     state.noProgressStreak = 0;
+    // The tree moved, so whatever the run was stuck on, it is not stuck on it
+    // any more. The next stall starts from the bottom of the ladder — the
+    // budgets in rework.json and replan.json still bound the run across
+    // stalls, but a rung spent on a problem that resolved should not be
+    // missing when a different problem appears.
+    state.escalation = { ...state.escalation, tried: [] };
   } else {
     state.noProgressStreak += 1;
+  }
+
+  // -- the escalation ladder ------------------------------------------------
+  //
+  // A stalled failure — the gate failed and the tree did not move — means the
+  // agent produced nothing, and repeating the same brief will produce nothing
+  // again. Before spending another strike, ask the ladder what to do
+  // differently: retry, reframe, consult a stronger model, rework the task
+  // that poisoned everything downstream, amend the plan, or go to master.
+  //
+  // Escalating never *prevents* the run from stopping. The strike is still
+  // counted; the ladder just gets a turn first, so a run stops because nothing
+  // worked rather than because nothing was tried.
+  let escalation = null as Awaited<ReturnType<typeof escalate>> | null;
+  if (!options.skipEscalation && state.noProgressStreak >= ESCALATE_AFTER_STALLS) {
+    escalation = await escalate({
+      targetDir,
+      runId,
+      phase,
+      failures: gate ? gate.failures : [],
+      fileDelta: previous !== null && previous !== fp,
+      fingerprint: fp,
+      state: state.escalation,
+      now,
+    });
+    state.escalation = escalation.next;
+    if (escalation.strategy) {
+      state.escalations = [
+        ...state.escalations,
+        {
+          at: now.toISOString(),
+          strategy: escalation.strategy,
+          reason: escalation.reason,
+          applied: escalation.applied,
+        },
+      ].slice(-ESCALATION_HISTORY_LIMIT);
+
+      // A new rung is a genuinely different attempt, so it does not count as
+      // another repetition of the same one — the streak resets and the ladder
+      // gets room to climb. This cannot run forever: every rung is bounded
+      // (retry and reframe once per stall, consult and rework and replan by
+      // their budgets, master once), so the ladder runs out, returns null, and
+      // the streak resumes counting to the stop.
+      state.noProgressStreak = 0;
+
+      // Rework rewrites task statuses, so the plan the next brief reads is not
+      // the plan this fingerprint was taken from.
+      if (escalation.strategy === "rework") state.lastFingerprint = await fingerprint(targetDir);
+    }
   }
 
   if (state.noProgressStreak >= budget.noProgressLimit) {
@@ -307,7 +404,13 @@ export async function decideNext(options: DecideOptions): Promise<{ decision: Lo
         `The gate has failed ${state.noProgressStreak} times in a row with no change to the working tree ` +
         `or the plan. The agent is looping without making progress` +
         (gate ? `: ${gate.failures.join(", ")}` : "") +
-        `. Stopping so a human can intervene.`,
+        `.` +
+        (state.escalations.length
+          ? ` The escalation ladder was spent first: ${state.escalations
+              .map((e) => e.strategy)
+              .join(" → ")}.`
+          : "") +
+        ` Stopping so a human can intervene.`,
     });
   }
 
@@ -330,14 +433,57 @@ export async function decideNext(options: DecideOptions): Promise<{ decision: Lo
   const task = nextActionableTask(list);
   const focus = task ? `\nCurrent task: ${task.compositeKey} — ${task.description}` : "";
 
+  // An escalation replaces the standard "fix these" nudge, because repeating
+  // that nudge is exactly what the ladder exists to interrupt.
+  const head = escalation?.instruction
+    ? `${escalation.instruction}\n`
+    : `The ${phase.toUpperCase()} gate did not pass. Fix exactly these, then stop talking — ` +
+      `the harness will re-validate automatically.\n\n${failures}${focus}\n`;
+
   return finish({
     action: "continue",
-    reason: "gate failed",
-    message:
-      `The ${phase.toUpperCase()} gate did not pass. Fix exactly these, then stop talking — ` +
-      `the harness will re-validate automatically.\n\n${failures}${focus}\n\n` +
-      renderBrief(brief, fresh.ok ? fresh.config : undefined),
+    reason: escalation?.strategy ? `escalated: ${describeEscalation(escalation)}` : "gate failed",
+    message: `${head}\n${renderBrief(brief, fresh.ok ? fresh.config : undefined)}`,
   });
+}
+
+/**
+ * Hand a finished pipeline to the goal loop, if one is running.
+ *
+ * Returns a `continue` decision carrying the review request, or null when
+ * there is no goal and the pipeline finishing really is the end of the run.
+ * Never throws: a goal loop that cannot be read must not turn a completed
+ * pipeline into a crash.
+ */
+async function requestGoalReview(
+  targetDir: string,
+  summary: string,
+): Promise<LoopDecision | null> {
+  try {
+    const existing = await loadGoal(targetDir);
+    if (!existing || existing.status !== "running") return null;
+
+    const state = await recordPipelinePass(targetDir, summary);
+    if (!state) return null;
+    const view = viewOf(state);
+
+    return {
+      action: "continue",
+      reason: "goal review",
+      message:
+        `${summary}\n\nTHE PIPELINE IS DONE. THE GOAL MAY NOT BE.\n\n` +
+        `Goal: ${view.goal}\nPass ${view.iteration} of at most ${view.maxIterations}.\n\n` +
+        `Judge the work against the GOAL, not against the plan — the plan is only what you ` +
+        `thought the goal needed when you wrote it. Then call \`infinity_goal\` with ` +
+        `action "review":\n` +
+        `  - decision "complete" ends the run.\n` +
+        `  - anything else must name what is still missing in remainingWork; the next pass is ` +
+        `planned from that list.\n\n` +
+        `Do not mark it complete to end the run. The run ending is not the point.`,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /** Human-readable one-liner for the status bar / notify. */

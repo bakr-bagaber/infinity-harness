@@ -12,12 +12,13 @@
  */
 
 import { resolve } from "node:path";
-import { readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import type { CheckResult, GateResult, HarnessConfig, Phase } from "./types.ts";
 import { loadConfig, saveConfig, recordGate } from "./config.ts";
 import { loadFeatureList, findTask, findFeature, computeProgress, isDone } from "./featureList.ts";
 import * as P from "./paths.ts";
 import { readText, fileExists } from "./fsx.ts";
+import { auditSkillsDir } from "./skillsAudit.ts";
 import {
   run,
   isGitRepo,
@@ -230,6 +231,39 @@ async function checkRubricContent({ targetDir }: Ctx): Promise<CheckResult> {
   return docCheck("rubric-content", P.rubricPath(targetDir), 100, "harness/evaluator-rubric.md");
 }
 
+/**
+ * Any skills this project ships must be loadable by pi.
+ *
+ * Advisory, because a malformed skill does not make the code wrong — it makes
+ * pi print a `[Skill conflicts]` block on every start, which is exactly the
+ * kind of thing that gets ignored for months. This package learned that the
+ * hard way from its own README sitting in its own skills directory. Reporting
+ * it in the gate is how a project finds out before its users do.
+ */
+async function checkSkillsLoad({ targetDir }: Ctx): Promise<CheckResult> {
+  const dirs = [P.skillsDir(targetDir), resolve(targetDir, ".pi", "skills"), resolve(targetDir, ".agents", "skills")];
+  const present = dirs.filter((d) => existsSync(d));
+  if (present.length === 0) {
+    return { ...skip("skills-load", "this project ships no skills"), advisory: true };
+  }
+
+  const problems: string[] = [];
+  let count = 0;
+  for (const dir of present) {
+    const audit = auditSkillsDir(dir);
+    count += audit.skills.length;
+    for (const p of audit.problems) {
+      problems.push(`${p.file.replace(`${targetDir}/`, "")}: ${p.message}`);
+    }
+  }
+  return problems.length === 0
+    ? { ...pass("skills-load", `${count} skill(s) load cleanly in pi`), advisory: true }
+    : {
+        ...fail("skills-load", `pi would report a skill conflict — ${problems.slice(0, 4).join("; ")}`),
+        advisory: true,
+      };
+}
+
 async function checkTagged({ targetDir }: Ctx): Promise<CheckResult> {
   return (await gitHasTag(targetDir))
     ? pass("tagged", "HEAD carries a release tag")
@@ -311,12 +345,12 @@ type Check = (ctx: Ctx) => Promise<CheckResult>;
 
 const PHASE_CHECKS: Record<Phase, Check[]> = {
   init: [checkGitRepo, checkConfigExists],
-  define: [checkFeatureCriteria],
+  define: [checkFeatureCriteria, checkSkillsLoad],
   plan: [checkFeatureCriteria, checkTasksPlanned],
   build: [checkLint, checkTests, checkCoverage, checkNoPlaceholders, checkTasksComplete],
   verify: [checkTests, checkCoverage, checkGitClean],
   simplify: [checkTests, checkNoEmptyDirs, checkGitClean],
-  review: [checkBranchUpToDate, checkRubricContent, checkReadme, checkArchitectureDoc, checkDecisionsLogged],
+  review: [checkBranchUpToDate, checkRubricContent, checkReadme, checkArchitectureDoc, checkDecisionsLogged, checkSkillsLoad],
   ship: [
     checkGitClean,
     checkTagged,

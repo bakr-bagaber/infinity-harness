@@ -4,6 +4,72 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] — 2026-08-23
+
+Nine modules shipped in this package, typechecked, and passed their tests while no code path in the
+running product could reach a single one — about 2,800 lines, advertised in the README. They are all
+connected now, and connecting them found four reasons the most important of them had never worked.
+
+### Added
+
+- **The escalation ladder actually escalates.** `unstuck.ts` could always *choose* what to do when a
+  run stalled — retry → reframe → consult → rework → replan → master, with budgets, fingerprint
+  dedup and a cooldown — and nothing ever executed one. It was a chooser with no actuator, so
+  `/infinity:run` did the only thing it could when the gate kept failing: count three strikes and
+  stop. `src/escalate.ts` is the actuator. On a stall it climbs a rung, does the part that is ours
+  (flipping tasks to `rework`, naming the model to escalate to) and hands the agent an instruction
+  for the part that is the agent's. Every rung says something different; a run that gives up now
+  names every rung it spent first.
+- **The goal loop turns.** `goalSpec`, `goalLoop` and `goalState` are a complete outer loop that
+  nothing ever drove, which meant the harness could finish a pipeline and declare "complete" without
+  anyone asking whether the thing the human asked for was done. `src/goal.ts` drives it, and the
+  mapping is the design: **one goal iteration is one full pass of the pipeline.** `/infinity:goal
+  <what you want>` states it; when the pipeline finishes, the run asks whether the GOAL is met, not
+  whether the plan is. A verdict of anything but `complete` must name what is still missing, and the
+  pipeline rewinds to the first phase with that list carried into the brief — so the next pass plans
+  for the remainder instead of rebuilding what the last review already accepted.
+- **Five tools and three commands** for what was previously unreachable: `infinity_unstuck`,
+  `infinity_rework`, `infinity_replan`, `infinity_spawn_worker`, `infinity_goal`, and
+  `/infinity:goal`, `/infinity:unstuck`, `/infinity:rework`.
+- **A `skills-load` advisory gate check.** The skills audit was the ninth orphan. It now runs at
+  DEFINE and REVIEW over any skills a project ships, so a project finds out that pi will print a
+  `[Skill conflicts]` block before its users do. Advisory: a malformed skill does not make the code
+  wrong.
+- **The widget shows which pass you are on and the last rung taken.** A second pass at a goal looks
+  identical to a first one in every other part of the display, which is exactly when someone glances
+  at a half-full progress bar and walks away thinking it is nearly done.
+- **Two E2E scenarios** — `escalation` and `goal` — driving both through the real adapter over real
+  projects, and the reachability allowlist in the `package` scenario is now **empty**.
+
+### Fixed
+
+Wiring the ladder in exposed why it had never worked, none of which its own passing tests could see:
+
+- **`reframe` had no budget**, so it was eligible forever and shadowed every rung below it. The
+  ladder could not climb past rung two — `consult`, `rework`, `replan` and `master` were unreachable
+  through the function whose job was to reach them.
+- **`rework` and `replan` were vetoed unless the working tree had moved.** A stall is *defined* by
+  the tree not moving, so the two rungs that exist for exactly this situation could never fire in
+  it. That guard is a review-bounce policy — do not bounce REVIEW backwards again if nothing changed
+  — and it stays that for review bounces; the stuck ladder opts out explicitly.
+- **The budgets counted effects on disk**, which only appear if the agent acts on the advice. A
+  stuck agent does not, so the budget never moved and the ladder jammed, offering `replan` forever.
+  Each rung now gets one turn per stall; the on-disk budgets still bound the run across stalls.
+- **MASTER defaulted to a specific third-party model** — in a package whose 2.0.0 release promised
+  every routing slot ships empty. The last rung of the ladder silently redirected the hardest work
+  in the run to one vendor. It is `null` now, meaning "whatever pi is configured with", unless the
+  user chose one.
+
+### Changed
+
+- A stalled iteration consults the ladder before the no-progress strike is spent, and a new rung
+  resets the streak — a different attempt is not another repetition of the same one. This cannot run
+  forever: every rung is bounded, so the ladder runs out, returns nothing, and the run stops with a
+  full account of what was tried.
+- `loop-state.json` carries the ladder's position. State written before it existed loads fine.
+
+---
+
 ## [2.1.0] — 2026-08-23
 
 You could not start, and if you had, you could not have got past the first gate. Both are fixed.

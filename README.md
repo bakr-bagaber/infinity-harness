@@ -99,6 +99,9 @@ the craft skills that match the work, and what to do next. Do the work, then:
 /infinity:config       change any setting, including which model runs which tier
 /infinity:models       what models pi has, and how they are being routed
 /infinity:dashboard    open the live web view
+/infinity:goal         state a goal and pursue it across passes
+/infinity:unstuck      what the escalation ladder would try next
+/infinity:rework       send a task and its dependents backwards
 /infinity:halt         take the wheel back
 ```
 
@@ -163,6 +166,49 @@ define → plan → build → verify → [simplify] → review → ship
 | **ship** | Tag, changelog, leave it clean | Clean tree, tagged, changelog, README, licence, no placeholders |
 
 Enable or disable phases in `harness/config.json` under `phases.enabled`. SIMPLIFY is off by default.
+
+## When it gets stuck
+
+Stopping safely is the easy half. The hard half is trying something *else* first, and that is the
+escalation ladder: when a run stalls — the gate fails and the working tree has not moved, meaning
+the agent produced nothing — `/infinity:run` climbs it before spending a strike.
+
+| Rung | What it does |
+|---|---|
+| **retry** | One more attempt. Sometimes a run is just slow. |
+| **reframe** | State the assumption you have been working under, say why the evidence contradicts it, then try a different approach. |
+| **consult** | Escalate to a stronger model, one step up the difficulty ladder. |
+| **rework** | Flip the task and everything that depends on it back to `rework`. Work built on a broken thing is suspect until re-proved. |
+| **replan** | The plan is wrong: something this needed was never planned. Amend it. |
+| **master** | Last resort. State the problem from scratch, including what has been ruled out. |
+
+Each rung gets one turn per stall, and each is bounded — reworks and replans have budgets, `consult`
+has a per-task limit, `master` fires once per run. When the ladder runs out, the run stops and names
+every rung it spent. Real progress resets it: a moving tree means a new problem, and a new problem
+gets a fresh ladder.
+
+`/infinity:unstuck` shows what it would try next without doing it.
+
+## Goals, and knowing when you are actually done
+
+A finished pipeline is not a met goal. The gate decides whether the **work** is done; it has no
+opinion on whether the work was the *right* work, because it only ever sees the plan — and the plan
+is just what you thought the goal needed when you wrote it.
+
+```
+/infinity:goal Ship the payments rewrite behind a flag
+```
+
+That states the goal and starts pass 1. One pass at the goal is one full trip through the pipeline.
+When the pipeline completes, the run does not end: it asks whether the goal is met.
+
+- **complete** ends the run.
+- Anything else must name what is still missing — and the pipeline rewinds to the first phase with
+  that list carried into the brief, so the next pass plans for the remainder rather than rebuilding
+  what the last review already accepted.
+
+Bounded by an iteration ceiling and a wall clock, both configurable. The widget shows which pass you
+are on, because a second pass looks exactly like a first one otherwise.
 
 ## Knowing when to stop
 
@@ -284,6 +330,11 @@ that looks like a broken endpoint but is only a small cap.
 | `infinity_validate` | Run the gate for this phase |
 | `infinity_advance` | Move to the next phase (refuses on a failing gate) |
 | `infinity_dashboard` | Start/stop/query the web view |
+| `infinity_unstuck` | What should I try next? (recommends; does not act) |
+| `infinity_rework` | Send a task and its dependents back to rework |
+| `infinity_replan` | Add what the plan was missing, mid-run |
+| `infinity_spawn_worker` | Attempt one task in a clean-room worker |
+| `infinity_goal` | State a goal, review it, or check which pass it is on |
 
 ## Layout
 
@@ -296,19 +347,21 @@ infinity-harness/
 │   │                              · skills (match) · skillsAudit (guard)
 │   ├── ui/                        theme · widget (terminal) · dashboard (web)
 │   ├── loop.ts                    the continuous-run driver and its stop conditions
+│   ├── escalate.ts                the ladder's actuator: chooses a rung and takes it
+│   ├── goal.ts                    the outer loop: is the thing asked for actually done?
 │   ├── taskList.ts                atomic plan editor
 │   ├── worker.ts                  isolated per-task workers
 │   ├── modelRouter.ts             difficulty ladder + consultation
 │   ├── rework.ts · replan.ts      backward rework with BFS impact · mid-build amendment
 │   ├── unstuck.ts · review.ts     escalation strategy matrix · review bounce guard
-│   └── goalLoop.ts · goalState.ts · goalSpec.ts
+│   └── goalLoop.ts · goalState.ts · goalSpec.ts   goal state machine and its store
 ├── harness/
 │   ├── features/feature-list.json the plan
 │   ├── config.json                pipeline state and settings
 │   ├── model-router.json          optional routing
 │   ├── docs/                      architecture · decisions · phase and role docs
 │   └── skills/                    28 craft skills the brief points at
-├── tests/                         25 files, plain node:assert
+├── tests/                         28 files, plain node:assert
 └── scripts/run-tests.mjs
 ```
 
@@ -320,7 +373,7 @@ there is one implementation, and the adapter calls it.
 ```bash
 npm install
 npm run check    # tsc --noEmit
-npm test         # 25 test files
+npm test         # 28 test files
 npm run e2e      # end-to-end against a live model
 ```
 

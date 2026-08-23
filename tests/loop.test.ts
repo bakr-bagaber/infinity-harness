@@ -70,6 +70,8 @@ const RUN = "run-under-test";
       lastDecision: null,
       stoppedAt: null,
       stopReason: null,
+      escalation: { consultedCount: 0, masterUsed: false, lastUnstuckAt: null, fingerprints: [], tried: [] },
+      escalations: [],
     });
 
     // Nothing on disk yet: a fresh state is synthesised.
@@ -331,6 +333,11 @@ const RUN = "run-under-test";
 }
 
 // ── no-progress detection ──────────────────────────────────────────────────
+//
+// `skipEscalation` throughout: this block is about the base loop's stall
+// detection, and the escalation ladder deliberately interrupts a stall to try
+// something different. Both behaviours matter, so they are tested apart —
+// escalate.test.ts covers what happens when the ladder is left switched on.
 {
   // The gate cannot pass and the tree never changes: the agent is spinning.
   const dir = tmpProject((c) => {
@@ -340,7 +347,7 @@ const RUN = "run-under-test";
   try {
     // The first failing iteration establishes the baseline: there is nothing
     // to compare against yet, so it cannot count as a stall.
-    const first = await decideNext({ targetDir: dir, runId: RUN });
+    const first = await decideNext({ targetDir: dir, runId: RUN, skipEscalation: true });
     assert.equal(first.decision.action, "continue", "the first failure is just a failure");
     assert.equal(first.decision.reason, "gate failed");
     assert.match((first.decision as { message: string }).message, /BUILD gate did not pass/);
@@ -348,16 +355,16 @@ const RUN = "run-under-test";
     assert.equal(first.state.noProgressStreak, 0, "no baseline yet, so no stall yet");
     assert.ok(first.state.lastFingerprint, "the tree is fingerprinted for next time");
 
-    const second = await decideNext({ targetDir: dir, runId: RUN });
+    const second = await decideNext({ targetDir: dir, runId: RUN, skipEscalation: true });
     assert.equal(second.decision.action, "continue");
     assert.equal(second.state.noProgressStreak, 1, "first confirmed no-change observation");
     assert.equal(second.state.lastFingerprint, first.state.lastFingerprint, "the tree really is unchanged");
 
-    const third = await decideNext({ targetDir: dir, runId: RUN });
+    const third = await decideNext({ targetDir: dir, runId: RUN, skipEscalation: true });
     assert.equal(third.decision.action, "continue");
     assert.equal(third.state.noProgressStreak, 2, "the streak grows while nothing changes");
 
-    const fourth = await decideNext({ targetDir: dir, runId: RUN });
+    const fourth = await decideNext({ targetDir: dir, runId: RUN, skipEscalation: true });
     assert.equal(fourth.decision.action, "stop", "spinning is not working");
     assert.equal(fourth.decision.reason, "no-progress");
     const detail = (fourth.decision as { detail: string }).detail;
@@ -382,21 +389,21 @@ const RUN = "run-under-test";
     c.loop = { ...c.loop, noProgressLimit: 3 };
   });
   try {
-    const one = await decideNext({ targetDir: dir, runId: RUN });
+    const one = await decideNext({ targetDir: dir, runId: RUN, skipEscalation: true });
     assert.equal(one.state.noProgressStreak, 0, "baseline iteration");
-    const two = await decideNext({ targetDir: dir, runId: RUN });
+    const two = await decideNext({ targetDir: dir, runId: RUN, skipEscalation: true });
     assert.equal(two.state.noProgressStreak, 1);
 
     // The agent actually changed something between iterations.
     writePlan(dir, plan([mkTask("task-1", "pending")], 99));
 
-    const three = await decideNext({ targetDir: dir, runId: RUN });
+    const three = await decideNext({ targetDir: dir, runId: RUN, skipEscalation: true });
     assert.equal(three.decision.action, "continue", "a moving tree is not a stuck loop");
     assert.equal(three.state.noProgressStreak, 0, "progress resets the streak");
     assert.notEqual(three.state.lastFingerprint, two.state.lastFingerprint);
 
     // …and the streak starts climbing again once it stalls.
-    const four = await decideNext({ targetDir: dir, runId: RUN });
+    const four = await decideNext({ targetDir: dir, runId: RUN, skipEscalation: true });
     assert.equal(four.state.noProgressStreak, 1);
     console.log("✓ a change to the tree resets the no-progress streak");
   } finally {
@@ -435,20 +442,21 @@ const RUN = "run-under-test";
   }
 }
 
-// ── skipGate hands the decision to the caller's verdict ────────────────────
+// ── skipGate hands the decision to the caller's verdict ──
+// (escalation off: this is about the guards, not the ladder)──────────────────
 {
   const dir = tmpProject((c) => {
     c.loop = { ...c.loop, noProgressLimit: 2 };
   });
   try {
-    const first = await decideNext({ targetDir: dir, runId: RUN, skipGate: true });
+    const first = await decideNext({ targetDir: dir, runId: RUN, skipGate: true, skipEscalation: true });
     assert.equal(first.decision.action, "continue");
     assert.match((first.decision as { message: string }).message, /\(gate not run\)/);
     assert.equal(first.state.noProgressStreak, 0, "baseline iteration");
-    const second = await decideNext({ targetDir: dir, runId: RUN, skipGate: true });
+    const second = await decideNext({ targetDir: dir, runId: RUN, skipGate: true, skipEscalation: true });
     assert.equal(second.decision.action, "continue");
     assert.equal(second.state.noProgressStreak, 1);
-    const third = await decideNext({ targetDir: dir, runId: RUN, skipGate: true });
+    const third = await decideNext({ targetDir: dir, runId: RUN, skipGate: true, skipEscalation: true });
     assert.equal(third.decision.action, "stop", "the no-progress guard still applies without a gate");
     assert.equal(third.decision.reason, "no-progress");
     assert.ok(!(third.decision as { detail: string }).detail.includes("undefined"));

@@ -42,6 +42,14 @@ export type WidgetState = {
   /** Shown in the header rule, e.g. "rev 42". */
   revision?: number;
   retries?: { task: number; max: number };
+  /**
+   * Which pass at the goal this is. A second pass looks identical to a first
+   * one in every other part of the display, which is exactly when someone
+   * walks away thinking the run is nearly done.
+   */
+  goalPass?: { current: number; max: number } | null;
+  /** The last rung the escalation ladder took, and what it has spent. */
+  escalation?: { strategy: string | null; reworks: number; replans: number } | null;
 };
 
 export type WidgetOptions = {
@@ -254,6 +262,13 @@ export function renderWidget(state: WidgetState, options: WidgetOptions = {}): s
   if (state.retries && state.retries.task > 0) {
     const role: Role = state.retries.task >= state.retries.max ? "blocked" : "active";
     alerts.push(s.fg(role, "retry " + state.retries.task + "/" + state.retries.max));
+  }
+  if (state.goalPass && state.goalPass.max > 1) {
+    const role: Role = state.goalPass.current >= state.goalPass.max ? "blocked" : "active";
+    alerts.push(s.fg(role, "pass " + state.goalPass.current + "/" + state.goalPass.max));
+  }
+  if (state.escalation?.strategy) {
+    alerts.push(s.fg("rework", g.rework + " " + state.escalation.strategy));
   }
   if (state.gate && !state.gate.overall) {
     alerts.push(s.fg("blocked", "gate: " + state.gate.failures.slice(0, 3).join(", ")));

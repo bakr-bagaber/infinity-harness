@@ -34,6 +34,23 @@ export interface ChooseUnstuckOpts {
   masterUsed?: boolean;
   // allow explicit strategies override for testing (otherwise reads harness/config.json)
   strategies?: UnstuckStrategy[];
+  /**
+   * Rungs already taken during this stall. Without it the ladder cannot climb:
+   * `reframe` has no budget of its own, so it is eligible forever and shadows
+   * every rung below it. Reframing twice in a row is also just reframing.
+   */
+  tried?: UnstuckStrategy[];
+  /**
+   * Whether `rework` and `replan` require the tree to have moved.
+   *
+   * Defaults to the review policy `review.bounceRequiresDelta`, which is what
+   * it was written for: do not bounce REVIEW backwards again if nothing has
+   * changed since the last bounce. A stuck run is the opposite case — it is
+   * *defined* by nothing having changed — so the escalation path passes false
+   * explicitly. A ladder that refuses to climb in the only situation it exists
+   * for is not a ladder.
+   */
+  requireDeltaForRework?: boolean;
 }
 
 export interface ChooseUnstuckResult {
@@ -138,6 +155,9 @@ export function chooseUnstuckStrategy(opts: ChooseUnstuckOpts = {}): ChooseUnstu
   }
   const consultedCount = typeof opts.consultedCount === "number" ? opts.consultedCount : 0;
   const masterUsed = !!opts.masterUsed;
+  const tried = new Set<UnstuckStrategy>(opts.tried ?? []);
+  const requireDelta =
+    typeof opts.requireDeltaForRework === "boolean" ? opts.requireDeltaForRework : bounceRequiresDelta;
 
   // hysteresis guard
   if (hysteresisMs > 0) {
@@ -154,15 +174,21 @@ export function chooseUnstuckStrategy(opts: ChooseUnstuckOpts = {}): ChooseUnstu
   const fileDelta = opts.fileDelta !== undefined ? !!opts.fileDelta : true;
 
   for (const strategy of strategies) {
+    // One turn per rung per stall.
+    //
+    // The budgeted rungs count their *effects* — rework.json entries, replan
+    // history — which only exist if the agent acted on the advice. A stuck
+    // agent by definition does not, so the budget never moved and the ladder
+    // jammed: offering `replan` to an agent that ignores it, forever, is not
+    // an escalation ladder, it is the same stall with a different sentence.
+    // The budgets still bound the run across stalls; this bounds one stall.
+    if (tried.has(strategy)) continue;
+
     if (strategy === "retry") {
       if (dedup) continue; // same fingerprint loop, skip retry
-      // retry has no budget beyond hysteresis
       return { strategy: "retry", reason: "retry eligible", fingerprintDedup: dedup };
     }
     if (strategy === "reframe") {
-      if (dedup) {
-        // allow reframe even with dedup, but if dedup and no fileDelta, still allow? For now allow reframe
-      }
       return { strategy: "reframe", reason: "reframe eligible", fingerprintDedup: dedup };
     }
     if (strategy === "consult") {
@@ -181,29 +207,30 @@ export function chooseUnstuckStrategy(opts: ChooseUnstuckOpts = {}): ChooseUnstu
     if (strategy === "rework") {
       if ((reworkCount ?? 0) >= maxReworks) continue;
       if ((bounceCount ?? 0) >= maxBounces) continue;
-      if (bounceRequiresDelta && !fileDelta) continue;
-      // also fileDelta guard if configured as bounceRequiresDelta
+      if (requireDelta && !fileDelta) continue;
       return { strategy: "rework", reason: "rework eligible", fingerprintDedup: dedup };
     }
     if (strategy === "replan") {
       if ((replanCount ?? 0) >= maxReplans) continue;
-      if (bounceRequiresDelta && !fileDelta) continue;
+      if (requireDelta && !fileDelta) continue;
       return { strategy: "replan", reason: "replan eligible", fingerprintDedup: dedup };
     }
     if (strategy === "master") {
       if (masterUsed) continue;
-      // master once per run, also require exhaustion if configured
-      if (requireExhaustion && (!opts.attemptFingerprints || opts.attemptFingerprints.length === 0)) {
-        // still allow master after exhaustion? For now allow only if prior attempts exist
-        // but spec says MASTER only after exhaustion, so require at least one prior
-        // If no history, skip unless no other strategy viable? We'll keep guard
-        // Allow master even without history if no other eligible? To satisfy tests, we keep flexible:
-        // If requireExhaustion and no history and rework/replan exhausted, still allow master
-        // So we check if all previous strategies were skipped due to budget, then allow master
-        // Simplified: allow master regardless if no history but masterUsed false and others exhausted
-      }
-      const masterModel = routerCfg.master ?? "meta/muse-spark-1.2-contributor";
-      return { strategy: "master", reason: `master ${masterModel}`, nextModel: masterModel, fingerprintDedup: dedup };
+      // MASTER is the last rung and fires once per run. It is deliberately
+      // NOT defaulted to a specific model: routing ships vendor-neutral, and
+      // an empty slot means "whatever pi is already configured with". A
+      // hardcoded default here would silently redirect the hardest work in
+      // the run to one vendor's model.
+      const masterModel = typeof routerCfg.master === "string" && routerCfg.master.trim()
+        ? routerCfg.master.trim()
+        : null;
+      return {
+        strategy: "master",
+        reason: masterModel ? `master ${masterModel}` : "master (pi's current model)",
+        nextModel: masterModel,
+        fingerprintDedup: dedup,
+      };
     }
   }
 

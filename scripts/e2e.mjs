@@ -1006,18 +1006,22 @@ async function scenarioStops() {
     });
     const runId = "stops-spin";
 
-    const first = await decideNext({ targetDir: dir, runId });
+    // `skipEscalation` throughout: this leg is about the guard that ends a
+    // spinning run. The escalation ladder deliberately interrupts a stall to
+    // try something else first, and it has its own scenario.
+
+    const first = await decideNext({ targetDir: dir, runId, skipEscalation: true });
     assert.equal(first.decision.action, "continue", "the first failure has no baseline to compare against");
     assert.equal(first.state.noProgressStreak, 0);
 
-    const second = await decideNext({ targetDir: dir, runId });
+    const second = await decideNext({ targetDir: dir, runId, skipEscalation: true });
     assert.equal(second.state.noProgressStreak, 1);
     assert.equal(second.state.lastFingerprint, first.state.lastFingerprint, "the tree really did not move");
 
-    const third = await decideNext({ targetDir: dir, runId });
+    const third = await decideNext({ targetDir: dir, runId, skipEscalation: true });
     assert.equal(third.state.noProgressStreak, 2);
 
-    const fourth = await decideNext({ targetDir: dir, runId });
+    const fourth = await decideNext({ targetDir: dir, runId, skipEscalation: true });
     assert.equal(fourth.decision.action, "stop");
     assert.equal(fourth.decision.reason, "no-progress");
     assert.match(fourth.decision.detail, /failed 3 times in a row with no change to the working tree/);
@@ -1025,12 +1029,12 @@ async function scenarioStops() {
     assert.equal(cfg(dir).currentPhase, "build", "a stuck loop never advanced the phase");
     assert.ok(cfg(dir).phaseRetryCount >= 2, "failing iterations charge the phase budget");
 
-    const fifth = await decideNext({ targetDir: dir, runId });
+    const fifth = await decideNext({ targetDir: dir, runId, skipEscalation: true });
     assert.equal(fifth.decision.reason, "no-progress", "it does not continue past the stop");
 
     // Real work resets the streak — the guard catches stalling, not slowness.
     put(dir, "src/fix.js", "export const fixed = true;\n");
-    const moved = await decideNext({ targetDir: dir, runId });
+    const moved = await decideNext({ targetDir: dir, runId, skipEscalation: true });
     assert.equal(moved.decision.action, "continue");
     assert.equal(moved.state.noProgressStreak, 0);
   });
@@ -2751,6 +2755,280 @@ const LIVE_MAX_TOKENS = Number(process.env.INFINITY_E2E_MAX_TOKENS ?? 3000);
 // So this drives the real adapter the way a person does: bare directory,
 // /infinity:init, then straight into the loop.
 // ────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────────────
+// escalation — what a stuck run does before it gives up
+//
+// The ladder is the difference between a harness that is safe to leave running
+// and one that is useful to leave running. Safe was already true: it stops.
+// This is the part that tries something first — and it is driven here through
+// the real adapter, over a real project, because the ladder writes to the
+// plan and a mocked one would prove nothing.
+// ────────────────────────────────────────────────────────────────────────────
+async function scenarioEscalation() {
+  const adapter = (await import(pathToFileURL(join(REPO_ROOT, "extensions", "infinity-harness", "index.ts")).href))
+    .default;
+  const { decideNext } = await import(pathToFileURL(join(REPO_ROOT, "src", "loop.ts")).href);
+  const { loadRework } = await import(pathToFileURL(join(REPO_ROOT, "src", "rework.ts")).href);
+  const { loadReplanHistory } = await import(pathToFileURL(join(REPO_ROOT, "src", "replan.ts")).href);
+
+  const dir = mkProject("escalation", (c) => {
+    c.currentPhase = "build";
+    c.currentRole = "generator";
+    c.commands.test = "exit 1";
+    c.retry = { tasks: { max: 999, count: 0 }, features: { max: 999, count: 0 }, phases: { max: 999, count: 0 } };
+  });
+  writeFileSync(
+    join(dir, "harness", "model-router.json"),
+    JSON.stringify({
+      enabled: true,
+      byDifficulty: { easy: "small", moderate: "medium", difficult: "large" },
+      master: "the-master-model",
+      consultation: { enabled: true, maxPerTask: 1, oneStepOnly: true, requireExhaustion: true },
+    }),
+  );
+  writePlanFile(dir, {
+    version: "2.0",
+    baseRevision: 1,
+    goals: [{ id: "goal-001", title: "Prove the ladder climbs" }],
+    sprints: [],
+    features: [
+      {
+        id: "feature-001",
+        name: "Ladder",
+        passes: false,
+        criteria: ["it escalates"],
+        tasks: [
+          { id: "task-001", key: "feature-001/task-001", description: "the root", status: "in_progress", difficulty: "moderate", dependsOn: [], subtasks: [] },
+          { id: "task-002", key: "feature-001/task-002", description: "built on the root", status: "pending", dependsOn: ["feature-001/task-001"], subtasks: [] },
+        ],
+      },
+    ],
+  });
+
+  const pi = fakePi();
+  const ctx = fakeCtx(dir);
+  adapter(pi.api);
+
+  const rungs = [];
+  let stop = null;
+  await step("a stalled run climbs the whole ladder before it stops", async () => {
+    for (let i = 0; i < 16; i++) {
+      const { decision } = await decideNext({ targetDir: dir, runId: "e2e-run" });
+      if (decision.action === "stop") {
+        stop = decision;
+        break;
+      }
+      const m = /escalated: ([a-z]+):/.exec(decision.reason ?? "");
+      if (m) rungs.push(m[1]);
+    }
+    assert.deepEqual(rungs, ["retry", "reframe", "consult", "rework", "replan", "master"], rungs.join(" → "));
+    assert.ok(stop, "and then it stops");
+    assert.equal(stop.reason, "no-progress");
+    assert.match(stop.detail, /retry → reframe → consult → rework → replan → master/);
+  });
+
+  await step("rework really moved the plan, not just the message", async () => {
+    const record = loadRework(dir);
+    assert.ok(record, "the return point is recorded");
+    assert.equal(record.returnFeature, "feature-001");
+    assert.deepEqual(record.impacted, ["feature-001/task-002"], "the dependent went with it");
+    const plan = JSON.parse(readFileSync(join(dir, "harness", "features", "feature-list.json"), "utf-8"));
+    const statuses = plan.features[0].tasks.map((t) => t.status);
+    assert.deepEqual(statuses, ["rework", "rework"], "both tasks are back in rework");
+  });
+
+  await step("infinity_unstuck reports the ladder without acting on it", async () => {
+    const before = readFileSync(join(dir, "harness", "features", "feature-list.json"), "utf-8");
+    const result = await pi.call("infinity_unstuck", {}, ctx);
+    assert.match(toolText(result), /ladder has nothing left|Next rung/);
+    assert.equal(
+      readFileSync(join(dir, "harness", "features", "feature-list.json"), "utf-8"),
+      before,
+      "asking what to do next must not do it",
+    );
+  });
+
+  await step("infinity_replan adds what the plan was missing", async () => {
+    const result = await pi.call(
+      "infinity_replan",
+      {
+        reason: "the ladder said the plan was wrong",
+        addTasks: [
+          {
+            featureId: "feature-001",
+            task: { id: "task-003", key: "feature-001/task-003", description: "the thing nobody planned", status: "pending" },
+          },
+        ],
+      },
+      ctx,
+    );
+    assert.ok(!result.isError, toolText(result));
+    assert.match(toolText(result), /\+1 task/);
+    const plan = JSON.parse(readFileSync(join(dir, "harness", "features", "feature-list.json"), "utf-8"));
+    assert.equal(plan.features[0].tasks.length, 3);
+    assert.equal(loadReplanHistory(dir).length, 1, "and the amendment is on the record");
+  });
+
+  await step("infinity_rework refuses a task that does not exist", async () => {
+    const bad = await pi.call("infinity_rework", { task: "feature-009/task-404" }, ctx);
+    assert.ok(bad.isError);
+    assert.match(toolText(bad), /No task matches/);
+  });
+
+  await step("a worker attempt is recorded even with nothing to run", async () => {
+    const result = await pi.call(
+      "infinity_spawn_worker",
+      { task: "feature-001/task-003", prompt: "do the thing nobody planned" },
+      ctx,
+    );
+    assert.ok(!result.isError, toolText(result));
+    assert.match(toolText(result), /recorded only/);
+    const attemptDir = result.details.attemptDir;
+    assert.ok(existsSync(join(attemptDir, "prompt.md")), "the prompt is on disk for the next attempt to compare");
+    assert.ok(existsSync(join(attemptDir, "fingerprint.json")));
+  });
+
+  await step("a worker that runs something reports what happened", async () => {
+    const result = await pi.call(
+      "infinity_spawn_worker",
+      {
+        task: "feature-001/task-003",
+        prompt: "echo test",
+        command: "cat {promptfile}",
+        timeoutMs: 20_000,
+      },
+      ctx,
+    );
+    assert.ok(!result.isError, toolText(result));
+    assert.equal(result.details.exitCode, 0);
+    assert.match(toolText(result), /do the thing nobody planned|echo test/);
+    assert.equal(result.details.attempt, 2, "attempts are numbered, not overwritten");
+  });
+
+  rmSync(dir, { recursive: true, force: true });
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// goal — the outer loop, over a real pipeline
+// ────────────────────────────────────────────────────────────────────────────
+async function scenarioGoal() {
+  const adapter = (await import(pathToFileURL(join(REPO_ROOT, "extensions", "infinity-harness", "index.ts")).href))
+    .default;
+  const { decideNext } = await import(pathToFileURL(join(REPO_ROOT, "src", "loop.ts")).href);
+
+  const dir = mkProject("goal", (c) => {
+    c.currentPhase = "ship";
+    c.currentRole = "evaluator";
+    c.phases = { enabled: ["define", "plan", "build", "verify", "review", "ship"] };
+  });
+  writePlanFile(dir, {
+    version: "2.0",
+    baseRevision: 1,
+    goals: [],
+    sprints: [],
+    features: [
+      {
+        id: "feature-001",
+        name: "Done work",
+        passes: true,
+        criteria: ["it works"],
+        tasks: [{ id: "task-001", key: "feature-001/task-001", description: "the work", status: "complete", dependsOn: [], subtasks: [] }],
+      },
+    ],
+  });
+
+  const pi = fakePi();
+  const ctx = fakeCtx(dir);
+  adapter(pi.api);
+
+  await step("with no goal, a finished pipeline is simply finished", async () => {
+    const { decision } = await decideNext({ targetDir: dir, runId: "goal-e2e" });
+    assert.equal(decision.action, "stop");
+    assert.equal(decision.reason, "complete");
+  });
+
+  await step("/infinity:goal states the goal and rewinds the pipeline", async () => {
+    await pi.command("infinity:goal", "Ship the payments rewrite behind a flag", ctx);
+    const said = ctx.notices.map((n) => n.m).join("\n");
+    assert.match(said, /Goal set: Ship the payments rewrite behind a flag/);
+    const config = JSON.parse(readFileSync(join(dir, "harness", "config.json"), "utf-8"));
+    assert.equal(config.currentPhase, "define", "a goal starts at the beginning");
+    assert.ok(existsSync(join(dir, "harness", "goals", "GOAL_SPEC.json")), "the specification is committed");
+    assert.ok(pi.userMessages.length >= 1, "and the model gets the new brief");
+  });
+
+  await step("a finished pipeline now asks whether the GOAL is met", async () => {
+    // Put the pipeline back at the end, with the work done.
+    const config = JSON.parse(readFileSync(join(dir, "harness", "config.json"), "utf-8"));
+    config.currentPhase = "ship";
+    writeFileSync(join(dir, "harness", "config.json"), JSON.stringify(config, null, 2));
+
+    const { decision } = await decideNext({ targetDir: dir, runId: "goal-e2e" });
+    assert.equal(decision.action, "continue", "the run does not end just because the plan did");
+    assert.equal(decision.reason, "goal review");
+    assert.match(decision.message, /THE PIPELINE IS DONE. THE GOAL MAY NOT BE/);
+    assert.match(decision.message, /Ship the payments rewrite behind a flag/);
+    assert.match(decision.message, /Do not mark it complete to end the run/);
+  });
+
+  await step("an honest 'not yet' starts another pass with the work named", async () => {
+    const vague = await pi.call(
+      "infinity_goal",
+      { action: "review", decision: "incomplete", rationale: "not there" },
+      ctx,
+    );
+    assert.ok(vague.isError, "a verdict with nothing named is a shrug");
+    assert.match(toolText(vague), /must name what is still missing/);
+
+    const real = await pi.call(
+      "infinity_goal",
+      {
+        action: "review",
+        decision: "incomplete",
+        rationale: "the flag is missing and nothing measures the rollout",
+        remainingWork: ["put it behind a feature flag", "add the latency metric"],
+      },
+      ctx,
+    );
+    assert.ok(!real.isError, toolText(real));
+    assert.match(toolText(real), /Starting pass 2/);
+
+    const config = JSON.parse(readFileSync(join(dir, "harness", "config.json"), "utf-8"));
+    assert.equal(config.currentPhase, "define", "another pass starts at the beginning");
+    assert.deepEqual(config.remainingWork, ["put it behind a feature flag", "add the latency metric"]);
+
+    const brief = await pi.call("infinity_brief", {}, ctx);
+    assert.match(toolText(brief), /judged not yet met/);
+    assert.match(toolText(brief), /put it behind a feature flag/);
+  });
+
+  await step("a met goal ends the run and leaves a result", async () => {
+    const status = await pi.call("infinity_goal", { action: "status" }, ctx);
+    assert.match(toolText(status), /pass 2/);
+
+    const config = JSON.parse(readFileSync(join(dir, "harness", "config.json"), "utf-8"));
+    config.currentPhase = "ship";
+    writeFileSync(join(dir, "harness", "config.json"), JSON.stringify(config, null, 2));
+    await decideNext({ targetDir: dir, runId: "goal-e2e" });
+
+    const done = await pi.call(
+      "infinity_goal",
+      { action: "review", decision: "complete", rationale: "flag is in, metric is live, both proved" },
+      ctx,
+    );
+    assert.ok(!done.isError, toolText(done));
+    assert.match(toolText(done), /Goal met after 2 pass/);
+    assert.ok(existsSync(join(done.details.goalRunId ? dir : dir, "harness", "goal.json")));
+
+    // And with the goal met, the pipeline finishing really is the end.
+    const after = await decideNext({ targetDir: dir, runId: "goal-e2e" });
+    assert.equal(after.decision.action, "stop");
+    assert.equal(after.decision.reason, "complete");
+  });
+
+  rmSync(dir, { recursive: true, force: true });
+}
+
 async function scenarioColdStart() {
   const adapter = (await import(pathToFileURL(join(REPO_ROOT, "extensions", "infinity-harness", "index.ts")).href))
     .default;
@@ -2999,17 +3277,16 @@ async function scenarioPackage() {
     // Everything on this list is real, tested, and currently unreachable from
     // the extension. It is debt, recorded here so it cannot grow quietly and
     // cannot be mistaken for shipped behaviour.
-    const KNOWN_UNREACHABLE = new Map([
-      ["src/core/skillsAudit.ts", "build-time guard; runs in tests, not in pi"],
-      ["src/worker.ts", "isolated per-task workers — no command spawns one yet"],
-      ["src/unstuck.ts", "escalation ladder — the loop counts strikes but never consults it"],
-      ["src/review.ts", "review bounce guard — only unstuck.ts would call it"],
-      ["src/rework.ts", "backward rework — no tool or command exposes it"],
-      ["src/replan.ts", "mid-build amendment — no tool or command exposes it"],
-      ["src/goalLoop.ts", "goal-loop coordinator, ported and not yet wired"],
-      ["src/goalSpec.ts", "goal spec helpers, ported and not yet wired"],
-      ["src/goalState.ts", "goal-loop persistence, ported and not yet wired"],
-    ]);
+    // This list is empty, and keeping it empty is the point.
+    //
+    // Nine modules once shipped with no path to them: the escalation ladder,
+    // rework, replan, the review bounce guard, isolated workers, the whole
+    // goal loop, and the skills audit. They typechecked, they passed their
+    // tests, and no code path in the running product could reach a single one.
+    // The README advertised them. That is the mirror image of this project's
+    // worst bug — tested code that was not shipped code — and it survived for
+    // months because nothing looked.
+    const KNOWN_UNREACHABLE = new Map([]);
 
     const shipped = [];
     const walk = (dir) => {
@@ -3033,7 +3310,7 @@ async function scenarioPackage() {
 
     const fixed = [...KNOWN_UNREACHABLE.keys()].filter((f) => !orphans.includes(f));
     assert.deepEqual(fixed, [], `wired in at last — delete from KNOWN_UNREACHABLE: ${fixed.join(", ")}`);
-    out(`      note: ${orphans.length} shipped module(s) are unreachable from the extension (documented debt)`);
+    out(`      note: ${reachable.size} modules reachable, ${orphans.length} orphaned`);
   });
 
   await step("no shipped text file carries a UTF-8 BOM", async () => {
@@ -3177,6 +3454,8 @@ const SCENARIOS = [
   ["edges", "adversarial plans and inputs", scenarioEdges],
   ["extension", "the pi adapter driven through its real tools, commands and hooks", scenarioExtension],
   ["coldstart", "install, open pi, and get to a working harness", scenarioColdStart],
+  ["escalation", "what a stuck run does before it gives up", scenarioEscalation],
+  ["goal", "the outer loop: is the thing that was asked for actually done?", scenarioGoal],
   ["package", "what npm actually ships, unpacked and inspected", scenarioPackage],
   ["live", "one real model call (skipped when the endpoint is unreachable)", scenarioLive],
 ];

@@ -87,6 +87,20 @@ export async function buildBrief(targetDir: string, options: BuildBriefOptions =
     notes.push(`${blockedTasks.length} task(s) are blocked: ${blockedTasks.map((t) => t.compositeKey).join(", ")}`);
   }
 
+  // A second pass at a goal is not the same as a first pass at one, and the
+  // agent has no way to tell unless the brief says so. Without this the model
+  // re-plans from scratch and rebuilds what the last review already accepted.
+  const remaining = Array.isArray(config.remainingWork)
+    ? (config.remainingWork as unknown[]).filter((w): w is string => typeof w === "string" && w.trim() !== "")
+    : [];
+  if (remaining.length > 0) {
+    const pass = typeof config.goalPass === "number" ? `pass ${config.goalPass}` : "this pass";
+    notes.push(
+      `The goal was reviewed and judged not yet met. ${remaining.length} item(s) remain for ${pass} — ` +
+        `plan for these, not for the whole goal again: ${remaining.join("; ")}`,
+    );
+  }
+
   const complete = isFinalPhase(phase, config.phases?.enabled) && progress.tasksDone === progress.tasksTotal;
 
   return {
