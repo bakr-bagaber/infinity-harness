@@ -2687,6 +2687,17 @@ async function probeLiveEndpoint() {
   return { reachable: false, why: reasons.join("; ") };
 }
 
+/**
+ * Token budget for the live probes.
+ *
+ * Generous on purpose. A reasoning model emits nothing on the content channel
+ * until it has finished thinking — api.meta.ai's muse-spark spends ~370
+ * reasoning tokens to answer "reply with one word" — so a tight cap returns
+ * `content: null` with `finish_reason: "length"` and looks like a broken
+ * endpoint when it is only a small budget.
+ */
+const LIVE_MAX_TOKENS = Number(process.env.INFINITY_E2E_MAX_TOKENS ?? 3000);
+
 async function scenarioLive() {
   if (NO_LIVE) throw new SkipLeg("--no-live");
 
@@ -2740,7 +2751,7 @@ async function scenarioLive() {
         { role: "system", content: "Answer with one lowercase word and nothing else." },
         { role: "user", content: `${brief}\n\nWhich phase is this brief for?` },
       ],
-      256,
+      LIVE_MAX_TOKENS,
     );
     note(`answer: ${JSON.stringify(answer.trim())}`);
     assert.ok(answer.trim().length > 0, "the model returned an empty completion");
@@ -2758,7 +2769,7 @@ async function scenarioLive() {
         },
         { role: "user", content: "Plan the work for: add a CSV export to the reporting page." },
       ],
-      220,
+      LIVE_MAX_TOKENS,
     );
     note(`raw: ${raw.replace(/\s+/g, " ").slice(0, 200)}`);
 
