@@ -10,32 +10,6 @@ Renamed from `pi-harness` to **infinity-harness**, and rebuilt from a working pr
 something shippable. This is a breaking release: tool names, command names and the package name all
 changed, and the extension no longer depends on an external repository.
 
-### Added in 2.0.0 (continued)
-
-- **Full configuration from inside pi.** `/infinity:config` opens an interactive menu covering models,
-  pipeline, project commands, gates, loop budgets and retry budgets; `/infinity:config show` prints
-  the lot as text. The menu is generated from one schema (`src/core/settings.ts`), so an option
-  cannot exist in the file format and be missing from the UI.
-- **Model tiers are picked from pi's own models.** `/infinity:config` → Models offers the models pi
-  has configured and can authenticate — session-scoped ones when scoping is set — for each difficulty
-  tier, the master model and the default. Any tier can be handed back to "pi's current model".
-  `/infinity:models` shows the available list next to the current routing.
-- Values are bounds-checked before they are written, durations accept `24h` / `90m`, and the phase
-  list is toggled item by item and stored in pipeline order rather than click order.
-
-### Security
-
-- A model reference is interpolated into a worker's shell command, so it is now validated against a
-  strict character set and refused rather than escaped. A typo cannot become a command substitution.
-
-### Changed in 2.0.0 (continued)
-
-- **`strict: true`.** The whole tree typechecks under TypeScript strict mode, with ambient types added
-  for `proper-lockfile` (which ships none).
-- Verified installable from npm: `pi install infinity-harness`. pi loads extensions through `jiti`,
-  which transpiles TypeScript at runtime, so the package ships `.ts` with no build step. (Plain
-  `node` refuses to type-strip inside `node_modules`; pi does not use plain `node` for this.)
-
 ### Breaking
 
 - **Package renamed** `pi-harness` → `infinity-harness`.
@@ -82,6 +56,9 @@ changed, and the extension no longer depends on an external repository.
 - **`gateHistory` grew without bound** over a long run. Capped at 500 entries.
 - **A type-only import of `AddressInfo`** made the dashboard module fail to load under type stripping.
 - **A raw NUL byte in a source file** made `grep` and `file` treat the module as binary.
+- **A model reference reached a shell unvalidated.** It is interpolated into the worker command, so it
+  is now checked against a strict character set and refused rather than escaped — a typo cannot
+  become a command substitution.
 
 ### Added
 
@@ -100,7 +77,18 @@ changed, and the extension no longer depends on an external repository.
 - **E2E suite** (`npm run e2e`): 11 scenarios, 79 assertion groups, over real temp projects, real git
   repos and real child processes — including a concurrency fan-out with an unlocked control that
   demonstrates why the lock is load-bearing.
-- **Test runner** (`npm test`): 20 files, plain `node:assert`, no framework.
+- **Test runner** (`npm test`): 21 files, plain `node:assert`, no framework.
+- **Full configuration from inside pi.** `/infinity:config` opens an interactive menu covering models,
+  pipeline, project commands, gates, loop budgets and retry budgets; `/infinity:config show` prints
+  the lot as text and is what runs automatically when the mode has no dialogs. The menu is generated
+  from one schema (`src/core/settings.ts`), so an option cannot exist in the file format and be
+  missing from the UI.
+- **Model tiers picked from pi's own models.** Config → Models offers the models pi has configured
+  and can authenticate — session-scoped ones when scoping is set — for each difficulty tier, the
+  master model and the default. Any tier can be handed back to "pi's current model".
+  `/infinity:models` shows the available list beside the current routing.
+- Values are bounds-checked before they are written, durations accept `24h` / `90m`, and the phase
+  list is toggled item by item and stored in pipeline order rather than click order.
 - `.bak` recovery for a corrupt plan file.
 - A `LockTimeoutError` a caller can actually act on.
 
@@ -114,6 +102,11 @@ changed, and the extension no longer depends on an external repository.
 - The dashboard refuses to bind to a non-loopback interface without an explicit opt-in, and serves a
   CSP tight enough that an escaping slip cannot become script execution.
 - Documentation rewritten: README, AGENTS.md, and `harness/docs/ARCHITECTURE.md`.
+- **`strict: true`.** The whole tree typechecks under TypeScript strict mode, with ambient types added
+  for `proper-lockfile`, which ships none.
+- **Verified installable from npm** (`pi install infinity-harness`). pi loads extensions through
+  `jiti`, which transpiles TypeScript at runtime, so the package ships `.ts` with no build step.
+  Plain `node` refuses to type-strip inside `node_modules`; pi does not use plain `node` for this.
 
 ---
 
