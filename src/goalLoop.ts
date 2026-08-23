@@ -200,7 +200,7 @@ export function createGoalLoopState(options: CreateGoalLoopStateOptions): GoalLo
   const limits = normalizeGoalLoopLimits(options);
   const goalRunDir =
     options.goalRunDir ??
-    path.join(path.resolve(options.cwd ?? process.cwd()), "tmp", "pi-harness", "goals", options.goalRunId);
+    path.join(path.resolve(options.cwd ?? process.cwd()), "tmp", "infinity-harness", "goals", options.goalRunId);
   const deadlineAt = new Date(now.getTime() + limits.timeoutMs).toISOString();
   const state: GoalLoopState = {
     schemaVersion: GOAL_LOOP_STATE_SCHEMA_VERSION,
@@ -470,7 +470,8 @@ export function resolveReviewerModel(opts: { projectDir?: string; difficulty?: s
   try {
     return resolveModel({ projectDir: opts.projectDir, task: opts.difficulty || opts.modelHint ? { difficulty: opts.difficulty, modelHint: opts.modelHint } : undefined });
   } catch {
-    return "opencode/muse-spark-1.2-contributor-free";
+    // No router, or an unreadable one: fall through to pi's configured model.
+    return "";
   }
 }
 

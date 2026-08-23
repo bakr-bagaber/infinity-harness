@@ -25,16 +25,25 @@ export interface RouterConfig {
   budgets?: { maxReworksPerRun: number; maxReplansPerRun: number; maxReviewBounces: number };
 }
 
+/**
+ * Router defaults.
+ *
+ * Every model slot is empty on purpose. An empty string means "whatever model
+ * pi is already configured with", so installing the harness never silently
+ * redirects work to some vendor's model that the user did not choose. Routing
+ * only takes effect once someone fills in harness/model-router.json and sets
+ * `enabled: true`.
+ */
 export const DEFAULT_ROUTER: RouterConfig = {
   version: 1,
   enabled: false,
-  default: "opencode/muse-spark-1.2-contributor-free",
+  default: "",
   byDifficulty: {
-    easy: "opencode/muse-spark-1.2-contributor-free",
-    moderate: "opencode/muse-spark-1.2-contributor-free",
-    difficult: "meta/muse-spark-1.2-contributor",
+    easy: "",
+    moderate: "",
+    difficult: "",
   },
-  master: "meta/muse-spark-1.2-contributor",
+  master: "",
   byPhase: {},
   byRole: {},
   byFeature: {},

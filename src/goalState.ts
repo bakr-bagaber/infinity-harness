@@ -68,7 +68,7 @@ export class GoalStateStore {
 
   constructor(options: GoalStateStoreOptions) {
     const cwd = path.resolve(options.cwd ?? process.cwd());
-    const goalRunDir = options.goalRunDir ?? path.join(cwd, "tmp", "pi-harness", "goals", options.goalRunId);
+    const goalRunDir = options.goalRunDir ?? path.join(cwd, "tmp", "infinity-harness", "goals", options.goalRunId);
     this.paths = {
       goalRunId: options.goalRunId,
       goalRunDir,

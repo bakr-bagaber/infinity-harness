@@ -15,14 +15,14 @@ yourself doing the same multi-step shell dance twice.
 
 ## Process
 
-1. `dev-harness capability create tool <name>` → stub at
+1. `infinity-harness capability create tool <name>` → stub at
    `harness/tools/<name>.sh` (any language works — .mjs, .py; the stub is
    bash).
 2. Implement to the standards below.
 3. Register:
 
    ```
-   dev-harness capability add tool harness/tools/<name>.sh \
+   infinity-harness capability add tool harness/tools/<name>.sh \
      --run "bash harness/tools/<name>.sh" \
      --tags db,fixtures --description "Reset local db to fixtures"
    ```
@@ -57,4 +57,4 @@ yourself doing the same multi-step shell dance twice.
 - [ ] Idempotent (ran it twice to prove it)
 - [ ] `--help` exit 0; exit codes correct
 - [ ] Registered with ≥2 tags + description
-- [ ] `dev-harness capability doctor --type tool` passes
+- [ ] `infinity-harness capability doctor --type tool` passes

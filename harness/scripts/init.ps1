@@ -94,4 +94,4 @@ switch ($Stack) {
 Write-Host "  ✓ Setup verified" -ForegroundColor Green
 
 # ── Start ────────────────────────────────────────────────────────────────────
-Write-Host "`nSetup complete. Run: dev-harness phase define" -ForegroundColor Cyan
+Write-Host "`nSetup complete. Run: infinity-harness phase define" -ForegroundColor Cyan

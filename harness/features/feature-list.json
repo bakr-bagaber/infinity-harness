@@ -4,7 +4,7 @@
   "goals": [
     {
       "id": "goal-001",
-      "title": "pi-harness v1.0 — superset visual harness",
+      "title": "infinity-harness v1.0 — superset visual harness",
       "description": "Enforced, 5-level, compaction-safe, worker-isolated"
     }
   ],
@@ -63,7 +63,7 @@
           "acceptanceCriteria": [
             "harness/features/feature-list.json has baseRevision, tasks have key, dependsOn, subtasks",
             "harness/features/feature-list.schema.json updated and validates",
-            "Existing pi-harness harness still loads"
+            "Existing infinity-harness harness still loads"
           ],
           "dependsOn": [],
           "subtasks": [
@@ -103,10 +103,10 @@
         {
           "id": "task-003",
           "key": "atomic-tool",
-          "description": "Implement harness_task_list tool with atomic baseRevision and hidden checkpoint",
+          "description": "Implement infinity_plan tool with atomic baseRevision and hidden checkpoint",
           "status": "complete",
           "acceptanceCriteria": [
-            "harness_task_list({baseRevision, tasks}) does omission=deletion, baseRevision check, cycle/missing dep check",
+            "infinity_plan({baseRevision, tasks}) does omission=deletion, baseRevision check, cycle/missing dep check",
             "in_progress needs deps completed, all-or-nothing, hidden custom checkpoint on compaction",
             "Widget survives /reload and /tree via toolResult.details replay"
           ],
@@ -125,7 +125,7 @@
     {
       "id": "feature-002",
       "name": "Enforcer Auto-Loop Hardening",
-      "description": "Harden harness-enforcer to full auto-loop without stream race",
+      "description": "Harden infinity-harness to full auto-loop without stream race",
       "passes": true,
       "producedByRole": "generator",
       "sprintId": "sprint-002",
@@ -159,14 +159,14 @@
     {
       "id": "feature-003",
       "name": "Worker Isolation per BUILD Task",
-      "description": "Isolated worker per BUILD task with tmp/pi-harness/<run-id>/ attempt history and proper-lockfile",
+      "description": "Isolated worker per BUILD task with tmp/infinity-harness/<run-id>/ attempt history and proper-lockfile",
       "passes": true,
       "producedByRole": "generator",
       "sprintId": "sprint-003",
       "goalId": "goal-001",
       "definitionOfDone": [
         "src/worker.ts provides worker dirs and proper-lockfile isolation, tests pass and tsc clean",
-        "Worker attempt history tmp/pi-harness/<run-id>/... written by dev-harness run workers, baseRevision preserved",
+        "Worker attempt history tmp/infinity-harness/<run-id>/... written by the infinity:run command workers, baseRevision preserved",
         "Version 0.4.0 with changelog, enforcer stays notify-only without stream race"
       ],
       "tasks": [
@@ -189,7 +189,7 @@
           "description": "Wire worker to enforcer and bump to 0.4.0 with changelog",
           "status": "complete",
           "acceptanceCriteria": [
-            "enforcer exposes worker helper and dev-harness run workers write tmp/pi-harness/<run-id>/ isolated prompts",
+            "enforcer exposes worker helper and the infinity:run command workers write tmp/infinity-harness/<run-id>/ isolated prompts",
             "package.json version 0.4.0 and CHANGELOG ## [0.4.0] entry",
             "enforcer still tsc clean, gateHistory not leaked to main session beyond expected"
           ],
@@ -208,15 +208,15 @@
     {
       "id": "feature-004",
       "name": "Goal Loop with GOAL_SPEC.json + Reviewer Worker",
-      "description": "Pi-native goal loop porting pi-long-task GOAL_SPEC + loop + state to harness/goals/GOAL_SPEC.json and tmp/pi-harness/goals/<runId>/ with isolated reviewer worker",
+      "description": "Pi-native goal loop porting pi-long-task GOAL_SPEC + loop + state to harness/goals/GOAL_SPEC.json and tmp/infinity-harness/goals/<runId>/ with isolated reviewer worker",
       "passes": true,
       "producedByRole": "generator",
       "sprintId": "sprint-004",
       "goalId": "goal-001",
       "definitionOfDone": [
         "src/goalSpec.ts, src/goalLoop.ts, src/goalState.ts provide spec/loop/state helpers with proper-lockfile and tsc clean",
-        "GoalSpecification persists to harness/goals/GOAL_SPEC.json and loop writes tmp/pi-harness/goals/<runId>/GOAL_STATE.json + GOAL_TRACE.jsonl + iterations/<nn>/ with GOAL_SPEC.json mirrored and reviewer isolated to tmp/pi-harness/<runId>/review/attempt-1/",
-        "Version 0.5.0 with changelog, enforcer exposes pi_goal_task via spawnIsolatedWorker without stream race"
+        "GoalSpecification persists to harness/goals/GOAL_SPEC.json and loop writes tmp/infinity-harness/goals/<runId>/GOAL_STATE.json + GOAL_TRACE.jsonl + iterations/<nn>/ with GOAL_SPEC.json mirrored and reviewer isolated to tmp/infinity-harness/<runId>/review/attempt-1/",
+        "Version 0.5.0 with changelog, enforcer exposes infinity_goal via spawnIsolatedWorker without stream race"
       ],
       "tasks": [
         {
@@ -250,12 +250,12 @@
         {
           "id": "task-009",
           "key": "goal-wire",
-          "description": "Wire pi_goal_task to enforcer via spawnIsolatedWorker and bump to 0.5.0 with changelog",
+          "description": "Wire infinity_goal to enforcer via spawnIsolatedWorker and bump to 0.5.0 with changelog",
           "status": "complete",
           "acceptanceCriteria": [
-            "extensions/harness-enforcer/index.ts exposes pi_goal_task (alias harness_goal_loop) hidden tool delegating to src/goalLoop.ts + src/goalState.ts + src/worker.ts spawnIsolatedWorker reviewer isolated to tmp/pi-harness/<runId>/review/attempt-N/",
+            "extensions/infinity-harness/index.ts exposes infinity_goal (alias infinity_goal) hidden tool delegating to src/goalLoop.ts + src/goalState.ts + src/worker.ts spawnIsolatedWorker reviewer isolated to tmp/infinity-harness/<runId>/review/attempt-N/",
             "package.json version 0.5.0 and CHANGELOG.md ## [0.5.0] entry describing goal loop",
-            "enforcer still tsc clean, no sendUserMessage mid-stream, canonical harness/goals/GOAL_SPEC.json mirrored from tmp/pi-harness/goals/<runId>/"
+            "enforcer still tsc clean, no sendUserMessage mid-stream, canonical harness/goals/GOAL_SPEC.json mirrored from tmp/infinity-harness/goals/<runId>/"
           ],
           "dependsOn": [
             "goal-loop-state"
@@ -279,8 +279,8 @@
       "goalId": "goal-001",
       "definitionOfDone": [
         "src/remote.ts provides buildRemoteState and createRemoteServer read-only polling with node:http 127.0.0.1 ephemeral, tsc clean",
-        "Remote demonstrates GET /api/harness shape baseRevision/widgetLines/timestamp and GET / HTML contains pi-harness + Progress/Todos without mutating baseRevision or feature-list.json, concurrent serialized, close frees port, escaping",
-        "Version 1.0.0 with changelog, enforcer exposes pi_harness_remote alias harness_remote without stream race, singleton session_shutdown closes"
+        "Remote demonstrates GET /api/harness shape baseRevision/widgetLines/timestamp and GET / HTML contains infinity-harness + Progress/Todos without mutating baseRevision or feature-list.json, concurrent serialized, close frees port, escaping",
+        "Version 1.0.0 with changelog, enforcer exposes infinity_dashboard alias infinity_dashboard without stream race, singleton session_shutdown closes"
       ],
       "tasks": [
         {
@@ -290,7 +290,7 @@
           "status": "complete",
           "acceptanceCriteria": [
             "src/remote.ts exports buildRemoteState(projectDir) and createRemoteServer({port,host}) using node:http on 127.0.0.1 with GET / HTML inline polling, GET /api/harness JSON RemoteState {baseRevision,features,goals,widgetLines,timestamp}, GET /api/health",
-            "tests/remote.test.ts passes (start on 127.0.0.1:0, GET /api/harness shape baseRevision/widgetLines/timestamp, GET / HTML contains pi-harness + baseRevision, concurrent fetches x5 serialized, close frees port, HTML escaping)",
+            "tests/remote.test.ts passes (start on 127.0.0.1:0, GET /api/harness shape baseRevision/widgetLines/timestamp, GET / HTML contains infinity-harness + baseRevision, concurrent fetches x5 serialized, close frees port, HTML escaping)",
             "npx tsc --noEmit passes with no sendUserMessage mid-stream regression"
           ],
           "dependsOn": [],
@@ -299,10 +299,10 @@
         {
           "id": "task-011",
           "key": "remote-wire",
-          "description": "Wire pi_harness_remote to enforcer and bump to 1.0.0 with changelog",
+          "description": "Wire infinity_dashboard to enforcer and bump to 1.0.0 with changelog",
           "status": "complete",
           "acceptanceCriteria": [
-            "extensions/harness-enforcer/index.ts exposes pi_harness_remote (alias harness_remote) hidden tool {action:start|stop|status,port?,host?} delegating to src/remote.ts singleton, session_shutdown closes",
+            "extensions/infinity-harness/index.ts exposes infinity_dashboard (alias infinity_dashboard) hidden tool {action:start|stop|status,port?,host?} delegating to src/remote.ts singleton, session_shutdown closes",
             "package.json version 1.0.0 and CHANGELOG.md ## [1.0.0] entry describing remote",
             "enforcer still tsc clean, no sendUserMessage mid-stream, repeated start/stop does not corrupt baseRevision or feature-list.json"
           ],
@@ -327,7 +327,7 @@
       "sprintId": "sprint-006",
       "goalId": "goal-001",
       "definitionOfDone": [
-        "Schema allows status rework and difficulty/modelHint; widget renders amber and harness_task_list accepts rework",
+        "Schema allows status rework and difficulty/modelHint; widget renders amber and infinity_plan accepts rework",
         "src/rework.ts startRework computes impact BFS limited by maxImpactDepth, flips origin+impacted to rework, bumps baseRevision, writes harness/rework.json atomically",
         "src/replan.ts amendPlan validates DAG (no cycles/missing deps), guards maxReplansPerRun, bumps baseRevision atomically"
       ],
@@ -378,7 +378,7 @@
       "definitionOfDone": [
         "harness/model-router.json v1 exists with enabled/default/byDifficulty/master/byPhase/byRole/byTask/consultation/budgets; read fresh each call",
         "src/modelRouter.ts exports resolveModel and consultNext with ladder easy->moderate->difficult->MASTER, MASTER never assigned, oneStepOnly and requireExhaustion",
-        "src/worker.ts SpawnOpts.model passthrough isolates per-task model; goalLoop reviewerCommand uses resolveModel; enforcer harness_spawn_worker accepts model"
+        "src/worker.ts SpawnOpts.model passthrough isolates per-task model; goalLoop reviewerCommand uses resolveModel; enforcer infinity_spawn_worker accepts model"
       ],
       "coversCriteria": [
         1,
@@ -408,7 +408,7 @@
           "status": "complete",
           "acceptanceCriteria": [
             "src/worker.ts SpawnOpts adds model:string; spawnIsolatedWorker spawns pi --model <resolved> and records model in fingerprint.json",
-            "src/goalLoop.ts reviewerCommand resolves via modelRouter; enforcer harness_spawn_worker and pi_goal_task pass through model",
+            "src/goalLoop.ts reviewerCommand resolves via modelRouter; enforcer infinity_spawn_worker and infinity_goal pass through model",
             "npx tsc --noEmit passes; existing worker tests still pass"
           ],
           "dependsOn": [
@@ -459,7 +459,7 @@
           "status": "complete",
           "acceptanceCriteria": [
             "harness/config.json adds rework/replan/unstuck/review {allowBackward,maxBounces:2,bounceRequiresDelta} read fresh per call; review fail bounces to rework only when fileDelta true else ignored",
-            "src/remote.ts buildRemoteState includes router and rework fields read-only via readFileSync without lock or baseRevision bump; enforcer pi_harness_remote singleton exposes them",
+            "src/remote.ts buildRemoteState includes router and rework fields read-only via readFileSync without lock or baseRevision bump; enforcer infinity_dashboard singleton exposes them",
             "package.json 1.1.0 and CHANGELOG ## [1.1.0] with resilient self-correction; npx tsc --noEmit passes, enforcer no sendUserMessage"
           ],
           "dependsOn": [

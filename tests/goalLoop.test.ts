@@ -48,7 +48,7 @@ import {
   assert.equal(s.currentIteration, 0);
   assert.equal(s.iterations.length, 0);
   assert.ok(s.deadlineAt);
-  assert.ok(s.goalRunDir.includes("tmp/pi-harness/goals/run-1"), "goalRunDir repointed to tmp/pi-harness/goals");
+  assert.ok(s.goalRunDir.includes("tmp/infinity-harness/goals/run-1"), "goalRunDir repointed to tmp/infinity-harness/goals");
   assert.ok(s.trace.length === 1 && s.trace[0].event === "goal_received");
   console.log("✓ createGoalLoopState basic + repointed path");
 }

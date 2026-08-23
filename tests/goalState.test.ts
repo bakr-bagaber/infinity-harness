@@ -10,17 +10,17 @@ function tmpProject(): string {
   return mkdtempSync(join(tmpdir(), "pi-goal-state-"));
 }
 
-// --- paths repointed to tmp/pi-harness/goals ---
+// --- paths repointed to tmp/infinity-harness/goals ---
 {
   const store = new GoalStateStore({ cwd: "/tmp", goalRunId: "run-1" });
-  assert.ok(store.paths.goalRunDir.includes("tmp/pi-harness/goals/run-1"), `goalRunDir ${store.paths.goalRunDir} should contain tmp/pi-harness/goals`);
+  assert.ok(store.paths.goalRunDir.includes("tmp/infinity-harness/goals/run-1"), `goalRunDir ${store.paths.goalRunDir} should contain tmp/infinity-harness/goals`);
   assert.ok(store.paths.statePath.endsWith("GOAL_STATE.json"));
   assert.ok(store.paths.tracePath.endsWith("GOAL_TRACE.jsonl"));
   assert.ok(store.paths.goalSpecPath.endsWith("GOAL_SPEC.json"));
   assert.ok(store.paths.iterationsDir.endsWith("iterations"));
   assert.equal(canonicalGoalSpecPath("/tmp/proj"), resolve("/tmp/proj", "harness/goals/GOAL_SPEC.json"));
   assert.equal(CANONICAL_GOAL_SPEC_DIR, "harness/goals");
-  console.log("✓ paths repointed to tmp/pi-harness/goals + canonical");
+  console.log("✓ paths repointed to tmp/infinity-harness/goals + canonical");
 }
 
 // --- ensureRunDir + saveState/loadState roundtrip ---
@@ -180,8 +180,8 @@ function tmpProject(): string {
     // feature-list not corrupted
     const afterFl = JSON.parse(readFileSync(flPath, "utf8"));
     assert.equal(afterFl.baseRevision, 7, "baseRevision preserved");
-    // tmp isolated: runDir under tmp/pi-harness/goals not under harness
-    assert.ok(store.paths.goalRunDir.includes("tmp/pi-harness/goals"), "isolated runDir");
+    // tmp isolated: runDir under tmp/infinity-harness/goals not under harness
+    assert.ok(store.paths.goalRunDir.includes("tmp/infinity-harness/goals"), "isolated runDir");
     assert.ok(!store.paths.goalRunDir.includes("harness/features"), "not in feature-list");
     console.log("✓ saveGoalSpecificationWithCanonical mirrors + baseRevision preserved + isolated");
   } finally {

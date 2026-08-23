@@ -14,14 +14,14 @@ duplicates, flatten deep nesting, and ensure tests still pass after changes.
 
 ## Process
 1. Read `harness/progress.md` and `AGENTS.md`
-2. Run `dev-harness next` to see the current step
+2. Run `the infinity_brief tool` to see the current step
 3. For each feature:
    a. Review code for: code smells, deep nesting, DRY violations, dead code
    b. Simplify: consolidate duplicate logic, flatten conditionals, remove unused
    c. Run `npm test` to ensure tests still pass after simplification
-   d. Run `dev-harness validate --feature <id> --task <id>` per task
-4. When all features simplified → run `dev-harness validate` (full phase)
-5. If PASS → `dev-harness phase next` to advance to REVIEW
+   d. Run `the infinity_validate tool --feature <id> --task <id>` per task
+4. When all features simplified → run `the infinity_validate tool` (full phase)
+5. If PASS → `the infinity_advance tool` to advance to REVIEW
 
 ## Rationalizations to Avoid
 | Excuse | Rebuttal |
@@ -39,7 +39,7 @@ duplicates, flatten deep nesting, and ensure tests still pass after changes.
 - [ ] Code smells reduced (subjective — use judgment)
 - [ ] No new dead code introduced
 - [ ] Tests still pass: `npm test`
-- [ ] `dev-harness validate` passes
+- [ ] `the infinity_validate tool` passes
 
 ## Handoff
-On gate pass: `dev-harness phase next` (Simplifier → Evaluator for REVIEW)
+On gate pass: `the infinity_advance tool` (Simplifier → Evaluator for REVIEW)

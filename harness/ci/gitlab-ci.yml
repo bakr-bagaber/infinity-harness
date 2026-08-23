@@ -54,6 +54,6 @@ gate:
   stage: gate
   image: node:lts
   script:
-    - npm install -g dev-harness-cli
-    - dev-harness validate --json
+    - npm install -g infinity-harness
+    - the infinity_validate tool --json
   needs: [coverage]

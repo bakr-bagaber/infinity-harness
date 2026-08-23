@@ -24,7 +24,7 @@ import { loadFeatureList, computeProgress } from "../../src/core/featureList.ts"
 import { buildBrief, renderBrief } from "../../src/core/brief.ts";
 import { runChecks } from "../../src/core/gates.ts";
 import { advancePhase } from "../../src/core/phases.ts";
-import { featureListPath, configPath } from "../../src/core/paths.ts";
+import { configPath } from "../../src/core/paths.ts";
 import { withLock } from "../../src/core/lock.ts";
 import { ValidationError, type FeatureList, type Phase } from "../../src/core/types.ts";
 import { writeTaskList, summarizeApply, type TaskInput } from "../../src/taskList.ts";
@@ -414,9 +414,10 @@ export default function (pi: ExtensionAPI): void {
       }
 
       try {
-        const { value: result } = await withLock(featureListPath(dir), () =>
-          writeTaskList(dir, { baseRevision: params.baseRevision, tasks: params.tasks! }),
-        );
+        // writeTaskList takes the plan lock itself, around the whole
+        // read-apply-write. Wrapping it again here would only add a second
+        // lock with weaker semantics.
+        const result = writeTaskList(dir, { baseRevision: params.baseRevision, tasks: params.tasks! });
         refreshWidget(ctx as ExtensionContext);
         return {
           content: [{ type: "text", text: summarizeApply(result) }],

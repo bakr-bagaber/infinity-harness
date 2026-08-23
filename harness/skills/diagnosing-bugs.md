@@ -55,7 +55,7 @@ load-bearing.
 Generate **3–5 ranked hypotheses** before testing any. Each must be
 falsifiable: "If X is the cause, then changing Y will make the bug
 disappear." If you can't state the prediction, it's a vibe — discard it.
-Record the ranked list (in the task notes or `dev-harness learn`).
+Record the ranked list (in the task notes or `harness/lessons-decisions.md`).
 
 ## Phase 4 — Instrument
 
@@ -78,7 +78,7 @@ pass → re-run the Phase 1 loop against the original scenario.
 - [ ] Regression test passes (or absence of seam documented)
 - [ ] All `[DEBUG-...]` instrumentation removed (grep the prefix)
 - [ ] Throwaway harnesses deleted
-- [ ] Record the confirmed hypothesis: `dev-harness learn "bug X was caused by Y"`
+- [ ] Record the confirmed hypothesis: `harness/lessons-decisions.md "bug X was caused by Y"`
 
 Then ask: what would have prevented this bug? If the answer is architectural
-(no test seam, tangled callers), record it: `dev-harness decision "..."`.
+(no test seam, tangled callers), record it: `infinity-harness decision "..."`.

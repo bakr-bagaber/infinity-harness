@@ -107,9 +107,13 @@ function tmpProject(): string {
     const cfg = loadRouterConfig(proj);
     assert.equal(cfg.version, 1);
     assert.equal(cfg.enabled, true);
-    assert.ok(cfg.default);
-    assert.ok(cfg.byDifficulty);
-    assert.ok(cfg.master);
+    // Model slots default to "" — meaning "use whatever model pi is already
+    // configured with". Installing the harness must never silently redirect
+    // work to a model the user did not choose.
+    assert.equal(cfg.default, "", "default model slot is empty, not a vendor id");
+    assert.equal(cfg.master, "", "master slot is empty, not a vendor id");
+    assert.ok(cfg.byDifficulty, "difficulty map is present");
+    assert.equal(cfg.byDifficulty.easy, "");
     assert.ok(cfg.budgets);
     console.log("✓ load merges defaults");
   } finally { rmSync(proj, { recursive: true, force: true }); }

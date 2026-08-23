@@ -51,7 +51,7 @@ function baseFeatureList(overrides?: any): any {
   return {
     version: "2.0",
     baseRevision: 7,
-    goals: [{ id: "goal-001", title: "pi-harness v1.0 — superset visual harness", description: "test" }],
+    goals: [{ id: "goal-001", title: "infinity-harness v1.0 — superset visual harness", description: "test" }],
     sprints: [{ id: "sprint-005", name: "F5 — Remote", goalId: "goal-001" }],
     features: [
       {

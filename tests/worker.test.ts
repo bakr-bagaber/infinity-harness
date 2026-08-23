@@ -28,7 +28,7 @@ function tmpProject(): string {
 }
 
 // --- constants & hashLite ---
-assert.equal(WORKER_ROOT_SEGMENT, "tmp/pi-harness");
+assert.equal(WORKER_ROOT_SEGMENT, "tmp/infinity-harness");
 assert.equal(PROMPT_FILE, "prompt.md");
 assert.equal(OUTPUT_FILE, "output.log");
 assert.equal(FINGERPRINT_FILE, "fingerprint.json");
@@ -44,7 +44,7 @@ assert.equal(hashLite(""), 0);
 // --- getWorkerRoot / getTaskRoot / getAttemptDir ---
 {
   const root = getWorkerRoot("/tmp/proj");
-  assert.equal(root, resolve("/tmp/proj", "tmp/pi-harness"));
+  assert.equal(root, resolve("/tmp/proj", "tmp/infinity-harness"));
   const taskRoot = getTaskRoot("/tmp/proj", "run-1", "feature-003", "task-005");
   assert.ok(taskRoot.includes("run-1") && taskRoot.includes("feature-003") && taskRoot.includes("task-005"));
   const attemptDir = getAttemptDir("/tmp/proj", "run-1", "feature-003", "task-005", 2);
@@ -302,7 +302,7 @@ assert.equal(hashLite(""), 0);
   }
 }
 
-// --- tmp/pi-harness isolation does not corrupt harness files ---
+// --- tmp/infinity-harness isolation does not corrupt harness files ---
 {
   const proj = tmpProject();
   try {
@@ -319,8 +319,8 @@ assert.equal(hashLite(""), 0);
     });
     const after = readFileSync(join(proj, "harness", "features", "feature-list.json"), "utf-8");
     assert.equal(before, after, "feature-list.json untouched by isolated worker");
-    assert.ok(res.attemptDir.includes("tmp/pi-harness"));
-    console.log("✓ tmp/pi-harness isolated from harness files");
+    assert.ok(res.attemptDir.includes("tmp/infinity-harness"));
+    console.log("✓ tmp/infinity-harness isolated from harness files");
   } finally {
     rmSync(proj, { recursive: true, force: true });
   }

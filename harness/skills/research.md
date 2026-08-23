@@ -23,7 +23,7 @@ limits, a protocol detail):
 3. Keep conclusions separate from evidence: a short "Answer" section up
    top, the sourced detail below.
 4. Record the headline insight so future sessions inherit it:
-   `dev-harness learn "research: X behaves like Y (see docs/research/...)"`.
+   `harness/lessons-decisions.md "research: X behaves like Y (see docs/research/...)"`.
 
 Rules of evidence:
 

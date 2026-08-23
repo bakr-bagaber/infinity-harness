@@ -14,15 +14,15 @@ role runs tests, checks coverage, and validates behavior against the PRD.
 
 ## Process
 1. Read `harness/progress.md`, `AGENTS.md`, and `specs/prd.md`
-2. Run `dev-harness next` to see the current verification step
+2. Run `the infinity_brief tool` to see the current verification step
 3. For each feature:
    a. Run the test suite: `npm test`
    b. Check coverage: `{{coverageCmd}}` (if coverage gate enabled)
    c. Verify behavior matches acceptance criteria from PRD
-   d. Run `dev-harness validate --feature <id> --task <id>` per task
+   d. Run `the infinity_validate tool --feature <id> --task <id>` per task
 4. If any task fails → fix and re-validate (retry)
-5. When all features verified → run `dev-harness validate` (full phase)
-6. If PASS → `dev-harness phase next` to advance to SIMPLIFY or REVIEW
+5. When all features verified → run `the infinity_validate tool` (full phase)
+6. If PASS → `the infinity_advance tool` to advance to SIMPLIFY or REVIEW
 
 ## Rationalizations to Avoid
 | Excuse | Rebuttal |
@@ -40,7 +40,7 @@ role runs tests, checks coverage, and validates behavior against the PRD.
 - [ ] All tests pass: `npm test`
 - [ ] Coverage meets threshold (if gate enabled)
 - [ ] Behavior matches PRD acceptance criteria
-- [ ] `dev-harness validate` passes
+- [ ] `the infinity_validate tool` passes
 
 ## Handoff
-On gate pass: `dev-harness phase next` (Evaluator → Simplifier for SIMPLIFY, or Evaluator for REVIEW)
+On gate pass: `the infinity_advance tool` (Evaluator → Simplifier for SIMPLIFY, or Evaluator for REVIEW)

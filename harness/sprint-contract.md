@@ -12,7 +12,7 @@ No endless loops beyond budgets, no multi-step chain consult (one-step only), no
 
 npx tsc --noEmit passes; src/modelRouter.ts src/rework.ts src/replan.ts src/unstuck.ts exist with resolveModel/consultNext/startRework/amendPlan/chooseUnstuckStrategy, unit tests tests/modelRouter/rework/replan/unstuck.test.ts passing
 Self-correction demonstrated: model-router.json disabled->enabled toggled fresh each call, startRework flips rework \u21b7 and writes harness/rework.json with returnFeature/returnTask/impacted[] + baseRevision bump, amendPlan adds task mid-BUILD guard maxReplans2, review bounce only when fileDelta true else ignored, all read-only via GET /api/harness
-package.json 1.1.0 and CHANGELOG ## [1.1.0]; enforcer tsc clean no sendUserMessage, exposes routing via pi_harness_remote singleton and harness_spawn_worker model passthrough; harness_task_list still baseRevision optimistic with rework status and difficulty/modelHint optional
+package.json 1.1.0 and CHANGELOG ## [1.1.0]; enforcer tsc clean no sendUserMessage, exposes routing via infinity_dashboard singleton and infinity_spawn_worker model passthrough; infinity_plan still baseRevision optimistic with rework status and difficulty/modelHint optional
 
 ## Evaluator Review (Evaluator fills in)
 

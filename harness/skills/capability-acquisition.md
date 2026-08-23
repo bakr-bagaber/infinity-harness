@@ -23,7 +23,7 @@ and register what you find so the NEXT task starts at Tier 0.
 ## Step 2 — ACQUIRE: search the sources
 
 ```
-dev-harness capability search "<2-4 keywords>" --type skill|mcp|tool
+the capability index "<2-4 keywords>" --type skill|mcp|tool
 ```
 
 This queries the machine-queryable registries directly (npm, MCP registry,
@@ -41,10 +41,10 @@ re-point references to harness surfaces (DOMAIN.md, feature-list,
 learn/decision), add an attribution line (source + license), then register:
 
 ```
-dev-harness capability add skill <path> --from <url>
-dev-harness capability add mcp <name> --command npx --args -y,<pkg>@<exact-version> \
+infinity-harness capability add skill <path> --from <url>
+infinity-harness capability add mcp <name> --command npx --args -y,<pkg>@<exact-version> \
   --tags ... --description "..." --trust curated
-dev-harness capability add tool <file> --run "..." --tags ... --description "..."
+infinity-harness capability add tool <file> --run "..." --tags ... --description "..."
 ```
 
 **MCP security (hard rules):** pin exact versions (`pkg@1.2.3`, never
@@ -54,7 +54,7 @@ source; secrets go through env indirection, never into configs.
 ## Step 3 — CREATE: nothing usable exists
 
 ```
-dev-harness capability create skill|tool|mcp <name>
+infinity-harness capability create skill|tool|mcp <name>
 ```
 
 - skill → fill the stub per `writing-skills.md`
@@ -67,6 +67,6 @@ dev-harness capability create skill|tool|mcp <name>
 Acquisition fits ONE working session. If the search didn't conclude, or you
 have no network:
 
-1. Record the gap: `dev-harness learn "capability gap: <what was needed>"`
+1. Record the gap: `harness/lessons-decisions.md "capability gap: <what was needed>"`
 2. Proceed with general best practices — a missing skill is not a blocked task
-3. The gap resurfaces via `dev-harness capability gaps` for a later pass
+3. The gap resurfaces via `infinity-harness capability gaps` for a later pass

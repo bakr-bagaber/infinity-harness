@@ -1,104 +1,63 @@
-# Node.js — Dev Harness
+# Working in this repo
 
-## Project
-- **Stack:** node
-- **Mode:** copilot / autopilot (`dev-harness status` shows current)
-- **Pipeline:** driven by dev-harness — you do the work, the harness computes
-  your next step and verifies the result with deterministic gates.
+You are working inside **infinity-harness**, a pi extension that drives other agents through a gated
+build pipeline. It is also driving *you* — the harness is dogfooded on itself.
 
-## THE LOOP — this is 95% of what you need
+## The loop
 
 ```
-1. dev-harness next          ← your complete brief: role, goal, task, criteria
-2. Do the work it describes  (read the phase doc + craft skill it lists)
-3. Run the validate command the brief gives you
-4. FAIL → fix the listed checks, validate again
-5. PASS → dev-harness phase next  → back to step 1
+1. Read the brief          the harness injects it; infinity_brief re-prints it
+2. Do the work it names    one task at a time
+3. infinity_validate       the gate decides, not you
+4. FAIL → fix exactly what it listed, validate again
+5. PASS → the harness advances the phase and briefs you again
 ```
 
-Repeat until `next` says the pipeline is complete. If `next` says PAUSED,
-stop and tell the human. That's the whole workflow.
+That is the whole workflow. When the brief says PAUSED or the pipeline is complete, stop and tell the
+human.
 
-Briefs include CAPABILITIES matched to your task (skills/MCP/tools from
-`harness/skills/` + the index). If a brief says ACQUIRE FIRST, follow the
-ladder: `dev-harness capability search` → adapt+add, or create — see
-`harness/skills/capability-acquisition.md`. Never let acquisition block
-the task (record the gap and proceed).
+## Rules
 
-> MCP: if your tool loaded the dev-harness MCP server, `harness_next`,
-> `harness_validate`, `harness_advance` are the same loop as native tools.
+1. **Never mark your own work complete.** The gate is the only referee. Do not edit
+   `harness/config.json` by hand — the extension blocks phase edits on a failing gate anyway, and
+   working around it defeats the point of the tool.
+2. **Never skip a phase.** Transitions are forward-only, one step at a time. If you think a phase is
+   unnecessary, say so; do not route around it.
+3. **Keep the plan honest.** When reality diverges from `harness/features/feature-list.json`, call
+   `infinity_plan` with the current `baseRevision` and the *complete* task list. Omitted keys are
+   deleted, so send everything you want to keep.
+4. **Record surprises.** Non-obvious findings go in `harness/lessons-decisions.md`; architectural
+   choices go in `harness/docs/DECISIONS.md` with the reasoning, not just the outcome.
+5. **Commit after every validated task.** A long run should leave a readable history, not one
+   enormous commit at the end.
 
-## Quick Start
+## This codebase specifically
 
-```bash
-dev-harness next          # What do I do now? (call first, and after every validate)
-dev-harness status        # Full state: phase, feature, task, gates, lessons
-dev-harness validate      # Check gate criteria (the referee)
-dev-harness phase next    # Advance when the gate passes
-dev-harness learn "text"  # Save a lesson    | dev-harness decision "x"  # Record a decision
-```
+**One implementation.** `src/` holds every decision — phases, gates, plan, loop, rendering. The
+extension in `extensions/infinity-harness/` owns pi's lifecycle and nothing else. If you find
+yourself writing logic in the extension, it belongs in `src/`. An earlier version of this project
+kept two copies that drifted apart; do not recreate that.
 
-## Rules (non-negotiable)
+**No new runtime dependencies without a reason.** The package ships with two (`proper-lockfile`,
+`string-width`). Every addition is weight a user carries.
 
-1. NEVER skip phases, edit `harness/config.json` by hand, or mark work
-   complete yourself — `validate` is the only referee.
-2. No agent evaluates its own work by feel — when validating, put on the
-   Evaluator hat and judge as if someone else wrote it. (Multi-session
-   setups: `config set roles.strict true` makes role gates blocking.)
-3. Trust the brief. `next` computes the step from real state; don't invent
-   your own plan for what the pipeline should do.
-4. Read the craft skill the brief points at (`harness/skills/`) BEFORE
-   working — it changes how an expert does this step.
-5. Record surprises: `dev-harness learn "..."`. Commit after every
-   validated task.
-6. Structure from the start: `src/`, `tests/`, `docs/`, `scripts/` — no
-   stray files in the project root.
+**Tests are plain `node:assert`.** No framework. Add a `tests/<module>.test.ts` that exits non-zero
+on failure and it is picked up automatically. Test the contract, not the lines.
 
-## Phase Pipeline
+**Style.**
+- TypeScript, `.ts` extensions on relative imports.
+- Comment *why*, never *what*. If a comment restates the code, delete it.
+- Errors are data where a caller can reasonably continue (`{ ok, error }`), thrown where they cannot.
+- Anything that shells out goes through `src/core/exec.ts` so it is bounded by a timeout. A hung
+  command in a multi-day run is a silent hang.
+- Anything that writes state goes through `src/core/fsx.ts` so the write is atomic.
 
-INIT → DEFINE → PLAN → BUILD → VERIFY → [SIMPLIFY] → REVIEW → SHIP
+**Verify before you claim.** Run `npm run check` and `npm test` before saying something works. If a
+test fails because you found a real bug, fix the bug — do not weaken the assertion.
 
-See `harness/docs/phases/<phase>.md` for phase instructions —
-`dev-harness next` tells you which one to read.
+## Reference
 
-| Phase | Role | Craft skills (`harness/skills/`) |
-|-------|------|----------------------------------|
-| DEFINE | Planner | grilling, domain-modeling, research |
-| PLAN | Planner | planning-tasks, codebase-design |
-| BUILD | Generator | tdd, prototype |
-| VERIFY | Evaluator | diagnosing-bugs, tdd |
-| SIMPLIFY | Simplifier | codebase-design, code-review |
-| REVIEW | Evaluator | code-review |
-| SHIP | Generator | — |
-
-## Agent Roles
-
-Role guides live in `harness/docs/agents/` (planner.md, generator.md,
-evaluator.md, simplifier.md). Default mode: one agent switches hats —
-`dev-harness role <name>` records the switch and injects the persona.
-
-## Session start / session end
-
-**Start:** `dev-harness next` (it reads the previous session's handoff).
-**End:** finish the current step, then `git commit -am "session: <what>"`.
-The harness writes `harness/session-handoff.md` at every boundary; the next
-session resumes from it automatically.
-
-## Key Files
-
-| File | Purpose |
-|------|---------|
-| `harness/features/feature-list.json` | Features + tasks + acceptance criteria (PLAN writes; BUILD works) |
-| `harness/sprint-contract.md` | Scope + verification criteria agreed before building |
-| `harness/skills/` | Craft skills — how to do each phase's work well |
-| `harness/capability/` | Capability sources + index (`dev-harness capability ...`) |
-| `harness/docs/DOMAIN.md` | Domain glossary (one concept, one name) |
-| `harness/config.json` | Config + pipeline state (harness-managed) |
-| `harness/progress.md` | Append-only history + lessons |
-| `harness/session-handoff.md` | Clock-in/clock-out snapshot between sessions |
-| `harness/evaluator-rubric.md` | Quality scorecard (filled during REVIEW) |
-| `harness/scripts/init.sh` | Install → verify → start (environment bootstrap) |
-
-## Dev Commands
-
-Install: `npm install` · Build: `npm run build` · Test: `npm test` · Lint: `npx eslint .` · Type: `npx tsc --noEmit`
+- `README.md` — what the product is and how it is used
+- `harness/docs/ARCHITECTURE.md` — module structure and data flow
+- `harness/docs/DECISIONS.md` — why things are the way they are
+- `harness/skills/` — craft skills the brief points at; read the one it names before starting

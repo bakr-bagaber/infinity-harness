@@ -33,6 +33,8 @@ import {
   validateKey,
   type FlatTask,
 } from "./core/featureList.ts";
+import { featureListPath } from "./core/paths.ts";
+import { withLockSync } from "./core/lock.ts";
 
 /** One task as submitted by the agent. Only `key` is mandatory. */
 export type TaskInput = {
@@ -314,12 +316,26 @@ function stripView(t: FlatTask): Task {
   return copy as Task;
 }
 
-/** Read the plan, apply the submission, and persist it if anything changed. */
+/**
+ * Read the plan, apply the submission, and persist it — as one atomic section.
+ *
+ * The lock is not optional and not an optimisation. Read, check `baseRevision`,
+ * write is a classic check-then-act: two processes that both read revision N
+ * both pass the check and both write N+1, and one set of edits is gone. The
+ * revision guard catches a stale *read*; only mutual exclusion serialises the
+ * whole sequence.
+ *
+ * Fails closed. If the lock cannot be taken the write is refused with a
+ * `LockTimeoutError` the caller can retry, rather than racing and silently
+ * losing an edit.
+ */
 export function writeTaskList(targetDir: string, input: ApplyInput): ApplyResult {
-  const { list } = loadFeatureList(targetDir);
-  const result = applyTaskList(list, input);
-  if (result.changed) saveFeatureList(targetDir, result.list);
-  return result;
+  return withLockSync(featureListPath(targetDir), () => {
+    const { list } = loadFeatureList(targetDir);
+    const result = applyTaskList(list, input);
+    if (result.changed) saveFeatureList(targetDir, result.list);
+    return result;
+  });
 }
 
 /** One-line summary of a write, for the tool result the model reads back. */

@@ -21,7 +21,7 @@ provenance: { origin: built-in }
 1. **Scaffold** (a WORKING server — protocol plumbing done):
 
    ```
-   dev-harness capability create mcp <name>
+   infinity-harness capability create mcp <name>
    → harness/mcp/<name>/server.mjs + self-test.mjs
    ```
 
@@ -45,7 +45,7 @@ provenance: { origin: built-in }
 4. **Register** (adds it to the index AND every MCP client config):
 
    ```
-   dev-harness capability add mcp <name> --command node \
+   infinity-harness capability add mcp <name> --command node \
      --args harness/mcp/<name>/server.mjs \
      --tags db,postgres --description "Query the dev database" --trust curated
    ```
@@ -67,4 +67,4 @@ provenance: { origin: built-in }
 - [ ] No stdout pollution (run self-test — parse errors reveal it)
 - [ ] Secrets via env; version pins for any deps
 - [ ] Registered with tags + description (matcher-visible)
-- [ ] `dev-harness capability doctor --type mcp` passes
+- [ ] `infinity-harness capability doctor --type mcp` passes

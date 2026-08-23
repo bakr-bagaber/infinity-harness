@@ -31,7 +31,7 @@ provenance: { origin: built-in }
   stdout where files are expected; respect `NO_COLOR` and non-TTY (no
   spinners into pipes).
 - **Errors say what + why + what next:** `✗ config not found:
-  harness/config.json — run: dev-harness init`. Never a bare stack trace
+  harness/config.json — run: infinity-harness init`. Never a bare stack trace
   for an expected failure.
 - **Fast startup matters.** A CLI invoked in loops pays its startup cost
   ×N — lazy-load heavy imports per subcommand.

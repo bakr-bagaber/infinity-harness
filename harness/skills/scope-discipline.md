@@ -20,7 +20,7 @@ everything else, however good, is NOT NOW.
   scope creep even when it's good — it widens the diff, the review
   surface, and the blast radius.
 - **Park, don't pursue.** Mid-task ideas go to the parking lot in one
-  line — `dev-harness learn "idea: ..."` or a backlog entry in the
+  line — `harness/lessons-decisions.md "idea: ..."` or a backlog entry in the
   feature list — and you return to the slice. Parking takes 10 seconds;
   pursuing takes an hour and derails the task.
 - **Drive-by fixes are parked too.** Broken thing found outside the task

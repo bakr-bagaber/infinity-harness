@@ -54,7 +54,7 @@ Frontmatter uses a strict subset: `key: value`, `key: [a, b]`,
 
 ## Checklist
 
-- [ ] Frontmatter passes: `dev-harness capability add skill <path>` (it validates)
+- [ ] Frontmatter passes: `infinity-harness capability add skill <path>` (it validates)
 - [ ] A cold reader knows exactly what to do and how to check they did it
 - [ ] Every rule is checkable; every anti-pattern has a fix
 - [ ] Attribution line present if adapted from elsewhere

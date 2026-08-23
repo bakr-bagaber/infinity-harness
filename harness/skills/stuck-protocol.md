@@ -28,14 +28,14 @@ catch any of these tells:
    what you're trying to achieve, the exact error/failure, the attempts
    made, and what each attempt ruled out. Writing this usually exposes the
    gap — half the time you solve it here.
-2. **Re-read the brief and the skill** (`dev-harness next`; the skill it
+2. **Re-read the brief and the skill** (`the infinity_brief tool`; the skill it
    references). Stuck often means a constraint was missed, not that the
    problem is hard.
 3. **Reframe ONCE** — one genuinely different angle, not a variation:
    different seam, smaller slice, different tool, the inverse operation,
    or build the feedback loop you skipped (`diagnosing-bugs.md` Phase 1).
 4. **Escalate cleanly** if the reframe fails:
-   - `dev-harness learn "BLOCKED <step>: tried A, B, C; ruled out X, Y; suspect Z"`
+   - `harness/lessons-decisions.md "BLOCKED <step>: tried A, B, C; ruled out X, Y; suspect Z"`
    - Leave the tree committed and green-adjacent (no half-applied change)
    - Let validate fail honestly — the retry ladder and the human exist for
      exactly this. A clean escalation with evidence is a GOOD outcome;

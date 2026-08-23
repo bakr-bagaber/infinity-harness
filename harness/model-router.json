@@ -1,13 +1,14 @@
 {
+  "$comment": "Optional per-task model routing. Disabled by default: every empty string means 'use whatever model pi is configured with'. Set enabled:true and fill in model ids to route cheap tasks to a small model and hard ones to a large one. Read fresh on every resolution, so edits take effect without restarting the session.",
   "version": 1,
-  "enabled": true,
-  "default": "opencode/muse-spark-1.2-contributor-free",
+  "enabled": false,
+  "default": "",
   "byDifficulty": {
-    "easy": "opencode/muse-spark-1.2-contributor-free",
-    "moderate": "opencode/muse-spark-1.2-contributor-free",
-    "difficult": "meta/muse-spark-1.2-contributor"
+    "easy": "",
+    "moderate": "",
+    "difficult": ""
   },
-  "master": "meta/muse-spark-1.2-contributor",
+  "master": "",
   "byPhase": {},
   "byRole": {},
   "byFeature": {},

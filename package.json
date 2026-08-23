@@ -1,14 +1,15 @@
 {
-  "name": "pi-harness",
-  "version": "1.2.0",
-  "description": "Pi-native enforcement layer for dev-harness \u2014 auto-injects brief, auto-validates, blocks phase-skipping, and enables continuous multi-agent development. Clean port of dev-harness-cli.",
+  "name": "infinity-harness",
+  "version": "2.0.0",
+  "description": "A pi agent extension that runs a gated build pipeline unattended — enforces phases, validates with deterministic gates, and keeps working for hours or days without losing the plan.",
   "type": "module",
   "keywords": [
     "pi-package",
     "pi-extension",
     "harness",
-    "dev-harness",
-    "agent-pipeline"
+    "agent-pipeline",
+    "autonomous",
+    "continuous-development"
   ],
   "license": "MIT",
   "author": "Bakr Bagaber",
@@ -21,29 +22,36 @@
       "./extensions"
     ],
     "skills": [
-      "./skills"
-    ],
-    "prompts": [
-      "./prompts"
+      "./harness/skills"
     ]
   },
+  "files": [
+    "extensions/",
+    "src/",
+    "harness/skills/",
+    "harness/docs/",
+    "harness/templates/",
+    "scripts/",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "dependencies": {
-    "ajv": "^8.17.1",
-    "picocolors": "^1.1.1",
     "proper-lockfile": "^4.1.2",
-    "simple-git": "^3.27.0",
     "string-width": "^7.1.0"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "@types/node": "^22.0.0",
-    "tsx": "^4.23.12",
     "typescript": "^5.5.0"
   },
   "scripts": {
     "test": "node scripts/run-tests.mjs",
-    "build": "tsc --noEmit",
     "check": "tsc --noEmit",
-    "lint": "eslint extensions/"
+    "build": "tsc --noEmit",
+    "e2e": "node scripts/e2e.mjs"
   }
 }

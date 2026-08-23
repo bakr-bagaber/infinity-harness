@@ -226,16 +226,26 @@ export function renderWidget(state: WidgetState, options: WidgetOptions = {}): s
   push(phaseRail(state.phase, state.enabledPhases, inner, g, s));
 
   // -- progress -------------------------------------------------------------
-  const stats =
+  const full =
     s.fg("muted", progress.tasksDone + "/" + progress.tasksTotal + " tasks") +
     s.fg("rule", " · ") +
     s.fg("muted", progress.featuresDone + "/" + progress.featuresTotal + " features");
+  const compact = s.fg("muted", progress.tasksDone + "/" + progress.tasksTotal);
+
+  // The meter has a floor of 8 cells plus "  NNN%" (6 columns). Below that the
+  // long stat cannot fit, and padding it out would push the row past the
+  // frame — so the row degrades to the task count alone, then to no stat.
+  const METER_MIN = 8 + 6;
+  let stats = full;
+  if (inner - width(full) < METER_MIN) stats = compact;
+  if (inner - width(stats) < METER_MIN) stats = "";
+
   const statsW = width(stats);
   const barCells = Math.max(8, Math.min(24, inner - statsW - 8));
   const bar = progressBar(progress.percent, barCells, g, s);
   push();
   const gap2 = inner - width(bar) - statsW;
-  push(bar + (gap2 > 0 ? " ".repeat(gap2) : "  ") + stats);
+  push(truncate(bar + (gap2 > 0 ? " ".repeat(gap2) : " ") + stats, inner));
 
   // -- alerts ---------------------------------------------------------------
   const alerts: string[] = [];
@@ -331,7 +341,9 @@ export function renderWidget(state: WidgetState, options: WidgetOptions = {}): s
 }
 
 function frame(lines: string[], total: number, boxed: boolean, s: Styler, g: GlyphSet): string[] {
-  if (!boxed) return lines;
+  // Unboxed still has to honour the requested width: the caller sized the
+  // widget to a terminal, and a row that overruns wraps and breaks the layout.
+  if (!boxed) return lines.map((l) => truncate(l, total));
   const inner = total - 4;
   const top = s.fg("rule", "╭" + "─".repeat(total - 2) + "╮");
   const bottom = s.fg("rule", "╰" + "─".repeat(total - 2) + "╯");

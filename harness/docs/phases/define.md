@@ -28,13 +28,13 @@ feature list.
 5. Write `specs/prd.md` — scope, success criteria, non-goals
 6. Keep the PRD bounded: no vague verbs ("improve", "enhance")
 7. **Negotiate the sprint contract** (the DEFINE gate requires it agreed):
-   - `dev-harness contract propose --scope "..." --criteria "tests pass|feature X works"`
-   - `dev-harness contract review --agreed` (put on the evaluator hat: would
+   - `infinity-harness contract propose --scope "..." --criteria "tests pass|feature X works"`
+   - `infinity-harness contract review --agreed` (put on the evaluator hat: would
      these criteria really prove the sprint worked?)
 8. **Create a feature branch**: `git checkout -b feature/<short-slug>` (the
    gate rejects work on main/master)
-9. Run `dev-harness validate` to check gates
-10. If PASS → `dev-harness phase next` to advance to PLAN
+9. Run `the infinity_validate tool` to check gates
+10. If PASS → `the infinity_advance tool` to advance to PLAN
 
 ## Rationalizations to Avoid
 | Excuse | Rebuttal |
@@ -52,7 +52,7 @@ feature list.
 - [ ] Sprint contract agreed with non-placeholder verification criteria
 - [ ] On a feature branch (not main/master)
 - [ ] Folder structure agreed and documented
-- [ ] `dev-harness validate` passes
+- [ ] `the infinity_validate tool` passes
 
 ## Handoff
-On gate pass: `dev-harness phase next` (Planner → continues as Planner for PLAN)
+On gate pass: `the infinity_advance tool` (Planner → continues as Planner for PLAN)

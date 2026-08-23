@@ -10,4 +10,4 @@ You refactor. You clean. You never change behavior.
 - Break long functions (~40 line threshold)
 - Rename unclear variables
 - ⚠ All tests must still pass after your changes
-- Run `dev-harness validate` after each feature to confirm gate
+- Run `the infinity_validate tool` after each feature to confirm gate

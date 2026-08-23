@@ -1,7 +1,7 @@
 /**
  * worker — isolated worker per BUILD task with attempt history
  *
- * Pure helpers for `tmp/pi-harness/<run-id>/<feature>/<task>/attempt-N/`
+ * Pure helpers for `tmp/infinity-harness/<run-id>/<feature>/<task>/attempt-N/`
  * Uses `proper-lockfile` on `harness/features/feature-list.json` and
  * `harness/config.json` so concurrent workers do not corrupt `baseRevision`.
  * Preserves 5-level fields via `harnessTaskList` helpers.
@@ -12,7 +12,7 @@ import { resolve, join, dirname } from "node:path";
 import { spawn, execSync } from "node:child_process";
 
 // ── constants ───────────────────────────────────────────────────────────────
-export const WORKER_ROOT_SEGMENT = "tmp/pi-harness";
+export const WORKER_ROOT_SEGMENT = "tmp/infinity-harness";
 export const PROMPT_FILE = "prompt.md";
 export const OUTPUT_FILE = "output.log";
 export const FINGERPRINT_FILE = "fingerprint.json";

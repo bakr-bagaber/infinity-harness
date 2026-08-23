@@ -4,10 +4,10 @@ How to do the work WELL — the engineering discipline behind each pipeline
 phase. The phase docs (`harness/docs/phases/`) say *what* to produce; these
 skills say *how* an expert produces it.
 
-`dev-harness next` matches skills to your current task and points you at
+`the infinity_brief tool` matches skills to your current task and points you at
 the right ones. Read the referenced skill BEFORE working — it is short and
 it will change what you do. Find skills yourself:
-`dev-harness capability match "<your task>"`.
+`infinity-harness capability match "<your task>"`.
 
 ## Process skills (phase-mapped)
 
@@ -49,12 +49,12 @@ it will change what you do. Find skills yourself:
 | `building-tools.md` | Project tool standards + registration |
 
 Growing the library IS part of the job: acquired and created capabilities
-are registered (`dev-harness capability add ...`) so the next task starts
+are registered (`infinity-harness capability add ...`) so the next task starts
 ahead. Export your accumulated skills across projects:
-`dev-harness capability export`.
+`infinity-harness capability export`.
 
 ## Attribution
 
 Skills marked "Adapted from mattpocock/skills" derive from
 [Matt Pocock's skills repository](https://github.com/mattpocock/skills)
-(MIT License, © 2026 Matt Pocock), adapted for the dev-harness pipeline.
+(MIT License, © 2026 Matt Pocock), adapted for the infinity-harness pipeline.

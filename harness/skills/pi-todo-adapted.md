@@ -1,8 +1,8 @@
 ---
 name: pi-todo-adapted
-description: "Atomic harness_task_list pattern with omission deletion, baseRevision optimistic concurrency, cycle/missing-dep checks and compaction-safe replay (adapted from @99percentpeople/pi-todo)"
+description: "Atomic infinity_plan pattern with omission deletion, baseRevision optimistic concurrency, cycle/missing-dep checks and compaction-safe replay (adapted from @99percentpeople/pi-todo)"
 tags: [harness, pi-todo, atomic, baseRevision, omission, deletion, compaction, widget, task-list, dependency]
-when: "implementing harness_task_list, atomic revisioning, Pi widget with session persistence or task dependencies"
+when: "implementing infinity_plan, atomic revisioning, Pi widget with session persistence or task dependencies"
 phases: [build, verify]
 provenance: { origin: "https://github.com/99percentpeople/pi-extensions", license: MIT, adapted: true, url: "https://github.com/99percentpeople/pi-extensions", contentHash: abf626df6a74a6fb }
 ---
