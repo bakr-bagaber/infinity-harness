@@ -4,7 +4,10 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.3.0] — 2026-08-24
+## [2.3.1] — 2026-08-24
+
+*(2.3.0 was staged at the registry and never completed; 2.3.1 is that release plus the last two
+fixes below, and is the first version of this work anyone can install.)*
 
 Five bugs were reported against 2.1.0 by someone actually using the thing. Every one of them was
 real, none of them could be seen by a test that mocks pi, and finding out why led to the change
