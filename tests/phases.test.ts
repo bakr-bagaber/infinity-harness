@@ -53,7 +53,10 @@ function configFile(dir: string): string {
   assert.deepEqual(getPhaseOrder(["ship", "define", "build"]), ["define", "build", "ship"]);
   // Unknown entries are ignored rather than inserted.
   assert.deepEqual(getPhaseOrder(["define", "deploy", "ship"]), ["define", "ship"]);
-  assert.deepEqual([...PHASE_ORDER], ["init", "define", "plan", "build", "verify", "simplify", "review", "ship"]);
+  assert.deepEqual(
+    [...PHASE_ORDER],
+    ["init", "research", "define", "plan", "build", "verify", "simplify", "review", "ship"],
+  );
   console.log("✓ getPhaseOrder: default excludes simplify, order is canonical");
 }
 

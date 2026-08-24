@@ -221,6 +221,20 @@ async function checkLicense({ targetDir }: Ctx): Promise<CheckResult> {
 async function checkChangelog({ targetDir }: Ctx): Promise<CheckResult> {
   return docCheck("changelog", resolve(targetDir, "CHANGELOG.md"), 100, "CHANGELOG.md");
 }
+/**
+ * RESEARCH produced something a human could read and disagree with.
+ *
+ * The research phase exists because "build me a thing" is not a specification,
+ * and the cheapest hour of a long run is the one spent finding out what the
+ * thing actually has to be. The gate asks for evidence of that hour: prior
+ * art, constraints, options weighed, a recommendation. 400 characters is a low
+ * bar deliberately — the gate judges that work happened, the human judges
+ * whether it was any good.
+ */
+async function checkResearchDoc({ targetDir }: Ctx): Promise<CheckResult> {
+  return docCheck("research-doc", P.researchPath(targetDir), 400, "harness/docs/RESEARCH.md");
+}
+
 async function checkArchitectureDoc({ targetDir }: Ctx): Promise<CheckResult> {
   return docCheck("architecture-doc", P.architecturePath(targetDir), 200, "harness/docs/ARCHITECTURE.md");
 }
@@ -345,6 +359,7 @@ type Check = (ctx: Ctx) => Promise<CheckResult>;
 
 const PHASE_CHECKS: Record<Phase, Check[]> = {
   init: [checkGitRepo, checkConfigExists],
+  research: [checkResearchDoc],
   define: [checkFeatureCriteria, checkSkillsLoad],
   plan: [checkFeatureCriteria, checkTasksPlanned],
   build: [checkLint, checkTests, checkCoverage, checkNoPlaceholders, checkTasksComplete],

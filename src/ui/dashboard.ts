@@ -38,6 +38,7 @@ import {
 import { getPhaseOrder } from "../core/phases.ts";
 import { statusGlyph } from "./widget.ts";
 import { UNICODE_GLYPHS } from "./theme.ts";
+import { groupPlan, type PlanGoalGroup, type PlanSprintGroup } from "./planTree.ts";
 
 export type DashboardState = {
   list: FeatureList;
@@ -52,6 +53,12 @@ export type DashboardState = {
   router?: unknown;
   /** Rework record. Opaque here — rendered as a badge, never interpreted. */
   rework?: unknown;
+  /** A phase whose gate passed and which is waiting for a human signature. */
+  awaitingApproval?: string | null;
+  /** How many pi sessions this run has spent, when handoff is on. */
+  sessions?: number | null;
+  /** Which goal pass this is, out of how many. */
+  goalPass?: { current: number; max: number } | null;
 };
 
 // ── escaping ────────────────────────────────────────────────────────────────
@@ -361,10 +368,30 @@ function renderAlerts(
   paused: boolean,
   retries: DashboardState["retries"],
   gate: GateResult | null,
+  extra: {
+    awaitingApproval?: string | null;
+    sessions?: number | null;
+    goalPass?: { current: number; max: number } | null;
+  } = {},
 ): string {
   const alerts: Alert[] = [];
 
   if (paused) alerts.push({ tone: "blocked", text: "run paused" });
+  // A run parked for a signature looks, from every other indicator, exactly
+  // like a run that has stopped. Saying so is the difference between someone
+  // coming back to a finished phase and someone coming back to a dead run.
+  if (extra.awaitingApproval) {
+    alerts.push({
+      tone: "active",
+      text: `${String(extra.awaitingApproval).toUpperCase()} is waiting for your approval`,
+    });
+  }
+  if (extra.goalPass && extra.goalPass.max > 1) {
+    alerts.push({
+      tone: extra.goalPass.current >= extra.goalPass.max ? "blocked" : "active",
+      text: `goal pass ${extra.goalPass.current} / ${extra.goalPass.max}`,
+    });
+  }
   if (counts.blocked > 0) {
     alerts.push({ tone: "blocked", text: `${counts.blocked} blocked ${counts.blocked === 1 ? "task" : "tasks"}` });
   }
@@ -377,6 +404,9 @@ function renderAlerts(
       tone: spent ? "blocked" : "active",
       text: `retry budget ${retries.task} / ${retries.max}${spent ? " — exhausted" : ""}`,
     });
+  }
+  if (typeof extra.sessions === "number" && extra.sessions > 1) {
+    alerts.push({ tone: "quiet", text: `${extra.sessions} sessions this run` });
   }
   if (gate && gate.overall === false) {
     const failures = Array.isArray(gate.failures) ? gate.failures : [];
@@ -453,6 +483,15 @@ function depLabel(task: FlatTask, indexByKey: ReadonlyMap<string, number>): stri
   return `<span class="deps mono" title="depends on">${esc(GLYPHS.arrow)} ${refs.join(", ")}</span>`;
 }
 
+/**
+ * Every subtask, on every task.
+ *
+ * The terminal widget shows these only for the task being worked, because it
+ * has nine rows and a job to do with them. The dashboard has a whole page and
+ * a scrollbar: the reason to open it is precisely to see the detail the widget
+ * cannot fit, so hiding four of the five plan levels here made it a worse copy
+ * of the widget rather than the place you go for the full picture.
+ */
 function renderSubtasks(task: FlatTask): string {
   const subs = Array.isArray(task.subtasks) ? task.subtasks : [];
   if (subs.length === 0) return "";
@@ -470,8 +509,6 @@ function renderSubtasks(task: FlatTask): string {
 function renderTaskRow(task: FlatTask, indexByKey: ReadonlyMap<string, number>): string {
   const status = task.status;
   const cls = STATUS_CLASS[status];
-  // Subtasks are shown only for the task actually being worked on. Everywhere
-  // else they are detail nobody can act on, and they bury the active row.
   const isActive = status === "in_progress" || status === "rework";
   const difficulty =
     typeof task.difficulty === "string" ? `<span class="chip chip-quiet">${esc(task.difficulty)}</span>` : "";
@@ -487,7 +524,7 @@ function renderTaskRow(task: FlatTask, indexByKey: ReadonlyMap<string, number>):
         ${difficulty}
         ${depLabel(task, indexByKey)}
       </div>
-      ${isActive ? renderSubtasks(task) : ""}
+      ${renderSubtasks(task)}
     </td>
     <td class="cell-status"><span class="pill pill-${cls}">${esc(STATUS_LABEL[status])}</span></td>
   </tr>`;
@@ -534,6 +571,59 @@ function renderFeature(
   ${feature.description ? `<p class="feature-desc">${esc(feature.description)}</p>` : ""}
   ${body}
 </section>`;
+}
+
+/**
+ * A goal, its sprints, and their features — one collapsible section per level.
+ *
+ * `<details open>` is deliberate: everything is visible on load, and a human
+ * reading a 60-task plan can fold away the parts they are not looking at
+ * without the page needing a line of state management.
+ */
+function renderGoalGroup(
+  group: PlanGoalGroup,
+  tasksByFeature: ReadonlyMap<string, FlatTask[]>,
+  indexByKey: ReadonlyMap<string, number>,
+  show: { showGoal: boolean; showSprints: boolean },
+): string {
+  const sprints = group.sprints
+    .map((sg) => renderSprintGroup(sg, tasksByFeature, indexByKey, show.showSprints))
+    .join("");
+
+  if (!show.showGoal || !group.goal) return sprints;
+
+  return `<details class="tier tier-goal" open>
+  <summary class="tier-head">
+    <span class="tier-kind">goal</span>
+    <span class="tier-name">${esc(group.goal.title ?? group.goal.id ?? "")}</span>
+    <span class="mono faint">${esc(group.goal.id ?? "")}</span>
+    <span class="tier-count mono">${esc(String(group.done))}/${esc(String(group.total))}</span>
+  </summary>
+  <div class="tier-body">${sprints}</div>
+</details>`;
+}
+
+function renderSprintGroup(
+  group: PlanSprintGroup,
+  tasksByFeature: ReadonlyMap<string, FlatTask[]>,
+  indexByKey: ReadonlyMap<string, number>,
+  showSprints: boolean,
+): string {
+  const features = group.features
+    .map((f) => renderFeature(f, tasksByFeature.get(f.id) ?? [], indexByKey, null, null))
+    .join("");
+
+  if (!showSprints || !group.sprint) return features;
+
+  return `<details class="tier tier-sprint" open>
+  <summary class="tier-head">
+    <span class="tier-kind">sprint</span>
+    <span class="tier-name">${esc(group.sprint.name ?? group.sprint.id ?? "")}</span>
+    <span class="mono faint">${esc(group.sprint.id ?? "")}</span>
+    <span class="tier-count mono">${esc(String(group.done))}/${esc(String(group.total))}</span>
+  </summary>
+  <div class="tier-body">${features}</div>
+</details>`;
 }
 
 function renderEmptyPlan(phase: Phase | null): string {
@@ -766,6 +856,7 @@ body{
 .alert-blocked{color:var(--t-blocked);background:rgba(var(--rgb-blocked),.10);border-color:rgba(var(--rgb-blocked),.30)}
 .alert-rework{color:var(--t-rework);background:rgba(var(--rgb-rework),.10);border-color:rgba(var(--rgb-rework),.28)}
 .alert-active{color:var(--t-active);background:rgba(var(--rgb-active),.10);border-color:rgba(var(--rgb-active),.28)}
+.alert-quiet{color:var(--muted);background:var(--surface-2);border-color:var(--border)}
 
 /* -- gate ----------------------------------------------------------------- */
 .gate-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
@@ -857,6 +948,34 @@ table.tasks tr:last-child td{border-bottom:0}
   margin:26px 2px 2px;font-size:10.5px;text-transform:uppercase;letter-spacing:.09em;
   color:var(--faint);font-weight:600;
 }
+
+/* -- plan tiers: goal > sprint > feature ---------------------------------- */
+/* Depth is carried by a left rule rather than indentation, so a 60-task plan
+   does not walk off the right edge of a phone. */
+.tier{margin:18px 0 0}
+.tier-head{
+  display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;cursor:pointer;
+  padding:7px 2px;list-style:none;border-radius:8px;
+}
+.tier-head::-webkit-details-marker{display:none}
+.tier-head:hover{background:var(--surface-2)}
+.tier-head:focus-visible{outline:2px solid var(--c-accent);outline-offset:2px}
+.tier-kind{
+  font-size:10px;text-transform:uppercase;letter-spacing:.1em;font-weight:700;
+  padding:2px 7px;border-radius:999px;border:1px solid var(--border);color:var(--faint);
+}
+.tier-goal>.tier-head .tier-kind{color:var(--t-brand);border-color:var(--c-brand)}
+.tier-sprint>.tier-head .tier-kind{color:var(--t-accent);border-color:var(--c-accent)}
+.tier-name{font-size:15px;font-weight:650;overflow-wrap:anywhere}
+.tier-goal>.tier-head .tier-name{font-size:17px}
+.tier-count{margin-left:auto;color:var(--muted);font-size:13px;flex:none}
+.tier-body{
+  margin-left:5px;padding-left:14px;border-left:2px solid var(--border);
+}
+.tier-goal>.tier-body{border-left-color:var(--c-brand)}
+.tier-sprint>.tier-body{border-left-color:var(--c-accent)}
+.tier[open]>.tier-head .tier-kind{opacity:.85}
+.tier:not([open])>.tier-head{opacity:.72}
 .foot{
   display:flex;flex-wrap:wrap;gap:6px 14px;justify-content:space-between;
   margin-top:22px;padding-top:14px;border-top:1px solid var(--border);
@@ -1009,19 +1128,20 @@ export function renderDashboard(state: DashboardState): string {
     (b): b is Badge => b !== null,
   );
 
+  // The plan is five levels deep, and it is drawn five levels deep: goals hold
+  // sprints hold features hold tasks hold subtasks. Rendering it flat — which
+  // is what this page used to do, with the goal and sprint reduced to two
+  // chips on a feature card — throws away the only structure that tells you
+  // whether the run is nearly done with something or scattered across
+  // everything.
+  const groups = groupPlan(list);
   const body = features.length
-    ? `<div class="section-label">Features (${esc(String(features.length))})</div>` +
-      features
-        .map((f: Feature) =>
-          renderFeature(
-            f,
-            tasksByFeature.get(f.id) ?? [],
-            indexByKey,
-            f.sprintId ? (sprintNames.get(f.sprintId) ?? null) : null,
-            // A goal chip only earns its place when there is more than one goal
-            // to tell apart.
-            goals.length > 1 && f.goalId ? (goalNames.get(f.goalId) ?? null) : null,
-          ),
+    ? groups
+        .map((group) =>
+          renderGoalGroup(group, tasksByFeature, indexByKey, {
+            showGoal: goals.length > 0,
+            showSprints: sprints.length > 0,
+          }),
         )
         .join("")
     : renderEmptyPlan(state.phase);
@@ -1050,7 +1170,11 @@ export function renderDashboard(state: DashboardState): string {
 ${renderMasthead(state.phase, paused, progress.percent, state.baseRevision, badges)}
 ${renderGoals(goals)}
 ${renderRail(state.phase, state.enabledPhases, paused)}
-${renderAlerts(counts, paused, state.retries, gate)}
+${renderAlerts(counts, paused, state.retries, gate, {
+  awaitingApproval: state.awaitingApproval ?? null,
+  sessions: state.sessions ?? null,
+  goalPass: state.goalPass ?? null,
+})}
 ${renderProgress(counts, progress.tasksTotal, progress.featuresDone, progress.featuresTotal)}
 ${renderGate(gate)}
 ${body}

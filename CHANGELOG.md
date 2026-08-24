@@ -4,6 +4,120 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] — 2026-08-24
+
+Five bugs were reported against 2.1.0 by someone actually using the thing. Every one of them was
+real, none of them could be seen by a test that mocks pi, and finding out why led to the change
+that matters most in this release: **the suite now drives a real `pi` process.**
+
+### Added
+
+- **A fresh pi session per boundary.** A harness that never starts a new session is a harness whose
+  context window only ever grows: by the tenth task the model is re-reading the history of the
+  first nine in order to do the tenth. It pays for those tokens on every call, compacts them into a
+  lossy summary once the window fills, and on a small model simply drowns.
+
+  Nothing the harness knows was ever in the conversation — the plan, the phase, the gate history,
+  the retry budgets and the escalation ladder are all files. So a session boundary costs one thing:
+  the brief, which is what the agent should have been working from anyway. `session.handoff` is
+  `phase` by default, `task` for the cleanest possible context, `off` for the old behaviour; any of
+  them also hands off early once the context passes `session.contextThreshold`, because a handoff
+  that arrives after compaction has arrived too late to be the thing that prevented it.
+
+- **A run that outlives its sessions.** `harness/run.json` holds whether a run is armed, its id, and
+  how many sessions it has spent. `/reload`, `/resume`, closing the terminal, and every handoff now
+  resume the same run instead of quietly starting a new one with fresh budgets.
+
+- **A start-up wizard that asks what is being built.** Choosing "autopilot" used to start the run
+  immediately, with no idea and no scope, so the first thing the harness did was invent a project
+  and start building it. Autopilot was being read as "you decide everything, including what I
+  want". Two questions were tangled together and are now separate: *what are we building* (asked in
+  both modes) and *who signs off on what* (the mode's actual meaning).
+
+- **Approval gates on RESEARCH, DEFINE and PLAN.** The gate is a good referee for execution and a
+  poor one for intent: it can prove a feature has acceptance criteria and cannot prove they are the
+  right ones. In copilot all three are yours. In autopilot you tick the ones you want and forfeit
+  the rest — forfeiting all three is the walk-away setting. `/infinity:approve` continues;
+  `/infinity:approve <what is wrong>` sends the phase back carrying your words. A rejection is
+  pinned to the state of the project when you made it, so you are not asked the same question again
+  until the agent has actually changed something.
+
+- **An optional RESEARCH phase**, before DEFINE, with its own role, gate and phase doc. The human
+  gives an idea; the model comes back with prior art, the constraints that are real, at least two
+  options with what each costs, a recommendation, what would falsify it, and the questions only a
+  human can answer — which become the DEFINE interview.
+
+- **All five plan levels on screen.** Goal → sprint → feature → task → subtask. Only two of them
+  used to reach the human: the widget drew features and tasks, goals were a single title line, and
+  sprints appeared *nowhere*, so a plan organised into sprints looked exactly like a plan that was
+  not. `src/ui/planTree.ts` is one shared model of the plan's shape; the widget windows it and the
+  dashboard renders all of it as collapsible tiers with counts at every level. A feature pointing
+  at a goal that has since been deleted is still drawn — a task nobody can see is a task that gets
+  stuck forever.
+
+- **A scrollable plan widget.** Nine rows of a sixty-row plan read as a truncation, because the
+  other fifty-one were unreachable without opening the dashboard. It is a window now: `alt+j` /
+  `alt+k` scroll, `alt+o` expands, and `/infinity:scroll up|down|top|bottom|expand|collapse|follow`
+  does the same without a keyboard. (`alt+`, not `ctrl+`: pi already binds ctrl+j, ctrl+k and
+  ctrl+o in its editor, and a widget is not worth shadowing an editor key for.)
+
+- **`scripts/rig/` — the suite drives a real pi.** A scripted OpenAI-compatible model server plus an
+  RPC client that types prompts and slash commands, answers `ctx.ui.select` dialogs, and reads back
+  the widget, the status line and the notifications a human would actually see. The new `realpi`
+  e2e scenario covers startup, the wizard, a run spanning several real sessions, real
+  auto-compaction, an approval round-trip, and `pi -p` not hanging.
+
+- Three commands: `/infinity:approve`, `/infinity:handoff`, `/infinity:scroll`. Two settings groups:
+  **Your approvals** and **Sessions**.
+
+### Fixed
+
+- **The harness did not survive compaction.** Its rules lived in the transcript, and a transcript is
+  what compaction summarises: the agent came out the other side still holding the plan (it is on
+  disk) but no longer knowing it was supposed to work from it, stop at a failing gate, or never
+  mark its own work complete. Those rules now go in the **system prompt**, via
+  `before_agent_start`, which is rebuilt every turn and is never summarised. The post-compaction
+  re-brief is also delivered as `steer` rather than `nextTurn` when a turn is running — `nextTurn`
+  waits for a human to type, which in an unattended run never happens, so the message that was
+  supposed to rescue the agent sat in a queue while it carried on without it.
+
+- **The loop did not survive its own handoff.** "Is a run armed?" was a `let` inside the extension
+  closure, so it died with the pi session that held it. Worse, the run id was a `randomUUID()` per
+  session: every new session looked like a brand-new run to `loadLoopState`, resetting the iteration
+  ceiling, the wall-clock budget, the no-progress streak and the escalation ladder — every guard
+  that makes walking away safe, reset by the mechanism that makes walking away possible.
+
+- **`pi -p` hung forever on a harness project.** The session-start brief was queued with
+  `deliverAs: "nextTurn"`, which waits for a user prompt. Print mode never has one. Every headless
+  run hung at startup and nothing in the suite could see it, because nothing in the suite ran pi.
+
+- **A second, hand-written copy of `PHASE_ROLE`** in `core/config.ts`. Adding a phase compiled
+  cleanly and then silently reported the wrong role for it.
+
+- **A rejected approval could spin forever.** The first version of the fix returned early from the
+  loop when a rejection was still outstanding, which skipped the no-progress detector — an unbounded
+  loop, the one thing this product exists to prevent. It falls through the normal failure path now,
+  so strikes, budgets and the escalation ladder all apply, and a run whose agent ignores a rejection
+  stops and says exactly that.
+
+- **Commands that dead-ended before init.** `/infinity:next` printed a full page of pipeline
+  instructions for a pipeline that did not exist; `/infinity:scroll` said nothing at all. All
+  fifteen commands that need a harness now say so and name `/infinity:init`.
+
+- **The phase picker did not offer RESEARCH** — a feature nobody could find.
+
+### Changed
+
+- The dashboard shows every subtask, not only the active task's. The widget has nine rows and a job
+  to do with them; the browser has a whole page and a scrollbar, and hiding four of the five plan
+  levels there made it a worse copy of the widget rather than the place you go for the full picture.
+- The widget carries `session N` once a run has spanned more than one, and says loudly when a phase
+  is waiting for your signature — a run parked on a human otherwise looks identical to a run that
+  quietly died.
+- `describeInit` no longer tells you to describe what you are building. The wizard just asked.
+
+---
+
 ## [2.2.1] — 2026-08-23
 
 ### Fixed

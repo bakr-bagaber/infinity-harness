@@ -149,6 +149,12 @@ export type InitOptions = {
   commands?: Partial<ProjectCommands>;
   /** Re-scaffold missing files in a project that already has a config. */
   force?: boolean;
+  /** Which phases stop for a human signature. See SessionPolicy / ApprovalPolicy. */
+  approvals?: Partial<HarnessConfig["approvals"]>;
+  /** Session-handoff policy. Defaults to a fresh session per phase. */
+  session?: Partial<HarnessConfig["session"]>;
+  /** What the human said they want built. Recorded, and read by the first brief. */
+  brief?: string | null;
 };
 
 export type InitResult = {
@@ -202,6 +208,15 @@ export function initHarness(targetDir: string, options: InitOptions = {}): InitR
   config.currentPhase = phase;
   config.currentRole = PHASE_ROLE[phase];
   config.commands = { ...stack.commands, ...stripUndefined(options.commands ?? {}) };
+  config.approvals = { ...config.approvals, ...stripUndefined(options.approvals ?? {}) };
+  config.session = { ...config.session, ...stripUndefined(options.session ?? {}) };
+  if (options.brief !== undefined) {
+    config.intake = {
+      completed: true,
+      brief: options.brief && options.brief.trim() ? options.brief.trim() : null,
+      at: new Date().toISOString(),
+    };
+  }
 
   const write = (path: string, body: string) => {
     const rel = path.slice(targetDir.length + 1);
@@ -236,6 +251,7 @@ export function initHarness(targetDir: string, options: InitOptions = {}): InitR
   copyPackagedDocs(targetDir, write);
 
   write(P.architecturePath(targetDir), STARTER_ARCHITECTURE);
+  if (phases.includes("research")) write(P.researchPath(targetDir), STARTER_RESEARCH);
   write(P.decisionsPath(targetDir), STARTER_DECISIONS);
   write(P.constraintsPath(targetDir), STARTER_CONSTRAINTS);
   write(resolve(P.docsDir(targetDir), "DOMAIN.md"), STARTER_DOMAIN);
@@ -312,6 +328,20 @@ const STARTER_ARCHITECTURE = `# Architecture
 Modules, what each owns, and how data moves between them.
 `;
 
+const STARTER_RESEARCH = `# Research
+
+<!--
+The RESEARCH gate wants 400+ characters of real content here, outside headings
+and comments. Write what you found, not what you plan to do:
+
+  Prior art       what already exists, what it gets right, where it stops
+  Constraints     which were given, which you inferred (an inference is a question)
+  Options         at least two, with what each costs and what each buys
+  Recommendation  one of them, and what would have to be true for it to be wrong
+  Open questions  the ones only a human can answer — these become the DEFINE interview
+-->
+`;
+
 const STARTER_DECISIONS = `# Decisions
 
 <!-- The REVIEW gate wants 100+ characters of real content here. -->
@@ -373,7 +403,18 @@ export function describeInit(result: InitResult): string {
   lines.push(`Created ${result.created.length} file(s) under harness/.`);
   if (result.kept.length) lines.push(`Left ${result.kept.length} existing file(s) alone.`);
   lines.push("");
-  lines.push("Next:  describe what you are building, then /infinity:next for the brief.");
-  lines.push("       /infinity:run hands it the wheel once there is a plan.");
+
+  // The old copy said "describe what you are building" — advice from before
+  // the wizard asked for that up front. Telling a human to do a thing they
+  // have already done is how they learn to stop reading the output.
+  const goal = (result.config.intake as { brief?: unknown } | undefined)?.brief;
+  if (typeof goal === "string" && goal.trim()) {
+    lines.push(`Goal      ${goal.trim()}`);
+    lines.push("");
+    lines.push(`Next:  /infinity:run hands it the wheel. /infinity:next prints the brief first.`);
+  } else {
+    lines.push("Next:  say what you are building — the run will ask before it does anything.");
+    lines.push("       /infinity:run hands it the wheel once there is a plan.");
+  }
   return lines.join("\n");
 }

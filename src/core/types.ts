@@ -9,6 +9,7 @@
 
 export const PHASE_ORDER = [
   "init",
+  "research",
   "define",
   "plan",
   "build",
@@ -20,7 +21,7 @@ export const PHASE_ORDER = [
 
 export type Phase = (typeof PHASE_ORDER)[number];
 
-/** Phases enabled by default — SIMPLIFY is opt-in. */
+/** Phases enabled by default — RESEARCH and SIMPLIFY are opt-in. */
 export const DEFAULT_ENABLED_PHASES: Phase[] = [
   "define",
   "plan",
@@ -30,11 +31,23 @@ export const DEFAULT_ENABLED_PHASES: Phase[] = [
   "ship",
 ];
 
-export type Role = "planner" | "generator" | "evaluator" | "simplifier";
+/**
+ * Phases whose output a human may want to sign off before the run continues.
+ *
+ * These are the three that decide *what gets built*. Everything after them is
+ * execution: if the definition and the plan are right, an autonomous run that
+ * gets BUILD wrong fails a gate and retries, but an autonomous run that got
+ * DEFINE wrong spends a weekend building the wrong product perfectly.
+ */
+export const APPROVABLE_PHASES = ["research", "define", "plan"] as const;
+export type ApprovablePhase = (typeof APPROVABLE_PHASES)[number];
+
+export type Role = "researcher" | "planner" | "generator" | "evaluator" | "simplifier";
 
 /** Which role owns each phase. Drives the "put on this hat" brief line. */
 export const PHASE_ROLE: Record<Phase, Role> = {
   init: "planner",
+  research: "researcher",
   define: "planner",
   plan: "planner",
   build: "generator",
@@ -135,6 +148,51 @@ export type RetryBucket = {
   maxRetries: number | null;
 };
 
+/**
+ * How the run divides itself into pi sessions.
+ *
+ * A harness that never starts a new session is a harness whose context window
+ * only ever grows: by the tenth task the model is reading the whole history of
+ * the first nine to do the tenth, paying for it, and — on a small model —
+ * drowning in it. The plan, the phase and the gate all live on disk, so a
+ * session boundary costs nothing but the brief, and the brief is what the
+ * agent should be working from anyway.
+ */
+export type SessionPolicy = {
+  /**
+   * When to hand off to a fresh session.
+   *   off    never — one session for the whole run (the old behaviour)
+   *   phase  when the pipeline advances a phase
+   *   task   when the pipeline advances a phase or moves to a different task
+   */
+  handoff: "off" | "phase" | "task";
+  /**
+   * Hand off early once the context is this full, as a fraction of the
+   * window. 0 disables it. This is what keeps a long BUILD phase — which may
+   * never advance for hours — from riding a single session into compaction.
+   */
+  contextThreshold: number;
+  /** Carry a short "what the last session did" note into the new session. */
+  carryNotes: boolean;
+};
+
+/** Which phases stop and wait for a human signature before the run continues. */
+export type ApprovalPolicy = {
+  research: boolean;
+  define: boolean;
+  plan: boolean;
+};
+
+/** What the start-up wizard settled, so it is never asked twice. */
+export type IntakeState = {
+  /** True once the wizard has run to completion for this project. */
+  completed: boolean;
+  /** What the human said they want built, in their words. */
+  brief: string | null;
+  /** ISO timestamp of the wizard run. */
+  at: string | null;
+};
+
 export type HarnessConfig = {
   version: string;
   stack: string | null;
@@ -168,6 +226,11 @@ export type HarnessConfig = {
   };
   phases: { enabled: Phase[] };
   roles: { strict: boolean };
+  session: SessionPolicy;
+  approvals: ApprovalPolicy;
+  intake: IntakeState;
+  /** Set when a gate passed but the phase needs a human signature first. */
+  awaitingApproval: Phase | null;
   /** Budgets that bound an unattended continuous run. See src/loop.ts. */
   loop: {
     maxIterations: number;

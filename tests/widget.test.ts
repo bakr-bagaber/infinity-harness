@@ -9,8 +9,13 @@ import {
   phaseRail,
   renderWidget,
   renderStatusLine,
+  rowWindow,
+  scrollView,
+  defaultView,
+  SCROLL_STEP,
   type WidgetState,
 } from "../src/ui/widget.ts";
+import { buildPlanRows } from "../src/ui/planTree.ts";
 import {
   ASCII_GLYPHS,
   UNICODE_GLYPHS,
@@ -274,23 +279,90 @@ function manyTasks(n: number, activeAt: number): FeatureList {
     { list: { version: "2.0", baseRevision: 0, features: [] }, phase: null },
     { width: 76, styler: PLAIN, glyphs: G },
   ).join("\n");
-  assert.match(empty, /no tasks planned yet/);
+  assert.match(empty, /no plan yet/);
   assert.match(empty, /NOT STARTED/);
   console.log("✓ renderWidget alerts, paused and empty states");
 }
 
-// ── renderWidget: overflow markers ─────────────────────────────────────────
+// ── renderWidget: the plan window scrolls ─────────────────────────────────
 {
-  const lines = renderWidget(
-    { list: manyTasks(20, 12), phase: "build" },
-    { width: 76, styler: PLAIN, glyphs: G },
-  );
+  const list = manyTasks(20, 12);
+  const lines = renderWidget({ list, phase: "build" }, { width: 76, styler: PLAIN, glyphs: G });
   const joined = lines.join("\n");
-  assert.match(joined, /earlier/, "hidden rows above the window are counted");
-  assert.match(joined, /more/, "hidden rows below the window are counted");
-  const shown = lines.filter((l) => /^ {2}[○◐●⚠↷] /.test(l));
-  assert.equal(shown.length, TASK_WINDOW, "exactly one window of task rows is drawn");
-  console.log("✓ renderWidget windows a long plan");
+  assert.match(joined, /above/, "hidden rows above the window are counted");
+  assert.match(joined, /below/, "hidden rows below the window are counted");
+
+  const rows = buildPlanRows(list, null);
+  assert.ok(rows.length > TASK_WINDOW, "the fixture is longer than one window");
+
+  // Scrolling to the top shows the very first row and no "above" marker.
+  const top = renderWidget(
+    { list, phase: "build", view: { scroll: 0, expanded: false } },
+    { width: 76, styler: PLAIN, glyphs: G },
+  ).join("\n");
+  assert.doesNotMatch(top, /above/, "at the top there is nothing above");
+  assert.match(top, /below/, "at the top there is still something below");
+
+  // Scrolling past the end clamps rather than showing an empty widget.
+  const bottom = renderWidget(
+    { list, phase: "build", view: { scroll: 10_000, expanded: false } },
+    { width: 76, styler: PLAIN, glyphs: G },
+  ).join("\n");
+  assert.match(bottom, /above/, "at the bottom everything is above");
+  assert.doesNotMatch(bottom, /below/, "at the bottom there is nothing below");
+
+  // A scroll step moves the window and does not run off either end.
+  const view = defaultView();
+  const down = scrollView(view, SCROLL_STEP, rows.length, TASK_WINDOW);
+  assert.equal(down.scroll, SCROLL_STEP);
+  const clampedUp = scrollView(down, -1000, rows.length, TASK_WINDOW);
+  assert.equal(clampedUp.scroll, 0, "scrolling up past the top clamps to the top");
+  const clampedDown = scrollView(view, 1000, rows.length, TASK_WINDOW);
+  assert.equal(clampedDown.scroll, rows.length - TASK_WINDOW, "scrolling down clamps to the last window");
+
+  console.log("✓ renderWidget windows and scrolls a long plan");
+}
+
+// ── renderWidget: all five plan levels are visible ────────────────────────
+{
+  const list: FeatureList = {
+    version: "2.0",
+    baseRevision: 1,
+    goals: [
+      { id: "goal-001", title: "Ship the reconciler" },
+      { id: "goal-002", title: "Then make it fast" },
+    ],
+    sprints: [{ id: "sprint-001", name: "Foundations", goalId: "goal-001" }],
+    features: [
+      {
+        id: "feature-001",
+        name: "Ledger import",
+        sprintId: "sprint-001",
+        goalId: "goal-001",
+        tasks: [
+          {
+            id: "task-001",
+            description: "Parse the CSV",
+            status: "in_progress",
+            subtasks: [{ id: "s1", title: "handle BOM", status: "pending" }],
+          },
+        ],
+      },
+    ],
+  };
+
+  const joined = renderWidget(
+    { list, phase: "build", view: { scroll: 0, expanded: true } },
+    { width: 76, styler: PLAIN, glyphs: G },
+  ).join("\n");
+
+  assert.match(joined, /Ship the reconciler/, "goal level is drawn");
+  assert.match(joined, /Then make it fast/, "every goal is drawn, not just the first");
+  assert.match(joined, /Foundations/, "sprint level is drawn");
+  assert.match(joined, /Ledger import/, "feature level is drawn");
+  assert.match(joined, /Parse the CSV/, "task level is drawn");
+  assert.match(joined, /handle BOM/, "subtask level is drawn");
+  console.log("✓ renderWidget shows all five plan levels");
 }
 
 // ── renderWidget: boxed frame and colour parity ────────────────────────────

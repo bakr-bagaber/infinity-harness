@@ -13,6 +13,7 @@ import {
   mkdirSync,
   readFileSync,
   renameSync,
+  rmSync,
   unlinkSync,
   writeFileSync,
   copyFileSync,
@@ -116,4 +117,13 @@ export function backupOnce(path: string): void {
 
 export function fileExists(path: string): boolean {
   return existsSync(path);
+}
+
+/** Delete a file if it is there. Never throws — a missing file is the goal. */
+export function removeFile(path: string): void {
+  try {
+    if (existsSync(path)) rmSync(path, { force: true });
+  } catch {
+    /* a file we cannot delete is the caller's problem, not a crash */
+  }
 }

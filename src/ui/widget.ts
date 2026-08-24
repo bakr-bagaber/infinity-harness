@@ -13,8 +13,9 @@
  */
 
 import type { FeatureList, Phase, TaskStatus } from "../core/types.ts";
-import { computeProgress, flattenTasks, type FlatTask } from "../core/featureList.ts";
+import { computeProgress, flattenTasks, nextActionableTask } from "../core/featureList.ts";
 import { getPhaseOrder } from "../core/phases.ts";
+import { buildPlanRows, focusRowIndex, type PlanRow } from "./planTree.ts";
 import {
   createStyler,
   detectGlyphs,
@@ -28,10 +29,14 @@ import {
 } from "./theme.ts";
 
 export const DEFAULT_WIDTH = 76;
-/** Task rows shown at once. Enough for context, short enough to stay glanceable. */
+/** Plan rows shown at once. Enough for context, short enough to stay glanceable. */
 export const TASK_WINDOW = 9;
 /** Completed rows kept above the active task so progress stays visible. */
 export const COMPLETED_CONTEXT = 3;
+/** How many rows one scroll step moves. */
+export const SCROLL_STEP = 3;
+/** Rows shown when the human expands the widget. */
+export const EXPANDED_WINDOW = 28;
 
 export type WidgetState = {
   list: FeatureList;
@@ -50,7 +55,57 @@ export type WidgetState = {
   goalPass?: { current: number; max: number } | null;
   /** The last rung the escalation ladder took, and what it has spent. */
   escalation?: { strategy: string | null; reworks: number; replans: number } | null;
+  /**
+   * A phase whose gate passed and which is waiting for a human signature.
+   *
+   * Without this the widget of a run parked on *you* is indistinguishable from
+   * the widget of a run that has quietly died — which is exactly the moment
+   * someone walks away and comes back an hour later to no progress.
+   */
+  awaitingApproval?: string | null;
+  /**
+   * How the human is looking at the plan right now.
+   *
+   * `scroll: null` follows the run — the window stays centred on the active
+   * task, which is what you want while it is working. A number means the
+   * human took the wheel and the widget stops moving under them.
+   */
+  view?: WidgetView | null;
+  /** Sessions this run has spent. Only meaningful once handoff is on. */
+  sessions?: number | null;
+  /**
+   * What the human asked for, before a plan exists to hold a goal.
+   *
+   * Between init and the first `infinity_plan` call the widget had nothing to
+   * say about what the run was even for, which is the exact window in which
+   * someone wants to check that it understood them.
+   */
+  intake?: string | null;
 };
+
+export type WidgetView = {
+  /** First visible row, or null to follow the active task. */
+  scroll: number | null;
+  /** Show every subtask, and more rows at once. */
+  expanded: boolean;
+};
+
+export function defaultView(): WidgetView {
+  return { scroll: null, expanded: false };
+}
+
+/**
+ * Move the view. Returns a new view; the caller stores it.
+ *
+ * Scrolling to the very top is how the human gets back to "following the run":
+ * a widget that has to be reset from a menu is a widget that stays stuck.
+ */
+export function scrollView(view: WidgetView, delta: number, rowCount: number, windowRows: number): WidgetView {
+  const max = Math.max(0, rowCount - windowRows);
+  const current = view.scroll ?? 0;
+  const next = Math.max(0, Math.min(max, current + delta));
+  return { ...view, scroll: next };
+}
 
 export type WidgetOptions = {
   width?: number;
@@ -171,18 +226,133 @@ export function phaseRail(
 }
 
 function depLabel(
-  task: FlatTask,
+  deps: string[] | undefined,
   indexByKey: Map<string, number>,
   g: GlyphSet,
   s: Styler,
 ): string {
-  const deps = task.dependsOn ?? [];
-  if (deps.length === 0) return "";
+  if (!deps || deps.length === 0) return "";
   const nums = deps.map((d) => {
     const i = indexByKey.get(d);
     return i === undefined ? d : "#" + i;
   });
   return s.fg("muted", g.arrow + " " + nums.join(", "));
+}
+
+/** `2/5` — how much of a grouping row's branch is finished. */
+function countTag(row: PlanRow, s: Styler): string {
+  if (row.total === 0) return s.fg("rule", "empty");
+  const role: Role = row.done === row.total ? "success" : row.done > 0 ? "active" : "muted";
+  return s.fg(role, row.done + "/" + row.total);
+}
+
+const LEVEL_ROLE: Record<PlanRow["level"], Role> = {
+  goal: "brand",
+  sprint: "accent",
+  feature: "muted",
+  task: "text",
+  subtask: "muted",
+};
+
+/**
+ * One plan row, drawn.
+ *
+ * Indentation is by level, so the five levels of the plan are five columns on
+ * screen and the shape of the plan is readable without counting ids. The
+ * grouping rows carry a `done/total` tag on the right, which is what turns a
+ * long plan into something you can judge at a glance instead of reading.
+ */
+function renderRow(
+  row: PlanRow,
+  inner: number,
+  indexByKey: Map<string, number>,
+  g: GlyphSet,
+  s: Styler,
+): string[] {
+  const indent = "  ".repeat(row.depth);
+
+  if (row.level === "goal" || row.level === "sprint") {
+    const icon = s.fg(LEVEL_ROLE[row.level], row.level === "goal" ? g.goal : g.sprint);
+    const tag = countTag(row, s);
+    const prefix = indent + icon + " ";
+    const head =
+      s.bold(s.fg(LEVEL_ROLE[row.level], row.title)) +
+      (row.label && row.label !== row.title ? s.fg("rule", "  " + row.label) : "");
+    const body = truncate(prefix + head, Math.max(8, inner - width(tag) - 1));
+    const gap = Math.max(1, inner - width(body) - width(tag));
+    return [body + " ".repeat(gap) + tag];
+  }
+
+  if (row.level === "feature") {
+    const tag = countTag(row, s);
+    const prefix = indent + s.fg("muted", g.branch + " ");
+    const head = s.fg("muted", row.label) + s.fg("rule", " · ") + s.fg("text", row.title);
+    const body = truncate(prefix + head, Math.max(8, inner - width(tag) - 1));
+    const gap = Math.max(1, inner - width(body) - width(tag));
+    return [body + " ".repeat(gap) + tag];
+  }
+
+  if (row.level === "subtask") {
+    const icon =
+      row.status === "complete"
+        ? s.fg("success", g.subDone)
+        : row.status === "in_progress"
+          ? s.fg("active", g.subActive)
+          : s.fg("rule", g.subPending);
+    const prefix = indent + icon + " ";
+    return [truncate(prefix + s.fg("muted", row.title), inner)];
+  }
+
+  // -- a task ---------------------------------------------------------------
+  const role = statusRole(row.status ?? "pending");
+  const icon = s.fg(role, statusGlyph(row.status ?? "pending", g));
+  const num = s.fg("rule", row.label);
+  const dep = depLabel(row.dependsOn, indexByKey, g, s);
+  const prefix = indent + icon + " " + num + " ";
+  const prefixW = width(prefix);
+  const depW = dep ? width(dep) + 1 : 0;
+  const titleMax = Math.max(8, inner - prefixW - depW);
+
+  const titleLines = wrap(row.title || row.id, titleMax);
+  const first = titleLines[0] ?? row.id;
+  const head = row.active
+    ? s.bold(s.fg("text", first))
+    : s.fg(role === "success" ? "muted" : "text", first);
+
+  let line = prefix + head;
+  if (dep) {
+    const spacer = Math.max(1, inner - width(line) - width(dep));
+    line += " ".repeat(spacer) + dep;
+  }
+  const out = [line];
+  for (const extra of titleLines.slice(1)) out.push(" ".repeat(prefixW) + s.fg("muted", extra));
+  return out;
+}
+
+/**
+ * Which slice of rows to show.
+ *
+ * With no explicit scroll the window follows the run: centred on the active
+ * task, biased so a few finished rows stay above it, because "what just got
+ * done" is most of what makes progress legible.
+ */
+export function rowWindow(
+  rows: PlanRow[],
+  limit: number,
+  scroll: number | null,
+  context = COMPLETED_CONTEXT,
+): { start: number; end: number } {
+  const total = rows.length;
+  if (total <= limit) return { start: 0, end: total };
+  if (scroll !== null) {
+    const start = Math.max(0, Math.min(scroll, total - limit));
+    return { start, end: start + limit };
+  }
+  const focus = focusRowIndex(rows);
+  if (focus < limit - context) return { start: 0, end: limit };
+  if (focus >= total - (limit - context)) return { start: total - limit, end: total };
+  const start = Math.max(0, Math.min(focus - context, total - limit));
+  return { start, end: start + limit };
 }
 
 /**
@@ -198,7 +368,8 @@ export function renderWidget(state: WidgetState, options: WidgetOptions = {}): s
   const boxed = options.boxed ?? false;
   const pad = boxed ? 2 : 0;
   const inner = Math.max(24, total - pad * 2);
-  const limit = options.taskWindow ?? TASK_WINDOW;
+  const view = state.view ?? defaultView();
+  const limit = options.taskWindow ?? (view.expanded ? EXPANDED_WINDOW : TASK_WINDOW);
 
   const out: string[] = [];
   const push = (line = ""): void => {
@@ -222,11 +393,19 @@ export function renderWidget(state: WidgetState, options: WidgetOptions = {}): s
   push(headLeft + (gapW > 1 ? s.fg("rule", " " + g.rail.repeat(gapW - 2) + " ") : " ") + headRight);
 
   // -- goal -----------------------------------------------------------------
-  const goal = (state.list.goals ?? [])[0];
-  if (goal?.title) {
-    for (const line of wrap(goal.title, inner - 2)) {
-      push(s.fg("muted", g.branch + " ") + s.fg("text", line));
-    }
+  //
+  // A single goal is the run's headline and belongs at the top, not buried in
+  // the tree — `buildPlanRows` collapses it there for exactly this reason.
+  // Several goals are structure, and structure belongs in the tree.
+  const goals = state.list.goals ?? [];
+  const headline = goals.length === 1 ? (goals[0]?.title ?? null) : goals.length === 0 ? (state.intake ?? null) : null;
+  if (headline) {
+    const wrapped = wrap(headline, inner - 2);
+    wrapped.forEach((line, i) => {
+      // The marker belongs to the goal, not to every line of it. Repeating it
+      // down the left edge reads as a list of goals rather than one wrapped.
+      push((i === 0 ? s.fg("muted", g.goal + " ") : "  ") + s.fg("text", line));
+    });
   }
 
   // -- phase rail -----------------------------------------------------------
@@ -270,15 +449,29 @@ export function renderWidget(state: WidgetState, options: WidgetOptions = {}): s
   if (state.escalation?.strategy) {
     alerts.push(s.fg("rework", g.rework + " " + state.escalation.strategy));
   }
+  if (state.awaitingApproval) {
+    alerts.unshift(
+      s.bold(s.fg("active", g.rework + " " + state.awaitingApproval.toUpperCase() + " needs your OK")),
+    );
+  }
+  if (typeof state.sessions === "number" && state.sessions > 1) {
+    // Proof the handoff is working. Without it a run that quietly stopped
+    // starting fresh sessions looks exactly like one that never did.
+    alerts.push(s.fg("muted", "session " + state.sessions));
+  }
   if (state.gate && !state.gate.overall) {
     alerts.push(s.fg("blocked", "gate: " + state.gate.failures.slice(0, 3).join(", ")));
   }
   if (alerts.length) push(truncate(alerts.join(s.fg("rule", " · ")), inner));
 
-  // -- tasks ----------------------------------------------------------------
+  // -- the plan -------------------------------------------------------------
+  //
+  // All five levels, windowed. The window is the answer to "the widget is
+  // truncated": the rows above and below are not gone, they are one keypress
+  // away, and the widget says how many there are so nobody has to guess.
   push();
-  if (tasks.length === 0) {
-    push(s.fg("muted", "  no tasks planned yet"));
+  if (tasks.length === 0 && (state.list.features ?? []).length === 0) {
+    push(s.fg("muted", "  no plan yet"));
     return frame(out, total, boxed, s, g);
   }
 
@@ -289,70 +482,39 @@ export function renderWidget(state: WidgetState, options: WidgetOptions = {}): s
     if (t.key) indexByKey.set(t.key, t.index);
   }
 
-  const bounds = taskWindowBounds(tasks, limit);
-  const visible = tasks.slice(bounds.start, bounds.end);
+  const active = nextActionableTask(state.list);
+  const rows = buildPlanRows(state.list, active?.compositeKey ?? null, {
+    expandSubtasks: view.expanded,
+  });
+
+  const bounds = rowWindow(rows, limit, view.scroll);
   const hiddenBefore = bounds.start;
-  const hiddenAfter = tasks.length - bounds.end;
+  const hiddenAfter = rows.length - bounds.end;
 
   if (hiddenBefore > 0) {
-    push(s.fg("rule", "  " + g.more + " " + hiddenBefore + " earlier"));
+    const hint = view.scroll === null ? "" : s.fg("rule", "  " + hintKeys(g));
+    push(s.fg("rule", "  " + g.more + " " + hiddenBefore + " above") + hint);
   }
 
-  let lastFeature: string | null = null;
-  const numW = String(tasks.length).length;
-
-  for (const t of visible) {
-    if (t.featureId !== lastFeature) {
-      lastFeature = t.featureId;
-      const label = t.featureId + s.fg("rule", " · ") + t.featureName;
-      push(s.fg("muted", g.branch + " ") + truncate(label, inner - 2));
-    }
-
-    const role = statusRole(t.status);
-    const icon = s.fg(role, statusGlyph(t.status, g));
-    const num = s.fg("rule", String(t.index).padStart(numW));
-    const dep = depLabel(t, indexByKey, g, s);
-    const prefix = "  " + icon + " " + num + " ";
-    const prefixW = width(prefix);
-    const depW = dep ? width(dep) + 1 : 0;
-    const titleMax = Math.max(8, inner - prefixW - depW);
-
-    const isActive = t.status === "in_progress" || t.status === "rework";
-    const titleLines = wrap(t.description || t.compositeKey, titleMax);
-    const head = isActive ? s.bold(s.fg("text", titleLines[0]!)) : s.fg(role === "success" ? "muted" : "text", titleLines[0]!);
-
-    let row = prefix + head;
-    if (dep) {
-      const rowW = width(row);
-      const spacer = Math.max(1, inner - rowW - width(dep));
-      row += " ".repeat(spacer) + dep;
-    }
-    push(row);
-    for (const extra of titleLines.slice(1)) {
-      push(" ".repeat(prefixW) + s.fg("muted", extra));
-    }
-
-    // Subtasks only for the task actually being worked — otherwise the window
-    // fills with detail nobody is acting on.
-    if (isActive) {
-      for (const sub of t.subtasks ?? []) {
-        const sIcon =
-          sub.status === "complete"
-            ? s.fg("success", g.subDone)
-            : sub.status === "in_progress"
-              ? s.fg("active", g.subActive)
-              : s.fg("rule", g.subPending);
-        const sTitle = truncate(sub.title, inner - prefixW - 4);
-        push(" ".repeat(prefixW) + sIcon + " " + s.fg("muted", sTitle));
-      }
-    }
+  for (const row of rows.slice(bounds.start, bounds.end)) {
+    for (const line of renderRow(row, inner, indexByKey, g, s)) push(line);
   }
 
   if (hiddenAfter > 0) {
-    push(s.fg("rule", "  " + g.more + " " + hiddenAfter + " more"));
+    push(s.fg("rule", "  " + g.more + " " + hiddenAfter + " below  " + hintKeys(g)));
   }
 
   return frame(out, total, boxed, s, g);
+}
+
+/**
+ * The keys that move the window, said once, where the window runs out.
+ *
+ * `alt+` rather than `ctrl+`: pi binds ctrl+j, ctrl+k and ctrl+o in the editor
+ * already, and a widget is not worth shadowing an editor key for.
+ */
+function hintKeys(_g: GlyphSet): string {
+  return "alt+j/k scroll · alt+o expand";
 }
 
 function frame(lines: string[], total: number, boxed: boolean, s: Styler, g: GlyphSet): string[] {
@@ -371,6 +533,7 @@ function frame(lines: string[], total: number, boxed: boolean, s: Styler, g: Gly
 export function renderStatusLine(state: WidgetState, g: GlyphSet = detectGlyphs()): string {
   const p = computeProgress(state.list);
   if (state.paused) return "paused";
+  if (state.awaitingApproval) return `${state.awaitingApproval} · needs your OK`;
   if (p.tasksTotal === 0) return state.phase ?? "idle";
   const mark =
     p.blocked > 0

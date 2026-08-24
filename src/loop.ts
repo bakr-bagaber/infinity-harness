@@ -39,6 +39,13 @@ import {
   type EscalationState,
 } from "./escalate.ts";
 import { loadGoal, recordPipelinePass, viewOf } from "./goal.ts";
+import {
+  needsApproval,
+  requestApproval,
+  describeApproval,
+  renderApprovalRequest,
+  rejectionStandsFor,
+} from "./approval.ts";
 
 export const LOOP_STATE_FILE = "loop-state.json";
 export const STOP_FILE = "STOP";
@@ -89,7 +96,13 @@ export type LoopDecision =
   | { action: "continue"; message: string; reason: string }
   | { action: "advanced"; toPhase: Phase; message: string; reason: string }
   | { action: "stop"; reason: string; detail: string }
-  | { action: "wait"; reason: string; detail: string };
+  | { action: "wait"; reason: string; detail: string }
+  /**
+   * The gate passed, but this phase decides *what gets built* and the human
+   * asked to sign it. The run parks here until they answer; it does not
+   * advance, and it does not count as being stuck.
+   */
+  | { action: "approve"; phase: Phase; message: string; detail: string; reason: string };
 
 export function loopStatePath(targetDir: string): string {
   return resolve(harnessDir(targetDir), LOOP_STATE_FILE);
@@ -232,6 +245,15 @@ export async function decideNext(options: DecideOptions): Promise<{ decision: Lo
       detail: "The pipeline is paused. Unpause to continue.",
     });
   }
+  if (config.awaitingApproval) {
+    return finish({
+      action: "wait",
+      reason: "awaiting-approval",
+      detail:
+        `${config.awaitingApproval.toUpperCase()} is waiting for your approval. ` +
+        "`/infinity:approve` continues; `/infinity:approve <what is wrong>` sends it back.",
+    });
+  }
 
   state.lastPhase = config.currentPhase;
 
@@ -294,9 +316,39 @@ export async function decideNext(options: DecideOptions): Promise<{ decision: Lo
 
   const gate = options.skipGate ? null : await runChecks(targetDir, phase, { record: true });
 
-  if (gate && gate.overall) {
+  // A phase the human already sent back, on a project that has not moved
+  // since, is not ready to be asked about again. The gate is deterministic:
+  // without this it passes on the very next tick and the human is asked the
+  // identical question about the identical artefact, forever.
+  //
+  // Crucially this is treated as a *failure*, not as its own early return. An
+  // early return skipped the no-progress detector entirely — so an agent that
+  // ignored the rejection re-briefed itself without limit, which is the one
+  // thing an unattended loop must never do. Falling through means the same
+  // budgets, the same strikes and the same escalation ladder apply.
+  const standingRejection =
+    gate && gate.overall && needsApproval(config, phase) && config.awaitingApproval !== phase
+      ? rejectionStandsFor(config, phase, await fingerprint(targetDir))
+      : null;
+
+  if (gate && gate.overall && !standingRejection) {
     state.noProgressStreak = 0;
     state.lastFingerprint = await fingerprint(targetDir);
+
+    // A passed gate on an approvable phase is not permission to continue — it
+    // is permission to *ask*. The gate proves the phase produced what it was
+    // supposed to produce; only the human can say it produced the right thing.
+    if (needsApproval(config, phase) && config.awaitingApproval !== phase) {
+      requestApproval(targetDir, phase);
+      const request = describeApproval(phase);
+      return finish({
+        action: "approve",
+        reason: "awaiting-approval",
+        phase,
+        message: renderApprovalRequest(request),
+        detail: `${phase.toUpperCase()} is waiting for your approval.`,
+      });
+    }
 
     const upcoming = nextPhase(phase, config.phases?.enabled);
     if (upcoming === null) {
@@ -399,9 +451,12 @@ export async function decideNext(options: DecideOptions): Promise<{ decision: Lo
   if (state.noProgressStreak >= budget.noProgressLimit) {
     return finish({
       action: "stop",
-      reason: "no-progress",
-      detail:
-        `The gate has failed ${state.noProgressStreak} times in a row with no change to the working tree ` +
+      reason: standingRejection ? "rejection-unaddressed" : "no-progress",
+      detail: standingRejection
+        ? `You sent ${phase.toUpperCase()} back ${state.noProgressStreak} turns ago and nothing has ` +
+          `changed since. The agent is not acting on it: "${standingRejection.note}". ` +
+          `Stopping so you can take over.`
+        : `The gate has failed ${state.noProgressStreak} times in a row with no change to the working tree ` +
         `or the plan. The agent is looping without making progress` +
         (gate ? `: ${gate.failures.join(", ")}` : "") +
         `.` +
@@ -435,14 +490,22 @@ export async function decideNext(options: DecideOptions): Promise<{ decision: Lo
 
   // An escalation replaces the standard "fix these" nudge, because repeating
   // that nudge is exactly what the ladder exists to interrupt.
-  const head = escalation?.instruction
-    ? `${escalation.instruction}\n`
-    : `The ${phase.toUpperCase()} gate did not pass. Fix exactly these, then stop talking — ` +
-      `the harness will re-validate automatically.\n\n${failures}${focus}\n`;
+  const head = standingRejection
+    ? `A human reviewed ${phase.toUpperCase()} and sent it back. Nothing in the project has changed ` +
+      `since, so the run is still waiting on this and nothing else:\n\n  ${standingRejection.note}\n\n` +
+      `Fix that, then validate again.${focus}\n`
+    : escalation?.instruction
+      ? `${escalation.instruction}\n`
+      : `The ${phase.toUpperCase()} gate did not pass. Fix exactly these, then stop talking — ` +
+        `the harness will re-validate automatically.\n\n${failures}${focus}\n`;
 
   return finish({
     action: "continue",
-    reason: escalation?.strategy ? `escalated: ${describeEscalation(escalation)}` : "gate failed",
+    reason: standingRejection
+      ? "rejected, not yet addressed"
+      : escalation?.strategy
+        ? `escalated: ${describeEscalation(escalation)}`
+        : "gate failed",
     message: `${head}\n${renderBrief(brief, fresh.ok ? fresh.config : undefined)}`,
   });
 }
@@ -495,6 +558,8 @@ export function describeDecision(d: LoopDecision): string {
       return `advanced to ${d.toPhase}`;
     case "wait":
       return `waiting — ${d.detail}`;
+    case "approve":
+      return `waiting for your approval of ${d.phase}`;
     case "stop":
       return `stopped — ${d.detail}`;
   }

@@ -18,11 +18,12 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { resolve } from "node:path";
 
-import type { FeatureList, Feature, Goal, GateResult, Phase } from "./core/types.ts";
+import type { FeatureList, Feature, Goal, GateResult, Phase, Sprint } from "./core/types.ts";
 import { loadFeatureList, computeProgress } from "./core/featureList.ts";
 import { loadConfig } from "./core/config.ts";
 import { modelRouterPath, reworkPath } from "./core/paths.ts";
 import { readJsonSafe } from "./core/fsx.ts";
+import { loadRunState } from "./runState.ts";
 import { renderDashboard, escapeHtml, type DashboardState } from "./ui/dashboard.ts";
 
 export { escapeHtml };
@@ -47,6 +48,12 @@ export interface RemoteState {
   timestamp: string;
   router: unknown;
   rework: unknown;
+  sprints: Sprint[];
+  /** A phase whose gate passed and which is waiting for a human signature. */
+  awaitingApproval: string | null;
+  /** pi sessions this run has spent — proof the handoff is doing its job. */
+  sessions: number | null;
+  goalPass: { current: number; max: number } | null;
 }
 
 export interface RemoteServer {
@@ -104,6 +111,13 @@ export function buildRemoteState(projectDir?: string): RemoteState {
     timestamp: new Date().toISOString(),
     router: readJsonSafe<unknown>(modelRouterPath(dir), null),
     rework: readJsonSafe<unknown>(reworkPath(dir), null),
+    awaitingApproval: config.awaitingApproval ?? null,
+    sessions: loadRunState(dir)?.sessions ?? null,
+    goalPass:
+      typeof config.goalPass === "number" && typeof config.goalMaxPasses === "number"
+        ? { current: config.goalPass, max: config.goalMaxPasses }
+        : null,
+    sprints: list.sprints ?? [],
   };
 }
 
@@ -119,6 +133,9 @@ function toDashboardState(s: RemoteState): DashboardState {
     retries: s.retries,
     router: s.router,
     rework: s.rework,
+    awaitingApproval: s.awaitingApproval,
+    sessions: s.sessions,
+    goalPass: s.goalPass,
   };
 }
 
@@ -138,6 +155,10 @@ export function buildApiPayload(state: RemoteState): Record<string, unknown> {
     gate: state.gate,
     router: state.router,
     rework: state.rework,
+    awaitingApproval: state.awaitingApproval,
+    sessions: state.sessions,
+    goalPass: state.goalPass,
+    sprints: state.sprints,
     features: state.features.map((f) => ({
       id: f.id,
       name: f.name,

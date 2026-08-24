@@ -69,8 +69,22 @@ export function decisionsPath(targetDir: string): string {
   return resolve(docsDir(targetDir), "DECISIONS.md");
 }
 
+export function researchPath(targetDir: string): string {
+  return resolve(docsDir(targetDir), "RESEARCH.md");
+}
+
 export function constraintsPath(targetDir: string): string {
   return resolve(docsDir(targetDir), "CONSTRAINTS.md");
+}
+
+/** Whether a continuous run is armed, and which run it is. Survives sessions. */
+export function runStatePath(targetDir: string): string {
+  return resolve(harnessDir(targetDir), "run.json");
+}
+
+/** A handoff waiting to be picked up by the session that replaces this one. */
+export function pendingSessionPath(targetDir: string): string {
+  return resolve(harnessDir(targetDir), "next-session.json");
 }
 
 export function skillsDir(targetDir: string): string {

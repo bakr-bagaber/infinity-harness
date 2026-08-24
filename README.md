@@ -9,25 +9,30 @@ stops with a clear reason when it genuinely needs you.
 ```
 ╭──────────────────────────────────────────────────────────────────────────╮
 │ ∞ INFINITY ──────────────────────────────────────────────── BUILD rev 42 │
-│ ▸ Ship the payments rewrite behind a flag                                │
+│ ◈ Ship the payments rewrite behind a flag                                │
 │                                                                          │
 │ ● define ─ ● plan ─ ◉ BUILD ─ ○ verify ─ ○ review ─ ○ ship               │
 │                                                                          │
 │ ▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱  45%                  5/11 tasks · 1/2 features │
-│ ⚠ 1 blocked · ↷ 1 rework · retry 2/10                                    │
+│ ⚠ 1 blocked · ↷ 1 rework · retry 2/10 · session 7                        │
 │                                                                          │
-│ ▸ feature-002 · Checkout flow                                            │
-│   ●  4 validate cart totals against catalogue prices                     │
-│   ●  5 apply stacked discount codes with precedence rules           ← #4 │
-│   ◐  6 handle partial refunds across split tenders              ← #4, #5 │
-│        ✓ unit tests for tender split                                     │
-│        ▸ integration test against sandbox                                │
-│        · audit log entries                                               │
-│   ○  7 emit refund webhook                                          ← #6 │
-│   ⚠  8 reconcile ledger nightly                                     ← #6 │
-│   ⋯ 3 more                                                               │
+│ ▤ Checkout                                                          5/11 │
+│   ▸ feature-002 · Checkout flow                                      2/5 │
+│     ●  4 validate cart totals against catalogue prices                   │
+│     ●  5 apply stacked discount codes with precedence rules         ← #4 │
+│     ◐  6 handle partial refunds across split tenders            ← #4, #5 │
+│          ✓ unit tests for tender split                                   │
+│          ▸ integration test against sandbox                              │
+│          · audit log entries                                             │
+│     ○  7 emit refund webhook                                        ← #6 │
+│     ⚠  8 reconcile ledger nightly                                   ← #6 │
+│   ⋯ 3 below  alt+j/k scroll · alt+o expand                               │
 ╰──────────────────────────────────────────────────────────────────────────╯
 ```
+
+All five levels of the plan — goal, sprint, feature, task, subtask — with the window
+centred on the work. `alt+j` / `alt+k` scroll it, `alt+o` expands it, and
+`/infinity:dashboard` shows the whole thing in a browser.
 
 ---
 
@@ -37,15 +42,23 @@ Left alone, a coding agent drifts. It declares work finished that isn't, forgets
 did, re-solves the same problem three different ways, and — worst of all — keeps going long after it
 stopped making progress. Pair it with a small or cheap model and all of that gets worse.
 
-infinity-harness fixes that by taking two decisions away from the model:
+infinity-harness fixes that by taking three decisions away from the model:
 
 1. **When work is done.** A deterministic gate decides, not the agent. Same tree, same verdict, every
    time. No agent marks its own homework.
 2. **What happens next.** The phase pipeline is forward-only and one step at a time. The agent cannot
    decide it's bored of BUILD and jump to SHIP.
+3. **What to remember.** The plan, the phase and every budget live in files, so the run starts a
+   **fresh pi session at each boundary** instead of dragging the whole history of the run into every
+   request. Small models stop drowning; long runs stop turning into summaries of summaries.
 
-Everything else — the plan, the retries, the model routing — exists to keep those two decisions
-honest over a very long run.
+Everything else — the retries, the model routing, the escalation ladder — exists to keep those
+decisions honest over a very long run.
+
+And one decision stays yours: **what gets built**. The gate can prove a feature has acceptance
+criteria; it cannot prove they are the right ones. So the run stops and asks you to sign off
+RESEARCH, DEFINE and PLAN — always in copilot, and in autopilot for whichever of them you choose to
+keep.
 
 ## Install
 
@@ -83,9 +96,18 @@ Then, once, in that project:
 /infinity:init
 ```
 
-That is the whole setup. It detects your stack and its lint/test/build commands, writes
-`harness/` with the config, an empty plan, the phase and role docs, and starters for the
-documents the review gate will demand — then hands the model its first brief. It never
+It detects your stack and its lint/test/build commands, then asks you five questions:
+
+| | |
+|---|---|
+| **How involved do you want to be?** | copilot — you approve the definition and the plan · autopilot — you choose what to approve, if anything |
+| **What are you building?** | One or two sentences. Asked in *both* modes, because a run with no goal has no business inventing one. |
+| **Research it first?** | Adds an optional RESEARCH phase before DEFINE: prior art, constraints, options with costs, a recommendation, and the questions only you can answer. |
+| **Which phases do you sign?** *(autopilot only)* | RESEARCH, DEFINE, PLAN — tick any, all or none. None is the walk-away setting. |
+| **When should it start a fresh session?** | Every phase (default) · every task · never |
+
+Then it writes `harness/` — the config, an empty plan, the phase and role docs, and starters
+for the documents the review gate will demand — and hands the model its first brief. It never
 overwrites a file that already exists, and `/infinity:init force` restores anything you
 deleted without touching what you wrote.
 
@@ -95,7 +117,10 @@ the craft skills that match the work, and what to do next. Do the work, then:
 ```
 /infinity:validate     run the gate for this phase
 /infinity:run          hand it the wheel: validate → advance → re-brief, until done or stuck
+/infinity:approve      sign off the phase waiting for you — or send it back with a note
 /infinity:status       where the run is right now
+/infinity:scroll       move the plan widget: up · down · top · bottom · expand · follow
+/infinity:handoff      continue this run in a fresh session, by hand
 /infinity:config       change any setting, including which model runs which tier
 /infinity:models       what models pi has, and how they are being routed
 /infinity:dashboard    open the live web view
@@ -106,6 +131,61 @@ the craft skills that match the work, and what to do next. Do the work, then:
 ```
 
 `/infinity:run` is the point of the tool. It keeps the loop turning without you.
+
+## Who decides what
+
+The two words are about **who signs off**, not about how autonomous the agent is. Both modes
+run the same pipeline, the same gates and the same loop.
+
+| | copilot | autopilot |
+|---|---|---|
+| RESEARCH, DEFINE, PLAN | you approve each one | you pick which, if any |
+| Everything after PLAN | the gate decides | the gate decides |
+| When it is right | you care what gets built | you have said what you want and you are leaving |
+
+When a phase you signed up for passes its gate, the run **stops and asks you** rather than
+advancing. Approving continues it; answering with a sentence sends the phase back carrying your
+words, so it is redone against your objection rather than redone identically:
+
+```
+/infinity:approve
+/infinity:approve the criteria say nothing about refunds
+```
+
+A rejection is pinned to the state of the project when you made it, so the run will not ask you
+the same question again until the agent has actually changed something in response. If it never
+does, the run stops and says so instead of nagging forever.
+
+## One run, many sessions
+
+A harness that never starts a new pi session is a harness whose context window only ever grows.
+By the tenth task the model is re-reading the history of the first nine in order to do the
+tenth — paying for those tokens on every call, compacting them into a lossy summary once the
+window fills, and, on a small model, simply drowning.
+
+Nothing the harness knows lives in the conversation. The plan, the phase, the gate history, the
+retry budgets and the escalation ladder are all files under `harness/`, so a session boundary
+costs one thing: the brief — which is what the agent should have been working from anyway.
+
+So the run hands itself to a fresh session at each boundary, and the replacement picks up
+exactly where the last one stopped:
+
+| Setting | Fresh session when |
+|---|---|
+| `phase` *(default)* | the pipeline advances a phase, or a goal pass finishes |
+| `task` | that, plus every time the run moves to a different task |
+| `off` | never — one session for the whole run |
+
+Any of them also hands off early once the context passes `session.contextThreshold` (0.7 by
+default), because a handoff that arrives after compaction has arrived too late to be the thing
+that prevented it.
+
+The run itself — its id, its wall-clock budget, its iteration ceiling, its no-progress strikes
+and its position on the escalation ladder — lives in `harness/run.json` and is the same run
+across every session it spans. `/reload`, `/resume`, closing the terminal and reopening it all
+resume the same run rather than quietly starting a new one with fresh budgets.
+
+The widget shows `session 7` once a run has spanned more than one.
 
 ### The first pass through
 
@@ -144,6 +224,8 @@ valid; the menu is the same data with prompts and bounds checking attached.
 |---|---|
 | **Models** | Which model runs each difficulty tier, the master model, consultation budget |
 | **Pipeline** | Which phases run, copilot vs autopilot, role strictness, pause |
+| **Your approvals** | Which of RESEARCH / DEFINE / PLAN stop and wait for your signature |
+| **Sessions** | Fresh session per phase or per task, the context threshold, the carry note |
 | **Project commands** | lint / test / coverage / build — what the gate actually runs |
 | **Gates** | Enable, coverage threshold, placeholder rejection |
 | **Continuous run** | Iteration ceiling, wall-clock budget, no-progress strikes |
@@ -152,11 +234,12 @@ valid; the menu is the same data with prompts and bounds checking attached.
 ## The pipeline
 
 ```
-define → plan → build → verify → [simplify] → review → ship
+[research] → define → plan → build → verify → [simplify] → review → ship
 ```
 
 | Phase | What it's for | Gate opens when |
 |---|---|---|
+| **research** | Find out what it actually has to be *(opt-in)* | `harness/docs/RESEARCH.md` says something a human could argue with |
 | **define** | Write down what's being built and how you'll know it's done | Every feature has acceptance criteria |
 | **plan** | Break features into ordered, dependency-aware tasks | Tasks exist and criteria are set |
 | **build** | Implement, one task at a time, tests alongside | Lint, tests, coverage pass; no placeholders; every task complete |
@@ -165,7 +248,14 @@ define → plan → build → verify → [simplify] → review → ship
 | **review** | Judge it as if someone else wrote it | Rubric, README, architecture doc and decisions are real; branch level with upstream |
 | **ship** | Tag, changelog, leave it clean | Clean tree, tagged, changelog, README, licence, no placeholders |
 
-Enable or disable phases in `harness/config.json` under `phases.enabled`. SIMPLIFY is off by default.
+Enable or disable phases in `harness/config.json` under `phases.enabled`, or in the wizard.
+RESEARCH and SIMPLIFY are off by default.
+
+RESEARCH runs before anything is specified, and answers the question DEFINE assumes: is this the
+right thing to build at all? It writes prior art, the constraints that are real, at least two
+options with what each costs, a recommendation, what would make that recommendation wrong, and the
+questions only you can answer — which become the DEFINE interview. Turn it on when the human gave
+an idea rather than a specification.
 
 ## When it gets stuck
 
@@ -259,11 +349,22 @@ The agent edits it by submitting the **complete** task list through the `infinit
 
 ## Watching it work
 
-**In the terminal** — the widget above updates on every turn. It's responsive down to ~58 columns,
-degrades to ASCII when the locale isn't UTF-8, and drops colour under `NO_COLOR`.
+**In the terminal** — the widget above updates on every turn, showing all five levels of the plan:
+goal, sprint, feature, task, subtask. It is a *window*, not a truncation — the rows above and
+below are counted, and one keypress away:
+
+| Key | |
+|---|---|
+| `alt+j` / `alt+k` | scroll the plan down / up |
+| `alt+o` | expand — every subtask, three times the rows |
+| `/infinity:scroll follow` | back to tracking the active task |
+
+It is responsive down to ~58 columns, degrades to ASCII when the locale isn't UTF-8, and drops
+colour under `NO_COLOR`.
 
 **In a browser** — `/infinity:dashboard` serves a live page on loopback: phase rail, stacked progress
-meters that show stuck work as colour rather than absence, the full task tree, and the last gate
+meters that show stuck work as colour rather than absence, the whole plan as a collapsible
+goal → sprint → feature → task → subtask tree with counts at every level, and the last gate
 verdict. It refreshes itself every 5 seconds and reconnects with backoff if the run ends.
 
 The dashboard is strictly read-only and binds to `127.0.0.1`. It never writes, and never bumps
@@ -345,8 +446,12 @@ infinity-harness/
 │   ├── core/                      types · paths · fsx · config · phases · gates · brief
 │   │                              · featureList (the SSOT) · lock · exec
 │   │                              · skills (match) · skillsAudit (guard)
-│   ├── ui/                        theme · widget (terminal) · dashboard (web)
+│   ├── ui/                        theme · planTree (the five levels, once)
+│   │                              · widget (terminal) · dashboard (web) · wizard · config
 │   ├── loop.ts                    the continuous-run driver and its stop conditions
+│   ├── runState.ts                is a run armed, and which run is it — on disk, across sessions
+│   ├── handoff.ts                 when to continue in a fresh session, and what to tell it
+│   ├── approval.ts · intake.ts    human sign-off · what the start-up wizard's answers mean
 │   ├── escalate.ts                the ladder's actuator: chooses a rung and takes it
 │   ├── goal.ts                    the outer loop: is the thing asked for actually done?
 │   ├── taskList.ts                atomic plan editor
@@ -358,11 +463,15 @@ infinity-harness/
 ├── harness/
 │   ├── features/feature-list.json the plan
 │   ├── config.json                pipeline state and settings
+│   ├── run.json                   the armed run — survives every session it spans
 │   ├── model-router.json          optional routing
 │   ├── docs/                      architecture · decisions · phase and role docs
 │   └── skills/                    28 craft skills the brief points at
-├── tests/                         28 files, plain node:assert
-└── scripts/run-tests.mjs
+├── tests/                         31 files, plain node:assert
+└── scripts/
+    ├── run-tests.mjs
+    ├── e2e.mjs                    16 scenarios, including one against a real pi process
+    └── rig/                       the real-pi driver: a scripted model + the RPC protocol
 ```
 
 The extension is deliberately thin. Every decision lives in `src/`, where it's typed and tested —
@@ -372,12 +481,27 @@ there is one implementation, and the adapter calls it.
 
 ```bash
 npm install
-npm run check    # tsc --noEmit
-npm test         # 28 test files
-npm run e2e      # end-to-end against a live model
+npm run check                    # tsc --noEmit, strict
+npm test                         # 31 test files
+npm run e2e                      # 16 end-to-end scenarios
+npm run e2e -- --only realpi     # just the ones that drive a real pi process
+npm run e2e -- --list            # what the scenarios are
 ```
 
 Tests are plain `node:assert` run under `--experimental-strip-types`. No framework, no build step.
+
+The scenario worth knowing about is **`realpi`**. Everything else drives our own modules, or drives
+the adapter against a *fake* pi — a fair test of our contracts and a poor test of pi's. Every bug
+that has reached a user so far lived in the gap between the two: a BOM that made every config read
+fail, a run that ended at its first session handoff, a brief queued in a delivery mode that
+deadlocks `pi -p`.
+
+`realpi` closes the gap. `scripts/rig/` starts a real `pi --mode rpc` against a scripted model
+server and speaks the RPC protocol to it — typing prompts and slash commands, answering wizard
+dialogs, and reading back the widget and notifications a human would actually see. It covers
+startup, the wizard, a run spanning several real sessions, real auto-compaction, an approval
+round-trip, and `pi -p` not hanging. When something is wrong in the product rather than in a
+module, this is the scenario that notices.
 
 ## Licence
 

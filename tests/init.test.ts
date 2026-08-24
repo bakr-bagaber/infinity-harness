@@ -282,8 +282,18 @@ function tmpProject(files: Record<string, string> = {}): string {
   assert.match(text, /Node/);
   assert.match(text, /DEFINE/);
   assert.match(text, /npm run test/);
-  assert.match(text, /\/infinity:next/, "it says what to do next");
+  assert.match(text, /say what you are building/, "with no goal it asks for one");
+  assert.doesNotMatch(text, /Goal {6}/, "and does not pretend to have one");
   rmSync(dir, { recursive: true, force: true });
+
+  // With a goal from the wizard it must not tell the human to supply one they
+  // have already supplied.
+  const withGoal = tmpProject({ "package.json": JSON.stringify({ scripts: { test: "vitest" } }) });
+  const goalText = describeInit(initHarness(withGoal, { brief: "reconcile Stripe payouts" }));
+  assert.match(goalText, /Goal {6}reconcile Stripe payouts/);
+  assert.match(goalText, /\/infinity:run/, "it says what to do next");
+  assert.doesNotMatch(goalText, /say what you are building/);
+  rmSync(withGoal, { recursive: true, force: true });
 
   const bare = tmpProject();
   const bareText = describeInit(initHarness(bare));

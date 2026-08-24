@@ -8,7 +8,7 @@
  */
 
 import type { HarnessConfig, GateHistoryEntry, Phase, Role } from "./types.ts";
-import { DEFAULT_ENABLED_PHASES } from "./types.ts";
+import { DEFAULT_ENABLED_PHASES, PHASE_ROLE } from "./types.ts";
 import { configPath } from "./paths.ts";
 import { readJson, writeJsonAtomic, backupOnce, fileExists } from "./fsx.ts";
 
@@ -49,6 +49,10 @@ export function defaultConfig(): HarnessConfig {
     },
     phases: { enabled: [...DEFAULT_ENABLED_PHASES] },
     roles: { strict: false },
+    session: { handoff: "phase", contextThreshold: 0.7, carryNotes: true },
+    approvals: { research: false, define: false, plan: false },
+    intake: { completed: false, brief: null, at: null },
+    awaitingApproval: null,
     loop: {
       maxIterations: 2000,
       maxWallClockMs: 24 * 60 * 60 * 1000,
@@ -249,17 +253,13 @@ export function validateConfig(config: HarnessConfig): string[] {
   return missing;
 }
 
+/**
+ * The role that owns a phase.
+ *
+ * This used to be a second copy of `PHASE_ROLE` written out longhand, which
+ * meant adding a phase compiled fine and then silently reported the wrong
+ * role for it. There is one table.
+ */
 export function currentRoleFor(phase: Phase | null): Role | null {
-  if (!phase) return null;
-  const map: Record<Phase, Role> = {
-    init: "planner",
-    define: "planner",
-    plan: "planner",
-    build: "generator",
-    verify: "evaluator",
-    simplify: "simplifier",
-    review: "evaluator",
-    ship: "evaluator",
-  };
-  return map[phase] ?? null;
+  return phase ? (PHASE_ROLE[phase] ?? null) : null;
 }

@@ -152,6 +152,62 @@ export const SETTINGS: SettingsGroup[] = [
     ],
   },
   {
+    id: "approvals",
+    label: "Your approvals",
+    help: "Which phases stop and wait for your signature. These are the three that decide WHAT gets built — after PLAN, a wrong turn fails a gate and retries.",
+    settings: [
+      {
+        path: "approvals.research",
+        file: "config",
+        label: "Sign off RESEARCH",
+        help: "You read harness/docs/RESEARCH.md and say whether it is looking at the right problem. Only applies when the RESEARCH phase is enabled.",
+        type: { kind: "boolean" },
+      },
+      {
+        path: "approvals.define",
+        file: "config",
+        label: "Sign off DEFINE",
+        help: "The highest-leverage signature: a wrong definition is a weekend building the wrong thing perfectly.",
+        type: { kind: "boolean" },
+      },
+      {
+        path: "approvals.plan",
+        file: "config",
+        label: "Sign off PLAN",
+        help: "You see the whole task list before a line of it is built, and can send it back with a note.",
+        type: { kind: "boolean" },
+      },
+    ],
+  },
+  {
+    id: "sessions",
+    label: "Sessions",
+    help: "How the run divides itself into pi sessions. A run that never starts a fresh one carries its whole history into every request.",
+    settings: [
+      {
+        path: "session.handoff",
+        file: "config",
+        label: "Fresh session",
+        help: "phase: each phase starts clean · task: cleanest context, best with small models · off: one session for the whole run.",
+        type: { kind: "choice", choices: ["off", "phase", "task"] },
+      },
+      {
+        path: "session.contextThreshold",
+        file: "config",
+        label: "Context handoff threshold",
+        help: "Hand off early once the context is this full, as a fraction of the window. 0 disables it. 0.7 keeps a long BUILD phase out of compaction.",
+        type: { kind: "number", min: 0, max: 0.95 },
+      },
+      {
+        path: "session.carryNotes",
+        file: "config",
+        label: "Carry a note across",
+        help: "Tell the replacement session, in one line, what the previous one got done.",
+        type: { kind: "boolean" },
+      },
+    ],
+  },
+  {
     id: "commands",
     label: "Project commands",
     help: "What the gate runs to judge the work. An empty command is reported as advisory, never as a failure.",

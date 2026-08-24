@@ -3,7 +3,7 @@ name: research
 description: Answer factual questions from primary sources; capture cited findings in the repo
 tags: [research, docs, documentation, investigate, source, facts, api, spec, evidence]
 when: a factual question about an API, library, protocol, or tool blocks progress
-phases: [define, plan, build]
+phases: [research, define, plan, build]
 kind: process
 provenance: { origin: "mattpocock/skills", license: MIT, adapted: true }
 ---

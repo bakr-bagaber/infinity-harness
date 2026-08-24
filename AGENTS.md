@@ -36,7 +36,18 @@ human.
 **One implementation.** `src/` holds every decision — phases, gates, plan, loop, rendering. The
 extension in `extensions/infinity-harness/` owns pi's lifecycle and nothing else. If you find
 yourself writing logic in the extension, it belongs in `src/`. An earlier version of this project
-kept two copies that drifted apart; do not recreate that.
+kept two copies that drifted apart; do not recreate that. The same rule caught a hand-written
+second copy of `PHASE_ROLE` inside `core/config.ts`: adding a phase compiled fine and silently
+reported the wrong role for it.
+
+**Nothing that matters lives in the conversation.** The plan, the phase, the run's budgets and its
+place on the escalation ladder are all files under `harness/`, because the run spans many pi
+sessions and compaction eats transcripts. If you find yourself keeping run state in a closure in
+the extension, that is the bug that ended every run at its first session handoff.
+
+**Anything the agent must not forget goes in the system prompt.** `before_agent_start` is rebuilt
+every turn and is never summarised; a message in the transcript is one compaction away from
+"the assistant was working on a harness".
 
 **No new runtime dependencies without a reason.** The package ships with two (`proper-lockfile`,
 `string-width`). Every addition is weight a user carries.
@@ -54,6 +65,13 @@ on failure and it is picked up automatically. Test the contract, not the lines.
 
 **Verify before you claim.** Run `npm run check` and `npm test` before saying something works. If a
 test fails because you found a real bug, fix the bug — do not weaken the assertion.
+
+**Prove it against a real pi.** `npm run e2e -- --only realpi` starts an actual `pi --mode rpc`
+process against a scripted model and drives it the way a human would: typing slash commands,
+answering wizard dialogs, reading the widget back. Everything else in the suite mocks pi, which
+means it can prove our contracts and cannot prove pi's — and every bug that has reached a user so
+far lived in exactly that gap. If you change anything that touches pi's lifecycle (message
+delivery, sessions, compaction, shortcuts, dialogs), add a step there before you call it done.
 
 ## Reference
 

@@ -84,7 +84,10 @@ const { withLock } = await src("core/lock.ts");
 const { writeTaskList, applyTaskList, summarizeApply } = await src("taskList.ts");
 const { decideNext, loopStatePath, stopFilePath, newLoopState, saveLoopState } = await src("loop.ts");
 const { createRemoteServer, buildRemoteState, buildApiPayload, buildHtml } = await src("remote.ts");
-const { renderWidget, renderStatusLine } = await src("ui/widget.ts");
+const { renderWidget, renderStatusLine, scrollView, defaultView, SCROLL_STEP, TASK_WINDOW } =
+  await src("ui/widget.ts");
+const { buildPlanRows, groupPlan } = await src("ui/planTree.ts");
+const { initHarness } = await src("core/init.ts");
 const { createStyler, detectGlyphs, UNICODE_GLYPHS, ASCII_GLYPHS, width, stripAnsi } = await src("ui/theme.ts");
 
 const assert = (await import("node:assert/strict")).default;
@@ -1819,28 +1822,101 @@ async function scenarioWidget() {
   await step("an empty plan says so instead of drawing an empty frame", async () => {
     const lines = renderWidget({ list: EMPTY_PLAN, phase: null }, { width: 76, styler: PLAIN });
     const joined = lines.join("\n");
-    assert.match(joined, /no tasks planned yet/);
+    assert.match(joined, /no plan yet/);
     assert.match(joined, /NOT STARTED/);
     assert.match(joined, /0\/0 tasks/);
     assert.equal(renderStatusLine({ list: EMPTY_PLAN, phase: null }, UNICODE_GLYPHS), "idle");
   });
 
   await step("a huge plan is windowed, with both elisions counted", async () => {
-    const lines = renderWidget({ list: shapePlan(120, { activeAt: 60 }), phase: "build" }, { width: 76, styler: PLAIN });
+    const plan = shapePlan(120, { activeAt: 60 });
+    const lines = renderWidget({ list: plan, phase: "build" }, { width: 76, styler: PLAIN });
     const joined = lines.join("\n");
-    assert.match(joined, /⋯ \d+ earlier/, "rows scrolled off the top are counted");
-    assert.match(joined, /⋯ \d+ more/, "rows below the window are counted");
+    assert.match(joined, /⋯ \d+ above/, "rows scrolled off the top are counted");
+    assert.match(joined, /⋯ \d+ below/, "rows below the window are counted");
     assert.ok(lines.length < 30, `120 tasks must not render 120 rows (got ${lines.length} lines)`);
     assert.match(joined, /60\/120 tasks/);
-    assert.match(joined, /◐ +61 /, "the window is centred on the active task, not on row 1");
-    assert.match(joined, /⋯ 57 earlier/);
-    assert.match(joined, /⋯ 54 more/);
+    assert.match(joined, /◐ 61 /, "the window is centred on the active task, not on row 1");
 
-    const rows = lines.filter((l) => /^ {2}[○◐●⚠↷] +\d+ /.test(l)).map((l) => Number(l.trim().split(/\s+/)[1]));
-    assert.equal(rows.length, 9, "exactly one window of task rows is drawn");
-    assert.equal(rows[0], 58, "the earliest visible row is 58, not 1 — the plan really scrolled");
-    assert.ok(rows.includes(61), "the active task is inside the window");
-    assert.equal(57 + rows.length + 54, 120, "the elision counts and the window account for every task");
+    const above = Number(/⋯ (\d+) above/.exec(joined)[1]);
+    const below = Number(/⋯ (\d+) below/.exec(joined)[1]);
+    // Count rows the way the widget does: subtasks of the active task are part
+    // of the window, so a row set built without it would not add up.
+    const drawn = buildPlanRows(plan, nextActionableTask(plan)?.compositeKey ?? null).length;
+    const shown = drawn - above - below;
+    assert.equal(shown, TASK_WINDOW, "exactly one window of plan rows is drawn");
+    assert.ok(above > 0 && below > 0, "the plan really scrolled");
+    assert.equal(above + shown + below, drawn, "the elisions and the window account for every row");
+  });
+
+  await step("the window is scrollable, and clamps at both ends", async () => {
+    const plan = shapePlan(120, { activeAt: 60 });
+    const rows = buildPlanRows(plan, nextActionableTask(plan)?.compositeKey ?? null).length;
+
+    const top = renderWidget(
+      { list: plan, phase: "build", view: { scroll: 0, expanded: false } },
+      { width: 76, styler: PLAIN },
+    ).join("\n");
+    assert.doesNotMatch(top, /above/, "at the top nothing is above");
+    assert.match(top, /below/, "at the top there is still more below");
+
+    const bottom = renderWidget(
+      { list: plan, phase: "build", view: { scroll: 1e6, expanded: false } },
+      { width: 76, styler: PLAIN },
+    ).join("\n");
+    assert.match(bottom, /above/);
+    assert.doesNotMatch(bottom, /below/, "scrolling past the end clamps rather than emptying the widget");
+
+    let view = defaultView();
+    view = scrollView(view, SCROLL_STEP, rows, TASK_WINDOW);
+    assert.equal(view.scroll, SCROLL_STEP);
+    assert.equal(scrollView(view, -1e6, rows, TASK_WINDOW).scroll, 0);
+    assert.equal(scrollView(view, 1e6, rows, TASK_WINDOW).scroll, rows - TASK_WINDOW);
+  });
+
+  await step("all five plan levels reach the screen", async () => {
+    const plan = {
+      version: "2.0",
+      baseRevision: 3,
+      goals: [
+        { id: "goal-001", title: "Ship the reconciler" },
+        { id: "goal-002", title: "Then make it fast" },
+      ],
+      sprints: [{ id: "sprint-001", name: "Foundations", goalId: "goal-001" }],
+      features: [
+        {
+          id: "feature-001",
+          name: "Ledger import",
+          sprintId: "sprint-001",
+          goalId: "goal-001",
+          tasks: [
+            {
+              id: "task-001",
+              description: "Parse the CSV",
+              status: "in_progress",
+              dependsOn: [],
+              subtasks: [{ id: "s1", title: "handle the BOM", status: "pending" }],
+            },
+          ],
+        },
+        { id: "feature-002", name: "Orphan", goalId: "goal-002", tasks: [] },
+      ],
+    };
+    const joined = renderWidget(
+      { list: plan, phase: "build", view: { scroll: 0, expanded: true } },
+      { width: 76, styler: PLAIN },
+    ).join("\n");
+    for (const needle of [
+      "Ship the reconciler",
+      "Then make it fast",
+      "Foundations",
+      "Ledger import",
+      "Parse the CSV",
+      "handle the BOM",
+    ]) {
+      assert.match(joined, new RegExp(needle), `${needle} is missing from the widget`);
+    }
+    assert.match(joined, /Orphan/, "a feature under a goal with no sprint is still drawn");
   });
 
   /**
@@ -2286,6 +2362,7 @@ function fakePi() {
   const handlers = new Map();
   const tools = new Map();
   const commands = new Map();
+  const shortcuts = new Map();
   const sent = [];
   const userMessages = [];
   const entries = [];
@@ -2300,6 +2377,9 @@ function fakePi() {
     },
     registerCommand(name, def) {
       commands.set(name, def);
+    },
+    registerShortcut(key, def) {
+      shortcuts.set(key, def);
     },
     sendMessage(msg, opts) {
       sent.push({ msg, opts });
@@ -2316,6 +2396,7 @@ function fakePi() {
     api,
     tools,
     commands,
+    shortcuts,
     sent,
     userMessages,
     entries,
@@ -2334,10 +2415,15 @@ function fakePi() {
       assert.ok(c, `no command named ${name}`);
       return c.handler(args ?? "", ctx);
     },
+    async press(key, ctx) {
+      const k = shortcuts.get(key);
+      assert.ok(k, `no shortcut bound to ${key}`);
+      return k.handler(ctx);
+    },
   };
 }
 
-function fakeCtx(dir, answers) {
+function fakeCtx(dir, answers, options = {}) {
   const widgets = {};
   const statuses = {};
   const notices = [];
@@ -2348,6 +2434,19 @@ function fakeCtx(dir, answers) {
   return {
     cwd: dir,
     hasUI: queue !== null,
+    mode: options.mode ?? (queue !== null ? "tui" : "print"),
+    isIdle: () => options.idle !== false,
+    getContextUsage: () =>
+      options.contextPercent === undefined
+        ? undefined
+        : { tokens: 1000, contextWindow: 10000, percent: options.contextPercent },
+    getSystemPrompt: () => options.systemPrompt ?? "SYSTEM",
+    waitForIdle: async () => {},
+    sessionManager: { getSessionFile: () => options.sessionFile ?? null },
+    newSession: async (opts) => {
+      (options.newSessions ?? []).push(opts ?? {});
+      return { cancelled: options.cancelNewSession === true };
+    },
     ui: {
       setWidget: (k, lines) => {
         widgets[k] = lines;
@@ -2356,13 +2455,23 @@ function fakeCtx(dir, answers) {
         statuses[k] = s;
       },
       notify: (m, level) => notices.push({ m, level }),
+      // An answer may be a literal string, a regex matched against the
+      // options, or a function of (title, options). Matching by substring is
+      // what a human does — they read the menu — and it keeps these tests from
+      // breaking every time a label is reworded.
       select: async (title, options) => {
         asked.push({ title, options });
-        return queue?.length ? queue.shift() : undefined;
+        if (!queue?.length) return undefined;
+        const answer = queue.shift();
+        if (typeof answer === "function") return answer(title, options);
+        if (answer instanceof RegExp) return options.find((o) => answer.test(o));
+        return answer;
       },
       input: async (title) => {
         asked.push({ title, options: null });
-        return queue?.length ? queue.shift() : undefined;
+        if (!queue?.length) return undefined;
+        const answer = queue.shift();
+        return typeof answer === "function" ? answer(title, null) : String(answer);
       },
     },
     widgets,
@@ -2574,6 +2683,12 @@ async function scenarioExtension() {
   });
 
   await step("/infinity:run arms the loop, agent_settled drives it, /infinity:halt takes the wheel back", async () => {
+    // Handoff off: this step is about the loop, and a loop that replaces its
+    // own session mid-assertion is a different test.
+    editConfig(dir, (c) => {
+      c.session = { handoff: "off", contextThreshold: 0, carryNotes: true };
+    });
+
     const idle = pi.userMessages.length;
     await pi.emit("agent_settled", {}, ctx);
     assert.equal(pi.userMessages.length, idle, "the loop does nothing until it is armed");
@@ -2591,6 +2706,107 @@ async function scenarioExtension() {
     await pi.emit("agent_settled", {}, ctx);
     assert.equal(pi.userMessages.length, halted, "halt really stops the loop");
     assert.match(ctx.notices.at(-1).m, /continuous run stopped/);
+  });
+
+  await step("an armed run survives the session that armed it", async () => {
+    editConfig(dir, (c) => {
+      c.session = { handoff: "off", contextThreshold: 0, carryNotes: true };
+    });
+    await pi.command("infinity:run", "", ctx);
+
+    // A brand-new adapter instance is what a handoff, a `/reload` and a
+    // restart all produce. The old build kept "is the loop armed?" in a
+    // closure, so every one of them silently ended the run.
+    const second = fakePi();
+    await adapter(second.api);
+    const ctx2 = fakeCtx(dir);
+    await second.emit("session_start", { reason: "new" }, ctx2);
+
+    const before = second.userMessages.length;
+    await second.emit("agent_settled", {}, ctx2);
+    assert.ok(
+      second.userMessages.length > before,
+      "the replacement session picks the run up where the last one left it",
+    );
+
+    await pi.command("infinity:halt", "", ctx);
+  });
+
+  await step("a phase change hands the run to a fresh session, carrying the brief", async () => {
+    editConfig(dir, (c) => {
+      c.currentPhase = "define";
+      c.currentRole = "planner";
+      c.session = { handoff: "phase", contextThreshold: 0, carryNotes: true };
+    });
+
+    const newSessions = [];
+    const handoffCtx = fakeCtx(dir, [], { newSessions });
+    await pi.command("infinity:run", "", handoffCtx);
+
+    await pi.emit("agent_settled", {}, handoffCtx);
+    const queued = pi.userMessages.at(-1);
+    assert.equal(queued.text, "/infinity:handoff", "the loop asks for a new session rather than re-briefing here");
+
+    // `/infinity:handoff` is the only place `ctx.newSession` may be called —
+    // pi deadlocks if an event handler calls it directly.
+    await pi.command("infinity:handoff", "", handoffCtx);
+    assert.equal(newSessions.length, 1, "a replacement session was actually started");
+
+    // What the replacement session is told, on arrival.
+    const arrival = fakePi();
+    await adapter(arrival.api);
+    const ctx3 = fakeCtx(dir);
+    await arrival.emit("session_start", { reason: "new" }, ctx3);
+    const kickoff = arrival.userMessages.at(-1)?.text ?? "";
+    assert.match(kickoff, /Continuing a run in a fresh session/);
+    assert.match(kickoff, /NEXT STEP/, "the brief comes with it — nothing is lost");
+    assert.match(kickoff, /Do not/, "and it is told not to hunt for the old conversation");
+
+    await pi.command("infinity:halt", "", handoffCtx);
+  });
+
+  await step("the harness contract goes in the system prompt, where compaction cannot reach it", async () => {
+    const results = await pi.emit("before_agent_start", { systemPrompt: "BASE PROMPT" }, ctx);
+    const patched = results.find((r) => r && typeof r.systemPrompt === "string");
+    assert.ok(patched, "before_agent_start returns a system prompt");
+    assert.match(patched.systemPrompt, /^BASE PROMPT/, "it chains rather than replacing");
+    assert.match(patched.systemPrompt, /infinity-harness/);
+    assert.match(patched.systemPrompt, /infinity_validate/, "the rule that matters most is stated");
+    assert.match(patched.systemPrompt, /never mark your own work complete|never advance a phase/i);
+  });
+
+  await step("a headless session gets the brief in a mode that cannot deadlock", async () => {
+    // `deliverAs: "nextTurn"` waits for a user prompt. `pi -p` never has one,
+    // so the harness used to hang every non-interactive run on startup.
+    const headless = fakePi();
+    await adapter(headless.api);
+    const printCtx = fakeCtx(dir, null, { mode: "print" });
+    await headless.emit("session_start", { reason: "startup" }, printCtx);
+    const brief = headless.sent.find((m) => m.msg.customType === "infinity:brief");
+    assert.ok(brief, "the brief is still delivered");
+    assert.notEqual(brief.opts.deliverAs, "nextTurn", "and never in the mode that hangs print runs");
+  });
+
+  await step("the plan widget scrolls, expands, and comes back to following the run", async () => {
+    const widgetCtx = fakeCtx(dir, []);
+    await pi.emit("session_start", { reason: "startup" }, widgetCtx);
+    const following = widgetCtx.widgets["infinity-harness"].join("\n");
+
+    await pi.press("alt+j", widgetCtx);
+    await pi.press("alt+j", widgetCtx);
+    const scrolled = widgetCtx.widgets["infinity-harness"].join("\n");
+
+    await pi.command("infinity:scroll", "follow", widgetCtx);
+    assert.equal(
+      widgetCtx.widgets["infinity-harness"].join("\n"),
+      following,
+      "`follow` returns the widget to tracking the active task",
+    );
+
+    await pi.press("alt+o", widgetCtx);
+    await pi.command("infinity:scroll", "top", widgetCtx);
+    assert.ok(widgetCtx.widgets["infinity-harness"].length > 0, "expanding does not break the widget");
+    void scrolled;
   });
 
   await step("/infinity:pause and /infinity:resume persist through the config", async () => {
@@ -3052,7 +3268,26 @@ async function scenarioColdStart() {
     assert.equal(pi.userMessages.length, 0, "and is not spoken to at all");
     assert.deepEqual(ctx.widgets, {}, "and gets no widget");
 
-    for (const command of ["infinity:status", "infinity:run", "infinity:config"]) {
+    // Every command that needs a harness. `/infinity:next` used to print a
+    // full page of pipeline instructions for a pipeline that did not exist,
+    // and `/infinity:scroll` said nothing at all.
+    for (const command of [
+      "infinity:status",
+      "infinity:next",
+      "infinity:validate",
+      "infinity:run",
+      "infinity:halt",
+      "infinity:pause",
+      "infinity:resume",
+      "infinity:config",
+      "infinity:approve",
+      "infinity:handoff",
+      "infinity:scroll",
+      "infinity:dashboard",
+      "infinity:goal",
+      "infinity:unstuck",
+      "infinity:rework",
+    ]) {
       ctx.notices.length = 0;
       await pi.command(command, "", ctx);
       const said = ctx.notices.map((n) => n.m).join("\n");
@@ -3061,24 +3296,129 @@ async function scenarioColdStart() {
     }
   });
 
-  await step("/infinity:init creates a harness and briefs the model", async () => {
-    // "yes, use these defaults" then "copilot".
-    const ctx = fakeCtx(dir, ["yes, use these defaults", "copilot — you stay in the loop"]);
+  await step("/infinity:init asks what is being built before it starts building", async () => {
+    // The bug this replaces: picking a mode was the *only* question, so
+    // "autopilot" started a run with no idea and no scope, and the harness
+    // invented a project. The wizard now asks for the goal in both modes.
+    const ctx = fakeCtx(dir, [
+      /^yes$/,
+      /copilot/,
+      "reconcile Stripe payouts against the ledger",
+      /go straight to defining/,
+      /every phase/,
+      /start with these settings/,
+    ]);
     await pi.command("infinity:init", "", ctx);
 
     assert.ok(isHarnessProject(dir), "the harness exists now");
-    assert.ok(ctx.asked.length >= 2, "it asked before writing");
     assert.match(ctx.asked[0].title, /Create a harness here\?/);
     assert.match(ctx.asked[0].title, /Node/, "and said what it detected");
+
+    const titles = ctx.asked.map((a) => a.title).join("\n");
+    assert.match(titles, /How much do you want to be involved/);
+    assert.match(titles, /What are you building/, "the goal is asked for, not assumed");
+    assert.match(titles, /Research the idea first/);
+    assert.match(titles, /fresh session/);
 
     const said = ctx.notices.map((n) => n.m).join("\n");
     assert.match(said, /infinity-harness ready/);
     assert.match(said, /npm run test/, "the detected commands are reported");
     assert.match(said, /DEFINE/);
 
+    const config = cfg(dir);
+    assert.equal(config.mode, "copilot");
+    assert.equal(config.intake.brief, "reconcile Stripe payouts against the ledger");
+    assert.deepEqual(
+      { research: config.approvals.research, define: config.approvals.define, plan: config.approvals.plan },
+      { research: false, define: true, plan: true },
+      "copilot signs DEFINE and PLAN — that is what the word means",
+    );
+
     assert.ok(ctx.widgets["infinity-harness"]?.length, "the widget appears immediately");
     assert.equal(pi.userMessages.length, 1, "the session that created the harness gets the first brief");
     assert.match(pi.userMessages[0].text, /NEXT STEP · DEFINE/);
+    assert.match(pi.userMessages[0].text, /reconcile Stripe payouts/, "and the goal it was given");
+  });
+
+  await step("autopilot lets the human choose what to sign, and research is opt-in", async () => {
+    const auto = mkTempDir("coldstart-auto");
+    writeFileSync(join(auto, "package.json"), JSON.stringify({ scripts: { test: "vitest" } }));
+    const ctx = fakeCtx(auto, [
+      /^yes$/,
+      /autopilot/,
+      "a nightly reconciliation job",
+      /find out what it has to be first/,
+      // DEFINE starts ticked; tick PLAN too, then finish.
+      (_t, options) => options.find((o) => /PLAN —/.test(o)),
+      (_t, options) => options.at(-1),
+      /every phase/,
+      /start with these settings/,
+    ]);
+    await pi.command("infinity:init", "", ctx);
+
+    const config = cfg(auto);
+    assert.equal(config.mode, "autopilot");
+    assert.ok(config.phases.enabled.includes("research"), "research was turned on");
+    assert.equal(config.currentPhase, "research", "and it is the phase the run starts in");
+    assert.equal(config.approvals.define, true);
+    assert.equal(config.approvals.plan, true);
+    assert.equal(config.approvals.research, false, "the one they did not tick is not signed");
+    assert.ok(
+      existsSync(join(auto, "harness", "docs", "RESEARCH.md")),
+      "the research phase gets somewhere to write its findings",
+    );
+    rmSync(auto, { recursive: true, force: true });
+  });
+
+  await step("forfeiting every signature is allowed, and says what it means", async () => {
+    const walkAway = mkTempDir("coldstart-walkaway");
+    writeFileSync(join(walkAway, "package.json"), JSON.stringify({ scripts: { test: "vitest" } }));
+    const ctx = fakeCtx(walkAway, [
+      /^yes$/,
+      /autopilot/,
+      "a URL shortener",
+      /go straight to defining/,
+      // Untick DEFINE, leaving nothing, then finish.
+      (_t, options) => options.find((o) => /DEFINE —/.test(o)),
+      (_t, options) => options.at(-1),
+      /every phase/,
+      /start with these settings/,
+    ]);
+    await pi.command("infinity:init", "", ctx);
+
+    const config = cfg(walkAway);
+    assert.equal(config.approvals.define, false);
+    assert.equal(config.approvals.plan, false);
+    const said = ctx.notices.map((n) => n.m).join("\n");
+    assert.match(said, /Nothing is being approved by you/, "the trade-off is stated, not buried");
+    rmSync(walkAway, { recursive: true, force: true });
+  });
+
+  await step("with no goal given, the run asks for one instead of inventing a project", async () => {
+    const vague = mkTempDir("coldstart-vague");
+    writeFileSync(join(vague, "package.json"), JSON.stringify({ scripts: { test: "vitest" } }));
+    const before = pi.userMessages.length;
+    const ctx = fakeCtx(vague, [
+      /^yes$/,
+      /autopilot/,
+      "",
+      /go straight to defining/,
+      (_t, options) => options.at(-1),
+      /every phase/,
+      /start with these settings/,
+    ]);
+    await pi.command("infinity:init", "", ctx);
+
+    const opener = pi.userMessages.at(-1).text;
+    assert.ok(pi.userMessages.length > before);
+    assert.match(opener, /has not said what they want built/);
+    assert.match(opener, /do not start any work or invent a scope/);
+    assert.match(
+      ctx.notices.map((n) => n.m).join("\n"),
+      /No goal was given/,
+      "and the human is told that is what will happen",
+    );
+    rmSync(vague, { recursive: true, force: true });
   });
 
   await step("cancelling writes nothing", async () => {
@@ -3091,7 +3431,7 @@ async function scenarioColdStart() {
   });
 
   await step("a second init refuses, and says what to run instead", async () => {
-    const ctx = fakeCtx(dir, ["yes, use these defaults"]);
+    const ctx = fakeCtx(dir, [/^yes$/]);
     await pi.command("infinity:init", "", ctx);
     const said = ctx.notices.map((n) => n.m).join("\n");
     assert.match(said, /already has a harness/);
@@ -3109,7 +3449,15 @@ async function scenarioColdStart() {
     const config = JSON.parse(readFileSync(join(headless, "harness", "config.json"), "utf-8"));
     assert.equal(config.stack, "go");
     assert.equal(config.commands.test, "go test ./...");
-    assert.equal(config.mode, "copilot");
+    // Autopilot with nothing signed, because a run parked on an approval
+    // nobody can answer is a run that never finishes.
+    assert.equal(config.mode, "autopilot");
+    assert.equal(config.approvals.define, false);
+    assert.match(
+      ctx.notices.map((n) => n.m).join("\n"),
+      /no dialogs/i,
+      "and it says so rather than pretending the human chose this",
+    );
   });
 
   await step("the freshly-made harness is a working one: brief, plan, gate", async () => {
@@ -3161,7 +3509,14 @@ async function scenarioColdStart() {
     const rubric = join(dir, "harness", "evaluator-rubric.md");
     writeFileSync(join(dir, "harness", "docs", "ARCHITECTURE.md"), "# Arch\n\nSomething real.\n");
     rmSync(rubric);
-    const ctx = fakeCtx(dir, ["yes, use these defaults", "copilot — you stay in the loop"]);
+    const ctx = fakeCtx(dir, [
+      /^yes$/,
+      /copilot/,
+      "reconcile Stripe payouts against the ledger",
+      /go straight to defining/,
+      /every phase/,
+      /start with these settings/,
+    ]);
     await pi.command("infinity:init", "force", ctx);
     assert.ok(existsSync(rubric), "the missing file came back");
     assert.match(
@@ -3442,6 +3797,346 @@ async function scenarioLive() {
 // runner
 // ═══════════════════════════════════════════════════════════════════════════
 
+// ── real pi ─────────────────────────────────────────────────────────────────
+//
+// Every other scenario in this file drives our own modules, or drives the
+// adapter against a *fake* pi. That is a fair test of our contracts and a poor
+// test of pi's: the bugs that reached users — a BOM that made every config
+// read fail, a run that ended at its first session handoff, a brief queued in
+// a delivery mode that deadlocks `pi -p` — all lived in the gap between what
+// we thought pi did and what it does.
+//
+// This scenario closes the gap. It starts a real `pi --mode rpc` process
+// against a scripted model server and speaks the RPC protocol to it: typing
+// prompts and slash commands, answering `ctx.ui.select` dialogs, and reading
+// back the widget and the notifications the human would actually see.
+
+async function scenarioRealPi() {
+  const rig = pathToFileURL(join(REPO_ROOT, "scripts", "rig", "pi-driver.mjs")).href;
+  const { PiDriver, startMockModel } = await import(rig);
+
+  const piBin = join(REPO_ROOT, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "cli.js");
+  if (!existsSync(piBin)) throw new SkipLeg("pi is not installed (npm ci first)");
+
+  const EXT = join(REPO_ROOT, "extensions", "infinity-harness", "index.ts");
+  const workdir = mkTempDir("realpi");
+  const scriptPath = join(workdir, "model.json");
+  const reqLog = join(workdir, "requests.jsonl");
+  writeFileSync(scriptPath, JSON.stringify({ default: { content: "Working." } }));
+
+  const mock = await startMockModel(scriptPath, reqLog);
+  let seq = 0;
+  const drivers = [];
+
+  /** A fresh pi process on a fresh project, with the harness already made. */
+  const launch = (name, { initOptions = {}, plan = null, settings = {}, contextWindow = 40000 } = {}) => {
+    const dir = mkTempDir(`realpi-${name}`);
+    gitInit(dir);
+    writeFileSync(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "demo", version: "1.0.0", scripts: { test: "node -e 0", lint: "node -e 0" } }),
+    );
+    writeFileSync(join(dir, "README.md"), `# demo\n\n${"x".repeat(300)}\n`);
+    writeFileSync(join(dir, "LICENSE"), "MIT\n");
+    writeFileSync(join(dir, "CHANGELOG.md"), `# Changelog\n\n${"y".repeat(200)}\n`);
+    gitCommitAll(dir, "chore: initial commit");
+    if (initOptions !== false) {
+      const r = initHarness(dir, initOptions);
+      assert.equal(r.ok, true, r.error ?? "initHarness failed");
+      if (plan) writePlanFile(dir, plan);
+    }
+    const driver = new PiDriver({
+      cwd: dir,
+      configDir: join(workdir, `pi-${++seq}`),
+      sessionDir: join(workdir, `sessions-${seq}`),
+      port: mock.port,
+      extensions: [EXT],
+      contextWindow,
+      settings,
+    }).start();
+    drivers.push(driver);
+    return { dir, driver, sessionDir: join(workdir, `sessions-${seq}`) };
+  };
+
+  const settled = (d, ms = 60_000) => d.settle(d.events.length ? d.events.length - 1 : 0, ms);
+  const waitUntil = async (fn, ms, what) => {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      if (await fn()) return true;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    assert.fail(`timed out waiting for ${what}`);
+  };
+
+  try {
+    await step("real pi loads the extension, briefs the model and paints the widget", async () => {
+      const { driver } = launch("start", { initOptions: { mode: "copilot", brief: "a demo project" } });
+      await driver.waitForUi((r) => r.method === "setWidget", 40_000, "the plan widget");
+
+      const widget = driver.widget().join("\n");
+      assert.match(widget, /INFINITY/, "the widget is drawn in a real terminal session");
+      assert.match(widget, /DEFINE/, "and says where the pipeline is");
+      assert.match(widget, /a demo project/, "and what the human asked for");
+      assert.ok(driver.statuses.get("infinity"), "the status line is set too");
+      assert.match(driver.notes(), /infinity-harness active/);
+
+      await driver.prompt("hello");
+      await settled(driver);
+      const brief = driver.transcript().find((m) => /NEXT STEP · DEFINE/.test(m.text));
+      assert.ok(brief, "the brief actually reached the model, not just the screen");
+    });
+
+    await step("the start-up wizard runs inside real pi, and writes what was chosen", async () => {
+      const { dir, driver } = launch("wizard", { initOptions: false });
+      await new Promise((r) => setTimeout(r, 1500));
+
+      driver.answer((r) => /Create a harness here/.test(r.title ?? ""), (r) => r.options[0]);
+      driver.answer((r) => /How much do you want to be involved/.test(r.title ?? ""), (r) =>
+        r.options.find((o) => /autopilot/.test(o)),
+      );
+      driver.answer((r) => /What are you building/.test(r.title ?? ""), "a nightly reconciliation job");
+      driver.answer((r) => /Research the idea first/.test(r.title ?? ""), (r) =>
+        r.options.find((o) => /find out what it has to be/.test(o)),
+      );
+      driver.answer((r) => /approve/.test(r.title ?? ""), (r) => r.options.find((o) => /PLAN —/.test(o)));
+      driver.answer((r) => /approve/.test(r.title ?? ""), (r) => r.options.at(-1));
+      driver.answer((r) => /fresh session/.test(r.title ?? ""), (r) => r.options[0]);
+      driver.answer((r) => /Ready\?/.test(r.title ?? ""), (r) => r.options[0]);
+
+      await driver.prompt("/infinity:init");
+      await waitUntil(async () => existsSync(join(dir, "harness", "config.json")), 40_000, "the harness to be written");
+      await new Promise((r) => setTimeout(r, 800));
+
+      const config = JSON.parse(readFileSync(join(dir, "harness", "config.json"), "utf-8"));
+      assert.equal(config.mode, "autopilot");
+      assert.equal(config.intake.brief, "a nightly reconciliation job", "the goal it was told, not one it invented");
+      assert.ok(config.phases.enabled.includes("research"));
+      assert.equal(config.currentPhase, "research");
+      assert.equal(config.approvals.define, true);
+      assert.equal(config.approvals.plan, true);
+      assert.ok(existsSync(join(dir, "harness", "docs", "RESEARCH.md")));
+
+      const asked = driver.uiRequests.filter((r) => r.method === "select" || r.method === "input");
+      note(`${asked.length} dialogs answered as a human would`);
+    });
+
+    await step("a run spans several real pi sessions, and its budgets survive them", async () => {
+      const { dir, driver, sessionDir } = launch("handoff", {
+        initOptions: { mode: "autopilot", brief: "a demo", session: { handoff: "phase" } },
+        plan: {
+          version: "2.0",
+          baseRevision: 1,
+          goals: [{ id: "goal-001", title: "a demo" }],
+          sprints: [{ id: "sprint-001", name: "S1", goalId: "goal-001" }],
+          features: [
+            {
+              id: "feature-001",
+              name: "F1",
+              sprintId: "sprint-001",
+              goalId: "goal-001",
+              criteria: ["it demonstrably works"],
+              tasks: [{ id: "task-001", description: "do the thing", status: "complete", dependsOn: [], subtasks: [] }],
+            },
+          ],
+        },
+      });
+      await driver.waitForUi((r) => r.method === "setWidget", 40_000, "the plan widget");
+      await driver.prompt("/infinity:run");
+
+      await waitUntil(async () => /run finished/.test(driver.notes()), 120_000, "the run to finish");
+
+      const files = readdirSync(sessionDir, { recursive: true }).filter((f) => String(f).endsWith(".jsonl"));
+      assert.ok(files.length >= 3, `the run should span several sessions, got ${files.length}`);
+
+      const run = JSON.parse(readFileSync(join(dir, "harness", "run.json"), "utf-8"));
+      assert.ok(run.sessions >= 3, "and the run counted them");
+      assert.equal(run.armed, false, "a finished run is disarmed on disk, not just in memory");
+      assert.ok(run.stopReason, "and says why it stopped");
+
+      // One run id across every session is what keeps the wall-clock budget,
+      // the iteration ceiling and the escalation ladder from resetting each
+      // time the harness starts a fresh session.
+      const loop = JSON.parse(readFileSync(join(dir, "harness", "loop-state.json"), "utf-8"));
+      assert.equal(loop.runId, run.runId, "every session drove the same run");
+      assert.ok(loop.iterations >= files.length, "the iteration budget carried across sessions");
+
+      assert.match(driver.notes(), /new session — phase/, "and the human was told each time");
+      assert.deepEqual(
+        driver.events.filter((e) => e.type === "extension_error"),
+        [],
+        "no extension errors along the way",
+      );
+    });
+
+    await step("the run survives real auto-compaction", async () => {
+      // A model whose replies are long and whose reported context is nearly
+      // full: pi compacts on its own, exactly as it would on a real long run.
+      writeFileSync(
+        scriptPath,
+        JSON.stringify({
+          default: {
+            content: `Working. ${"Lorem ipsum dolor sit amet consectetur adipiscing elit. ".repeat(400)}`,
+            prompt_tokens: 11_500,
+          },
+        }),
+      );
+
+      const { dir, driver } = launch("compaction", {
+        initOptions: { mode: "autopilot", brief: "a demo", session: { handoff: "off", contextThreshold: 0 } },
+        contextWindow: 12_000,
+        settings: { compaction: { enabled: true, reserveTokens: 2000, keepRecentTokens: 3000 } },
+      });
+      await driver.waitForUi((r) => r.method === "setWidget", 40_000, "the plan widget");
+      await driver.prompt("/infinity:run");
+
+      await waitUntil(async () => /run finished/.test(driver.notes()), 120_000, "the run to finish");
+
+      const compactions = driver.events.filter((e) => e.type === "compaction_end").length;
+      assert.ok(compactions > 0, "the run really did compact — otherwise this proves nothing");
+      note(`${compactions} real compactions during the run`);
+
+      assert.deepEqual(driver.events.filter((e) => e.type === "extension_error"), []);
+      assert.match(driver.notes(), /run finished/, "and it still stopped for a reason, not by dying");
+
+      // The rules must be in the system prompt, which compaction never sees.
+      const requests = readFileSync(reqLog, "utf-8")
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => JSON.parse(l));
+      //
+      // Look at the turns that happened *after* a compaction — the ones pi
+      // rebuilt from a summary. Those are the turns where a harness that kept
+      // its rules in the transcript would have forgotten them.
+      const postCompaction = requests.filter((r) =>
+        (r.body?.messages ?? []).some(
+          (m) =>
+            m.role === "user" &&
+            JSON.stringify(m.content ?? "").includes("compacted into the following summary"),
+        ),
+      );
+      assert.ok(postCompaction.length > 0, "at least one turn ran on a compacted context");
+      note(`${postCompaction.length} turns ran on a compacted context`);
+
+      for (const req of postCompaction) {
+        const system = (req.body?.messages ?? []).find((m) => m.role === "system");
+        assert.ok(system, "pi sent a system prompt");
+        assert.match(String(system.content), /infinity-harness/, "carrying the harness contract");
+        assert.match(String(system.content), /infinity_validate/, "including the rule the run depends on");
+      }
+
+      const config = JSON.parse(readFileSync(join(dir, "harness", "config.json"), "utf-8"));
+      assert.ok(config.currentPhase, "and the pipeline still knows where it is");
+
+      writeFileSync(scriptPath, JSON.stringify({ default: { content: "Working." } }));
+    });
+
+    await step("an approval gate stops the run for a human, and takes their answer", async () => {
+      const { dir, driver } = launch("approval", {
+        initOptions: {
+          mode: "copilot",
+          brief: "a demo",
+          approvals: { define: true, plan: true },
+          session: { handoff: "off", contextThreshold: 0 },
+        },
+        plan: {
+          version: "2.0",
+          baseRevision: 1,
+          goals: [{ id: "goal-001", title: "a demo" }],
+          sprints: [],
+          features: [
+            {
+              id: "feature-001",
+              name: "F1",
+              criteria: ["it works"],
+              tasks: [{ id: "task-001", description: "do the thing", status: "complete", dependsOn: [], subtasks: [] }],
+            },
+          ],
+        },
+      });
+      await driver.waitForUi((r) => r.method === "setWidget", 40_000, "the plan widget");
+
+      driver.answer((r) => /DEFINE is waiting for you/.test(r.title ?? ""), (r) =>
+        r.options.find((o) => /send it back/.test(o)),
+      );
+      driver.answer((r) => /What needs to change/.test(r.title ?? ""), "the criteria say nothing about refunds");
+
+      await driver.prompt("/infinity:run");
+      await waitUntil(
+        async () => /sent back/.test(driver.notes()),
+        90_000,
+        "the run to stop and take the rejection",
+      );
+
+      const told = driver.transcript().find((m) => /sent it back/.test(m.text));
+      assert.ok(told, "the agent is told what the human said, not just that they said no");
+      assert.match(told.text, /refunds/);
+
+      const config = JSON.parse(readFileSync(join(dir, "harness", "config.json"), "utf-8"));
+      assert.equal(config.currentPhase, "define", "and the phase did not advance");
+
+      // A rejection nobody acts on must not spin forever: the no-progress
+      // detector has to see it, which it did not when this was an early
+      // return in the loop.
+      await waitUntil(async () => /run finished/.test(driver.notes()), 120_000, "the run to give up");
+      assert.match(driver.notes(), /sent .* back|not acting on it|no change/i);
+    });
+
+    await step("`pi -p` does not hang on a harness project", async () => {
+      // The brief used to be queued with `deliverAs: "nextTurn"`, which waits
+      // for a user prompt. Print mode never has one, so every headless run
+      // hung on startup and nothing in the suite could see it.
+      const dir = mkTempDir("realpi-print");
+      gitInit(dir);
+      writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "demo", scripts: { test: "node -e 0" } }));
+      gitCommitAll(dir, "chore: initial commit");
+      initHarness(dir, { mode: "autopilot", brief: "a demo" });
+
+      const configDir = join(workdir, "pi-print");
+      mkdirSync(configDir, { recursive: true });
+      writeFileSync(
+        join(configDir, "models.json"),
+        JSON.stringify({
+          providers: {
+            mock: {
+              baseUrl: `http://127.0.0.1:${mock.port}`,
+              api: "openai-completions",
+              apiKey: "mock",
+              compat: { supportsDeveloperRole: false, supportsReasoningEffort: false },
+              models: [{ id: "mock-1", name: "Mock", contextWindow: 40000, maxTokens: 4096 }],
+            },
+          },
+        }),
+      );
+
+      const res = spawnSync(
+        process.execPath,
+        [piBin, "-p", "-a", "--offline", "--provider", "mock", "--model", "mock-1", "--api-key", "mock", "--no-session", "-e", EXT, "say hi"],
+        {
+          cwd: dir,
+          encoding: "utf-8",
+          timeout: 60_000,
+          env: { ...process.env, PI_CODING_AGENT_DIR: configDir, PI_OFFLINE: "1", PI_SKIP_VERSION_CHECK: "1", NO_COLOR: "1" },
+        },
+      );
+      assert.notEqual(res.signal, "SIGTERM", "pi -p must not hang on a harness project");
+      assert.equal(res.status, 0, `pi -p failed: ${res.stderr || res.stdout}`);
+      assert.match(res.stdout, /\S/, "and it produced output");
+      rmSync(dir, { recursive: true, force: true });
+    });
+  } finally {
+    for (const d of drivers) {
+      try {
+        await d.stop();
+      } catch {
+        /* a dead process is the desired end state */
+      }
+    }
+    mock.stop();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+}
+
 const SCENARIOS = [
   ["pipeline", "the full walkthrough: define → plan → build → verify → review → ship", scenarioPipeline],
   ["convergence", "a continuous run drives itself to complete", scenarioConvergence],
@@ -3456,6 +4151,7 @@ const SCENARIOS = [
   ["coldstart", "install, open pi, and get to a working harness", scenarioColdStart],
   ["escalation", "what a stuck run does before it gives up", scenarioEscalation],
   ["goal", "the outer loop: is the thing that was asked for actually done?", scenarioGoal],
+  ["realpi", "a real pi process, driven like a human: dialogs, widget, compaction, handoff", scenarioRealPi],
   ["package", "what npm actually ships, unpacked and inspected", scenarioPackage],
   ["live", "one real model call (skipped when the endpoint is unreachable)", scenarioLive],
 ];

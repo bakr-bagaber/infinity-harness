@@ -263,6 +263,11 @@ export type GlyphSet = {
   arrow: string;
   more: string;
   branch: string;
+  goal: string;
+  sprint: string;
+  treeMid: string;
+  treeEnd: string;
+  treeBar: string;
   phaseDone: string;
   phaseCurrent: string;
   phaseTodo: string;
@@ -283,6 +288,11 @@ export const UNICODE_GLYPHS: GlyphSet = {
   arrow: "←",
   more: "⋯",
   branch: "▸",
+  goal: "◈",
+  sprint: "▤",
+  treeMid: "├─",
+  treeEnd: "└─",
+  treeBar: "│ ",
   phaseDone: "●",
   phaseCurrent: "◉",
   phaseTodo: "○",
@@ -303,6 +313,11 @@ export const ASCII_GLYPHS: GlyphSet = {
   arrow: "<-",
   more: "...",
   branch: ">",
+  goal: "#",
+  sprint: "=",
+  treeMid: "|-",
+  treeEnd: "`-",
+  treeBar: "| ",
   phaseDone: "x",
   phaseCurrent: "O",
   phaseTodo: "o",

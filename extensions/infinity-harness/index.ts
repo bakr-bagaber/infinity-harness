@@ -16,11 +16,15 @@
  *   - refusing tool calls that would skip a phase
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionCommandContext,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "node:crypto";
 
 import { isHarnessProject, loadConfig, saveConfig } from "../../src/core/config.ts";
-import { loadFeatureList, computeProgress } from "../../src/core/featureList.ts";
+import { loadFeatureList, computeProgress, nextActionableTask } from "../../src/core/featureList.ts";
 import { buildBrief, renderBrief } from "../../src/core/brief.ts";
 import { runChecks } from "../../src/core/gates.ts";
 import { advancePhase } from "../../src/core/phases.ts";
@@ -36,7 +40,7 @@ import {
 import { writeTaskList, summarizeApply, type TaskInput } from "../../src/taskList.ts";
 import { renderWidget, renderStatusLine, type WidgetState } from "../../src/ui/widget.ts";
 import { createStyler, detectGlyphs } from "../../src/ui/theme.ts";
-import { decideNext, stopFilePath, loopStatePath } from "../../src/loop.ts";
+import { decideNext, fingerprint, stopFilePath, loopStatePath } from "../../src/loop.ts";
 import { runConfigMenu, renderSettings, type ModelChoice, type Prompter } from "../../src/ui/config.ts";
 import { SETTINGS, readAll, readSetting, formatValue } from "../../src/core/settings.ts";
 import { detectStack, describeInit, initHarness, type StackId } from "../../src/core/init.ts";
@@ -56,6 +60,27 @@ import {
   type ReviewInput,
 } from "../../src/goal.ts";
 import { flattenTasks } from "../../src/core/featureList.ts";
+import {
+  armRun,
+  countSession,
+  disarmRun,
+  loadRunState,
+  runIdFor,
+} from "../../src/runState.ts";
+import {
+  clearHandoff,
+  composeKickoff,
+  describeHandoff,
+  hasPendingHandoff,
+  requestHandoff,
+  shouldHandoff,
+  takeHandoff,
+  type HandoffReason,
+} from "../../src/handoff.ts";
+import { needsApproval, resolveApproval, approvedPhases } from "../../src/approval.ts";
+import { runIntakeWizard, unattendedIntake } from "../../src/ui/wizard.ts";
+import { defaultView, scrollView, SCROLL_STEP, TASK_WINDOW, EXPANDED_WINDOW, type WidgetView } from "../../src/ui/widget.ts";
+import { buildPlanRows } from "../../src/ui/planTree.ts";
 
 const CHECKPOINT = "infinity:checkpoint";
 const WIDGET_KEY = "infinity-harness";
@@ -79,13 +104,31 @@ function notify(ctx: unknown, message: string, level: "info" | "warning" | "erro
 
 export default function (pi: ExtensionAPI): void {
   // -- session-scoped state -------------------------------------------------
-  const runId = randomUUID();
+  //
+  // Everything a *run* needs outlives this session and lives in `harness/`.
+  // What is left here is genuinely per-session: this session's own id, and
+  // where the human has scrolled the widget.
+  const sessionId = randomUUID();
   let llmCalls = 0;
-  let loopEnabled = false;
   let loopBusy = false;
+  let handingOff = false;
   let lastBriefPhase: string | null = null;
   let remoteServer: { url: string; close: () => Promise<void> } | null = null;
   let remoteDir: string | null = null;
+  let view: WidgetView = defaultView();
+
+  /**
+   * Is a continuous run armed?
+   *
+   * Read from disk, not from a closure variable. The old `let loopEnabled`
+   * died with the pi session that held it, which meant the first session
+   * handoff — the whole point of the fresh-session policy — silently ended
+   * the run it was supposed to continue.
+   */
+  const loopArmed = (dir: string): boolean => loadRunState(dir)?.armed === true;
+
+  /** The run this session belongs to, or this session, when nothing is armed. */
+  const runFor = (dir: string): string => runIdFor(dir, sessionId);
 
   const styler = createStyler();
   const glyphs = detectGlyphs();
@@ -104,8 +147,13 @@ export default function (pi: ExtensionAPI): void {
       const lastRung = loop?.escalations?.[loop.escalations.length - 1]?.strategy ?? null;
       const pass = typeof config.goalPass === "number" ? config.goalPass : null;
       const maxPasses = typeof config.goalMaxPasses === "number" ? config.goalMaxPasses : null;
+      const run = loadRunState(dir);
       return {
         list,
+        view,
+        sessions: run?.sessions ?? null,
+        intake: typeof config.intake?.brief === "string" ? config.intake.brief : null,
+        awaitingApproval: config.awaitingApproval ?? null,
         phase: config.currentPhase,
         enabledPhases: config.phases?.enabled,
         paused: Boolean(config.paused),
@@ -133,6 +181,31 @@ export default function (pi: ExtensionAPI): void {
     } catch {
       /* the widget is never worth breaking a turn over */
     }
+  };
+
+  /** How many rows the plan currently has — the bound for scrolling. */
+  const planRowCount = (dir: string): number => {
+    try {
+      const { list } = loadFeatureList(dir);
+      return buildPlanRows(list, null, { expandSubtasks: view.expanded }).length;
+    } catch {
+      return 0;
+    }
+  };
+
+  /**
+   * The widget is a window onto the plan, and the window has to move.
+   *
+   * A fixed nine-row slice of a sixty-row plan is a widget that is *truncated*,
+   * which is exactly how it read: the rows outside the window may as well not
+   * exist. They exist; these keys reach them.
+   */
+  const moveView = (ctx: ExtensionContext, delta: number): void => {
+    const dir = projectDir(ctx);
+    const rows = planRowCount(dir);
+    const windowRows = view.expanded ? EXPANDED_WINDOW : TASK_WINDOW;
+    view = scrollView(view, delta, rows, windowRows);
+    refreshWidget(ctx);
   };
 
   // -- brief ----------------------------------------------------------------
@@ -188,34 +261,285 @@ export default function (pi: ExtensionAPI): void {
     notify: (message, level) => notify(ctx, message, level ?? "info"),
   });
 
+  // -- session handoff ------------------------------------------------------
+
+  /** The task the pipeline is on right now, or null. */
+  const activeTaskKey = (dir: string): string | null => {
+    try {
+      const { list } = loadFeatureList(dir);
+      return nextActionableTask(list)?.compositeKey ?? null;
+    } catch {
+      return null;
+    }
+  };
+
+  /** How full this session's context is, 0..1, or null when pi cannot say. */
+  const contextRatio = (ctx: ExtensionContext): number | null => {
+    try {
+      const usage = ctx.getContextUsage?.();
+      if (!usage || typeof usage.percent !== "number") return null;
+      return usage.percent > 1 ? usage.percent / 100 : usage.percent;
+    } catch {
+      return null;
+    }
+  };
+
+  /**
+   * Continue the run in a fresh session, if the policy says to.
+   *
+   * Returns true when a handoff was started, in which case the caller must not
+   * also send the brief — the replacement session will.
+   *
+   * `ctx.newSession` deadlocks if it is called from an event handler, so the
+   * actual switch happens in the `/infinity:handoff` command. Queuing that
+   * command as a follow-up user message is the documented way to reach a
+   * command from a handler.
+   */
+  const maybeHandOff = async (
+    ctx: ExtensionContext,
+    dir: string,
+    brief: string,
+    fromPhase: Phase | null,
+    toPhase: Phase | null,
+    fromTask: string | null,
+  ): Promise<boolean> => {
+    // A handoff that was asked for and never happened would wedge the run:
+    // this session stops driving and the replacement never arrives. One
+    // attempt, then carry on here — a run that continues in a fat session is
+    // far better than a run that stops.
+    if (handingOff) {
+      if (hasPendingHandoff(dir)) {
+        notify(ctx, "infinity-harness: the new session never started — continuing here.", "warning");
+        clearHandoff(dir);
+      }
+      handingOff = false;
+      return false;
+    }
+    try {
+      const { config } = loadConfig(dir);
+      const decision = shouldHandoff({
+        config,
+        fromPhase,
+        toPhase,
+        fromTask,
+        toTask: activeTaskKey(dir),
+        contextRatio: contextRatio(ctx),
+      });
+      if (!decision.handoff) return false;
+
+      requestHandoff(dir, {
+        reason: decision.reason,
+        detail: decision.detail,
+        kickoff: composeKickoff(brief, decision.reason, decision.detail, carryNote(dir)),
+        carry: carryNote(dir),
+        runId: runFor(dir),
+      });
+      handingOff = true;
+      // The replacement session announces itself on arrival; saying it twice
+      // here would just make the log look like two handoffs happened.
+      pi.sendUserMessage("/infinity:handoff", {
+        deliverAs: "followUp",
+        expandPromptTemplates: true,
+      });
+      return true;
+    } catch (e) {
+      // A handoff that cannot be arranged must never end the run. Fall back to
+      // continuing in this session, which is exactly the old behaviour.
+      notify(ctx, `infinity-harness: staying in this session — ${errMsg(e)}`, "warning");
+      handingOff = false;
+      clearHandoff(dir);
+      return false;
+    }
+  };
+
+  /** One line on where the run stands, carried into the next session. */
+  const carryNote = (dir: string): string | null => {
+    try {
+      const { config } = loadConfig(dir);
+      if (config.session?.carryNotes === false) return null;
+      const { list } = loadFeatureList(dir);
+      const p = computeProgress(list);
+      const recent = (config.gateHistory ?? []).slice(-3).map((g) => `${g.phase}:${g.result}`);
+      return (
+        `  ${p.tasksDone}/${p.tasksTotal} tasks done, ${p.featuresDone}/${p.featuresTotal} features` +
+        (recent.length ? `; recent gates ${recent.join(", ")}` : "")
+      );
+    } catch {
+      return null;
+    }
+  };
+
+  // -- approvals ------------------------------------------------------------
+
+  /**
+   * Collect the human's signature on a phase.
+   *
+   * With dialogs, ask straight away — the human is right there and the run is
+   * stopped for them. Without dialogs there is nobody to ask, so the run parks
+   * and says loudly what it is waiting for, because auto-approving a phase the
+   * human explicitly asked to sign would make the setting a lie.
+   */
+  const askForApproval = async (ctx: ExtensionContext, dir: string, phase: Phase): Promise<void> => {
+    if (!ctx.hasUI) {
+      disarmRun(dir, `${phase} is waiting for approval`);
+      notify(
+        ctx,
+        `infinity-harness: ${phase.toUpperCase()} needs your approval and this mode has no dialogs. ` +
+          `Run \`/infinity:approve\` (optionally with what is wrong) to continue.`,
+        "warning",
+      );
+      return;
+    }
+
+    const APPROVE = "approve — continue the run";
+    const REJECT = "send it back — I will say what is wrong";
+    const LATER = "not now — park the run";
+    const choice = await ctx.ui.select(`${phase.toUpperCase()} is waiting for you`, [APPROVE, REJECT, LATER]);
+
+    if (choice === REJECT) {
+      const note = await ctx.ui.input("What needs to change?", "the criteria do not cover refunds");
+      await applyApproval(ctx, dir, note ?? "");
+      return;
+    }
+    if (choice === APPROVE) {
+      await applyApproval(ctx, dir, "");
+      return;
+    }
+    disarmRun(dir, `${phase} is waiting for approval`);
+    notify(ctx, `infinity-harness: parked. \`/infinity:approve\` continues.`, "info");
+    refreshWidget(ctx);
+  };
+
+  /** Record the verdict and get the run moving again. */
+  const applyApproval = async (ctx: ExtensionContext, dir: string, note: string): Promise<void> => {
+    // Pin a rejection to the project as it is right now, so the run knows
+    // whether the agent has actually done anything about it before asking the
+    // human the same question again.
+    const outcome = resolveApproval(dir, note, note.trim() ? await fingerprint(dir) : "");
+    if (!outcome.ok) {
+      notify(ctx, `infinity-harness: ${outcome.error}`, "warning");
+      return;
+    }
+    refreshWidget(ctx);
+
+    if (outcome.approved) {
+      notify(ctx, `infinity-harness: ${outcome.phase.toUpperCase()} approved.`, "info");
+      // The gate already passed; re-settling lets the loop advance normally.
+      const moved = await advancePhase(dir);
+      refreshWidget(ctx);
+      if (!moved.ok) {
+        notify(ctx, `infinity-harness: could not advance — ${moved.error}`, "error");
+        return;
+      }
+      const brief = await briefText(dir);
+      lastBriefPhase = moved.to;
+      if (loopArmed(dir) && (await maybeHandOff(ctx, dir, brief, outcome.phase, moved.to, null))) return;
+      pi.sendUserMessage(brief, { deliverAs: "followUp" });
+      return;
+    }
+
+    notify(
+      ctx,
+      `infinity-harness: ${outcome.phase.toUpperCase()} sent back — ${outcome.note}`,
+      "warning",
+    );
+    pi.sendUserMessage(
+      `A human reviewed ${outcome.phase.toUpperCase()} and sent it back:\n\n${outcome.note}\n\n` +
+        `Address that, then validate again.\n\n${await briefText(dir)}`,
+      { deliverAs: "followUp" },
+    );
+  };
+
   // -- lifecycle ------------------------------------------------------------
 
-  pi.on("session_start", async (_event, ctx) => {
+  pi.on("session_start", async (event, ctx) => {
     const dir = projectDir(ctx);
     if (!isHarnessProject(dir)) return;
 
+    view = defaultView();
     refreshWidget(ctx);
     const { config } = loadConfig(dir);
     lastBriefPhase = config.currentPhase;
 
-    notify(ctx, `infinity-harness active · ${config.currentPhase ?? "not started"}`, "info");
+    const reason = (event as { reason?: string } | undefined)?.reason ?? "startup";
+    const run = reason === "startup" ? loadRunState(dir) : countSession(dir);
+    const armed = run?.armed === true;
+
+    notify(
+      ctx,
+      `infinity-harness active · ${config.currentPhase ?? "not started"}` +
+        (armed ? ` · run continuing (session ${run?.sessions ?? 1})` : ""),
+      "info",
+    );
     try {
-      pi.appendEntry("infinity:session", { runId, dir, phase: config.currentPhase });
+      pi.appendEntry("infinity:session", {
+        sessionId,
+        runId: runFor(dir),
+        reason,
+        dir,
+        phase: config.currentPhase,
+      });
     } catch {
       /* entry log is best-effort */
+    }
+
+    // A handoff written by the session this one replaces. It carries the brief
+    // plus the reason the previous session ended, so the agent does not spend
+    // its first turn working out why it woke up mid-run.
+    const pending = takeHandoff(dir);
+    if (pending && pending.runId === runFor(dir)) {
+      try {
+        pi.sendUserMessage(pending.kickoff, { deliverAs: "followUp" });
+        notify(ctx, `infinity-harness: ${describeHandoff(pending)}`, "info");
+      } catch (e) {
+        notify(ctx, `infinity-harness: handoff failed — ${errMsg(e)}`, "error");
+      }
+      return;
     }
 
     // The brief is delivered as a message rather than a notification so the
     // model actually reads it. Without this the agent starts from whatever
     // the user typed and ignores the pipeline entirely.
+    //
+    // `nextTurn` is right in a terminal, where a human is about to type. It is
+    // a deadlock in `pi -p`, which has no next turn and waits forever for one:
+    // the harness made every headless run hang on startup. Non-interactive
+    // modes get `steer`, which folds the brief into the turn already starting.
     try {
       const text = await briefText(dir);
+      const interactive = ctx.mode === "tui" || ctx.mode === "rpc";
       pi.sendMessage(
         { customType: "infinity:brief", content: text, display: true, details: { phase: config.currentPhase } },
-        { triggerTurn: false, deliverAs: "nextTurn" },
+        { triggerTurn: false, deliverAs: interactive ? "nextTurn" : "steer" },
       );
     } catch (e) {
       notify(ctx, `infinity-harness: could not build brief — ${errMsg(e)}`, "warning");
+    }
+  });
+
+  /**
+   * The harness contract, in the system prompt.
+   *
+   * Everything else the harness tells the model is a message in the
+   * transcript, and every message in the transcript is something compaction
+   * can summarise into "the assistant was working on a harness". That is how a
+   * long run loses the plot: not by forgetting the plan — the plan is on disk
+   * — but by forgetting that it is *supposed to* work from the plan, stop when
+   * a gate fails, and never mark its own work complete.
+   *
+   * The system prompt is rebuilt from scratch every turn and is never
+   * summarised. Anything the run cannot afford to forget belongs here.
+   */
+  pi.on("before_agent_start", async (event, ctx) => {
+    const dir = projectDir(ctx);
+    if (!isHarnessProject(dir)) return;
+    try {
+      const contract = harnessContract(dir);
+      if (!contract) return;
+      const base = (event as { systemPrompt?: string }).systemPrompt ?? ctx.getSystemPrompt();
+      return { systemPrompt: `${base}\n\n${contract}` };
+    } catch {
+      return;
     }
   });
 
@@ -280,28 +604,52 @@ export default function (pi: ExtensionAPI): void {
   });
 
   /**
-   * Compaction drops the transcript. The plan lives on disk so it survives,
-   * but the model's *awareness* of it does not — so we re-state it afterwards.
+   * Compaction drops the transcript.
+   *
+   * The plan survives — it is on disk — and since 2.3 so do the rules, because
+   * they live in the system prompt (`before_agent_start`) where no summariser
+   * can reach them. What is left to restore is the *current* brief, so the
+   * agent picks up on the same task rather than re-deriving one from a summary
+   * of a summary.
    */
   pi.on("session_before_compact", async (_event, ctx) => {
     const dir = projectDir(ctx);
     if (!isHarnessProject(dir)) return;
     try {
       const { list } = loadFeatureList(dir);
-      pi.appendEntry(CHECKPOINT, { revision: list.baseRevision, at: new Date().toISOString() });
+      const { config } = loadConfig(dir);
+      pi.appendEntry(CHECKPOINT, {
+        revision: list.baseRevision,
+        phase: config.currentPhase,
+        runId: runFor(dir),
+        at: new Date().toISOString(),
+      });
     } catch {
       /* checkpoint is advisory */
     }
   });
 
-  pi.on("session_compact", async (_event, ctx) => {
+  pi.on("session_compact", async (event, ctx) => {
     const dir = projectDir(ctx);
     if (!isHarnessProject(dir)) return;
     try {
       const text = await briefText(dir);
+
+      // Delivery mode is the whole bug here. `nextTurn` waits for a human to
+      // type, which never happens in an unattended run — so the re-brief that
+      // was supposed to rescue the agent after compaction sat in a queue while
+      // the agent carried on without it. Overflow compaction retries the
+      // aborted turn immediately, so the brief has to land *in* that turn.
+      const willRetry = (event as { willRetry?: boolean } | undefined)?.willRetry === true;
+      const running = willRetry || !ctx.isIdle?.();
       pi.sendMessage(
-        { customType: "infinity:brief", content: text, display: false, details: { after: "compaction" } },
-        { triggerTurn: false, deliverAs: "nextTurn" },
+        {
+          customType: "infinity:brief",
+          content: text,
+          display: false,
+          details: { after: "compaction", reason: (event as { reason?: string })?.reason ?? null },
+        },
+        { triggerTurn: false, deliverAs: running ? "steer" : "nextTurn" },
       );
       refreshWidget(ctx);
     } catch {
@@ -316,33 +664,63 @@ export default function (pi: ExtensionAPI): void {
   /**
    * The loop. `agent_settled` fires when the agent has stopped working, which
    * is the only safe moment to run the gate and decide what happens next.
+   *
+   * The run's armed flag is read from disk on every tick rather than held in a
+   * closure, so a run survives the session handoffs it now performs, plus
+   * `/reload`, `/resume`, and pi being restarted.
    */
   pi.on("agent_settled", async (_event, ctx) => {
     const dir = projectDir(ctx);
     if (!isHarnessProject(dir)) return;
-    if (!loopEnabled || loopBusy) return;
+    if (loopBusy || handingOff) return;
+    if (!loopArmed(dir)) return;
 
     loopBusy = true;
     try {
-      const { decision } = await decideNext({ targetDir: dir, runId });
+      const before = loadConfig(dir).config;
+      const beforeTask = activeTaskKey(dir);
+      const { decision } = await decideNext({ targetDir: dir, runId: runFor(dir) });
       refreshWidget(ctx);
 
       switch (decision.action) {
-        case "advanced":
+        case "advanced": {
           notify(ctx, `infinity-harness: gate passed → ${decision.toPhase}`, "info");
           lastBriefPhase = decision.toPhase;
+          if (await maybeHandOff(ctx, dir, decision.message, before.currentPhase, decision.toPhase, beforeTask)) {
+            break;
+          }
           pi.sendUserMessage(decision.message, { deliverAs: "followUp" });
           break;
-        case "continue":
-          notify(ctx, `infinity-harness: gate failed — re-briefing`, "warning");
+        }
+        case "continue": {
+          // Say *why* it is going round again. "gate failed" was printed even
+          // when the gate had passed and the run was waiting on a rejection
+          // the agent had not acted on, which reads as a different bug.
+          notify(ctx, `infinity-harness: ${decision.reason} — re-briefing`, "warning");
+          // A failed gate on the same phase is normally the same session's
+          // problem to fix. The exception is context pressure: carrying on in
+          // a session that is about to compact is how a run degrades into
+          // summaries of summaries.
+          if (await maybeHandOff(ctx, dir, decision.message, before.currentPhase, before.currentPhase, beforeTask)) {
+            break;
+          }
           pi.sendUserMessage(decision.message, { deliverAs: "followUp" });
           break;
+        }
+        case "approve": {
+          // Not a stop. The run is parked on a human, and the widget, the
+          // status line and the notification all say so.
+          notify(ctx, `infinity-harness: ${decision.detail}`, "warning");
+          pi.sendUserMessage(decision.message, { deliverAs: "followUp" });
+          await askForApproval(ctx, dir, decision.phase);
+          break;
+        }
         case "wait":
-          loopEnabled = false;
+          disarmRun(dir, decision.detail);
           notify(ctx, `infinity-harness: ${decision.detail}`, "warning");
           break;
         case "stop":
-          loopEnabled = false;
+          disarmRun(dir, decision.detail);
           notify(
             ctx,
             `infinity-harness: run finished — ${decision.detail}`,
@@ -355,8 +733,9 @@ export default function (pi: ExtensionAPI): void {
           }
           break;
       }
+      refreshWidget(ctx);
     } catch (e) {
-      loopEnabled = false;
+      disarmRun(dir, `loop error: ${errMsg(e)}`);
       notify(ctx, `infinity-harness: loop error, stopping — ${errMsg(e)}`, "error");
     } finally {
       loopBusy = false;
@@ -421,7 +800,6 @@ export default function (pi: ExtensionAPI): void {
       remoteServer = null;
       remoteDir = null;
     }
-    loopEnabled = false;
     loopBusy = false;
   });
 
@@ -784,7 +1162,19 @@ export default function (pi: ExtensionAPI): void {
   const DEFAULT_LADDER = ["retry", "reframe", "consult", "rework", "replan", "master"];
 
   /** Everything the pipeline can run. INIT is not a phase you choose. */
-  const SELECTABLE_PHASES: Phase[] = ["define", "plan", "build", "verify", "simplify", "review", "ship"];
+  // Everything except INIT, which is not a phase anyone chooses. RESEARCH is
+  // here because it is a real, optional phase — omitting it from the picker
+  // was the difference between a feature and a feature nobody can find.
+  const SELECTABLE_PHASES: Phase[] = [
+    "research",
+    "define",
+    "plan",
+    "build",
+    "verify",
+    "simplify",
+    "review",
+    "ship",
+  ];
 
   pi.registerTool({
     name: "infinity_init",
@@ -833,10 +1223,11 @@ export default function (pi: ExtensionAPI): void {
   });
 
   pi.registerCommand("infinity:init", {
-    description: "Create a harness in this project",
+    description: "Set up a harness here — mode, goal, research, approvals, sessions",
     handler: async (args: string, ctx: ExtensionContext) => {
       const dir = projectDir(ctx);
       const force = /\bforce\b/.test(args);
+      const goalFromArgs = args.replace(/\bforce\b/g, "").trim();
 
       if (isHarnessProject(dir) && !force) {
         notify(
@@ -848,28 +1239,34 @@ export default function (pi: ExtensionAPI): void {
       }
 
       const detected = detectStack(dir);
-      let mode: "copilot" | "autopilot" = "copilot";
       let phases: Phase[] | undefined;
 
-      // With dialogs, ask the two questions whose answers we cannot infer.
-      // Without them, take the detected defaults and say so — an unattended
-      // run must not stall on a prompt nobody will answer.
+      // Two things used to be wrong here, and they compounded.
+      //
+      // First, the wizard never asked what was being built — so picking
+      // "autopilot" started a run with no idea and no scope, and the harness
+      // invented a project and began building it. Autopilot was being read as
+      // "you decide everything, including what I want".
+      //
+      // Second, "mode" was the only question. There was no way to say "drive
+      // yourself, but show me the plan before you build it", which is what
+      // most people actually want from an unattended run.
+      //
+      // The wizard now asks for the goal in both modes, offers an optional
+      // research phase, and — in autopilot — lets the human pick exactly which
+      // of RESEARCH / DEFINE / PLAN they sign. `src/intake.ts` owns what the
+      // answers mean; `src/ui/wizard.ts` owns asking them.
       if (ctx.hasUI) {
         const cmds = Object.entries(detected.commands).filter(([, v]) => Boolean(v));
         const summary = cmds.length ? cmds.map(([k, v]) => `${k}: ${v}`).join(", ") : "no commands detected";
         const go = await ctx.ui.select(
           `Create a harness here? ${detected.label} · ${summary}`,
-          ["yes, use these defaults", "yes, but let me choose the phases", "cancel"],
+          ["yes", "yes, and let me choose the phases", "cancel"],
         );
         if (go === undefined || go === "cancel") {
           notify(ctx, "init cancelled — nothing was written.", "info");
           return;
         }
-        const picked = await ctx.ui.select("How should it run?", [
-          "copilot — you stay in the loop",
-          "autopilot — it drives itself",
-        ]);
-        if (picked?.startsWith("autopilot")) mode = "autopilot";
 
         if (go.includes("phases")) {
           const chosen = new Set<Phase>(DEFAULT_ENABLED_PHASES);
@@ -886,22 +1283,149 @@ export default function (pi: ExtensionAPI): void {
         }
       }
 
-      const result = initHarness(dir, { mode, phases, force });
+      const wizard = ctx.hasUI
+        ? await runIntakeWizard({
+            prompt: prompterFor(ctx),
+            phases,
+            brief: goalFromArgs || null,
+          })
+        : ({ cancelled: false, plan: unattendedIntake(goalFromArgs || null, phases) } as const);
+
+      if (wizard.cancelled) {
+        notify(ctx, "init cancelled — nothing was written.", "info");
+        return;
+      }
+      const plan = wizard.plan;
+
+      const result = initHarness(dir, {
+        mode: plan.mode,
+        phases: plan.phases,
+        approvals: plan.approvals,
+        session: plan.session,
+        brief: plan.brief,
+        force,
+      });
       if (!result.ok) {
         notify(ctx, result.error ?? "init failed", "error");
         return;
       }
 
-      notify(ctx, describeInit(result), "info");
+      // The wizard already showed the summary before the human confirmed it;
+      // repeating it verbatim here is noise. Warnings do repeat — they are the
+      // part worth seeing twice.
+      const lines = [describeInit(result)];
+      if (plan.warnings.length) lines.push("", ...plan.warnings.map((w) => `! ${w}`));
+      notify(ctx, lines.join("\n"), plan.warnings.length ? "warning" : "info");
       refreshWidget(ctx);
+
       // Hand the model the brief straight away, so the session that created
-      // the harness is also the session that starts using it.
-      pi.sendUserMessage(await briefText(dir), { deliverAs: "followUp" });
+      // the harness is also the session that starts using it. Without a goal
+      // the first thing it must do is ask for one — never guess one.
+      const brief = await briefText(dir);
+      const opener = plan.brief
+        ? brief
+        : `The human has not said what they want built yet. Ask them, in one short question, ` +
+          `and do not start any work or invent a scope until they answer.\n\n${brief}`;
+      pi.sendUserMessage(opener, { deliverAs: "followUp" });
     },
   });
 
+  /**
+   * Continue the run in a replacement session.
+   *
+   * This is a command rather than something the loop does directly because
+   * `ctx.newSession` is only safe from a command handler — pi deadlocks if an
+   * event handler calls it. The loop queues `/infinity:handoff` as a follow-up
+   * and this does the switch.
+   *
+   * Everything the next session needs is already on disk. `withSession` may
+   * only touch the context it is handed: the old `pi` and `ctx` are dead by
+   * the time it runs.
+   */
+  pi.registerCommand("infinity:handoff", {
+    description: "Continue this run in a fresh session, carrying the brief",
+    handler: async (args: string, ctx: ExtensionCommandContext) => {
+      const dir = projectDir(ctx);
+      if (!isHarnessProject(dir)) {
+        notify(ctx, NO_HARNESS, "warning");
+        return;
+      }
 
-  // -- escalation, rework, replan --------------------------------------------
+      // Asked for by hand, with no handoff queued: make one.
+      if (!hasPendingHandoff(dir)) {
+        const brief = await briefText(dir);
+        requestHandoff(dir, {
+          reason: "manual",
+          detail: args.trim() || "requested by hand",
+          kickoff: composeKickoff(brief, "manual", args.trim() || "requested by hand", carryNote(dir)),
+          carry: carryNote(dir),
+          runId: runFor(dir),
+        });
+      }
+
+      const pending = takeHandoff(dir);
+      if (!pending) {
+        notify(ctx, "infinity-harness: nothing to hand off.", "warning");
+        return;
+      }
+
+      // The replacement session reads this back from disk in `session_start`;
+      // put it back so the claim above does not consume it.
+      requestHandoff(dir, {
+        reason: pending.reason,
+        detail: pending.detail,
+        kickoff: pending.kickoff,
+        carry: pending.carry,
+        runId: pending.runId,
+      });
+
+      handingOff = false;
+      try {
+        await ctx.waitForIdle?.();
+        const parent = ctx.sessionManager?.getSessionFile?.() ?? undefined;
+        const result = await ctx.newSession({ parentSession: parent ?? undefined });
+        if (result?.cancelled) {
+          clearHandoff(dir);
+          notify(ctx, "infinity-harness: handoff cancelled — continuing here.", "warning");
+          pi.sendUserMessage(pending.kickoff, { deliverAs: "followUp" });
+        }
+      } catch (e) {
+        // A handoff that cannot happen must never end the run: fall back to
+        // carrying on in this session, which is the pre-2.3 behaviour.
+        clearHandoff(dir);
+        notify(ctx, `infinity-harness: could not start a new session — ${errMsg(e)}`, "warning");
+        pi.sendUserMessage(pending.kickoff, { deliverAs: "followUp" });
+      }
+    },
+  });
+
+  pi.registerCommand("infinity:approve", {
+    description: "Approve the phase waiting for you — or send it back with a note",
+    handler: async (args: string, ctx: ExtensionContext) => {
+      const dir = projectDir(ctx);
+      if (!isHarnessProject(dir)) {
+        notify(ctx, NO_HARNESS, "warning");
+        return;
+      }
+      const { config } = loadConfig(dir);
+      if (!config.awaitingApproval) {
+        const signing = approvedPhases(config);
+        notify(
+          ctx,
+          signing.length
+            ? `Nothing is waiting. You are signing: ${signing.map((p) => p.toUpperCase()).join(", ")}.`
+            : "Nothing is waiting, and you are not signing any phase. /infinity:config changes that.",
+          "info",
+        );
+        return;
+      }
+      // Approving re-arms the run: the human answering is them saying carry on.
+      if (!loopArmed(dir)) armRun(dir, sessionId);
+      await applyApproval(ctx, dir, args.trim());
+    },
+  });
+
+  // -- escalation, rework, replan --------------------------------------------  // -- escalation, rework, replan --------------------------------------------
 
   pi.registerTool({
     name: "infinity_rework",
@@ -945,7 +1469,7 @@ export default function (pi: ExtensionAPI): void {
           taskId: target.id,
           key: target.key,
           reason: params.reason ?? "rework requested",
-          runId,
+          runId: runFor(dir),
           maxImpactDepth: params.maxImpactDepth,
         });
         refreshWidget(ctx as ExtensionContext);
@@ -1134,7 +1658,7 @@ export default function (pi: ExtensionAPI): void {
       try {
         const result = await spawnIsolatedWorker({
           projectDir: dir,
-          runId,
+          runId: runFor(dir),
           featureId: target.featureId,
           taskId: target.id,
           prompt: params.prompt,
@@ -1223,7 +1747,7 @@ export default function (pi: ExtensionAPI): void {
           const { state } = await startGoal({
             targetDir: dir,
             goal: params.goal,
-            runId: `goal-${runId}`,
+            runId: `goal-${runFor(dir)}`,
             maxIterations: params.maxIterations,
           });
           refreshWidget(ctx as ExtensionContext);
@@ -1275,8 +1799,31 @@ export default function (pi: ExtensionAPI): void {
           });
           refreshWidget(ctx as ExtensionContext);
           if (!outcome.terminal) {
-            // Rewinding the pipeline means the next brief is a different one.
-            pi.sendUserMessage(await briefText(dir), { deliverAs: "followUp" });
+            // A new goal pass is the largest context boundary there is: the
+            // pipeline has rewound to its first phase and the next pass plans
+            // for what is left, not for what the last one already built.
+            // Carrying a whole finished pass of conversation into it is the
+            // worst case of the problem session handoff exists to solve.
+            const brief = await briefText(dir);
+            const { config } = loadConfig(dir);
+            if (config.session?.handoff !== "off" && loopArmed(dir)) {
+              const detail = `goal pass ${config.goalPass ?? "next"}`;
+              requestHandoff(dir, {
+                reason: "goal-pass",
+                detail,
+                kickoff: composeKickoff(brief, "goal-pass", detail, carryNote(dir)),
+                carry: carryNote(dir),
+                runId: runFor(dir),
+              });
+              handingOff = true;
+              pi.sendUserMessage("/infinity:handoff", {
+                deliverAs: "followUp",
+                expandPromptTemplates: true,
+              });
+            } else {
+              // Rewinding the pipeline means the next brief is a different one.
+              pi.sendUserMessage(brief, { deliverAs: "followUp" });
+            }
           }
           return { content: [{ type: "text", text: outcome.message }], details: viewOf(outcome.state) };
         }
@@ -1327,6 +1874,12 @@ export default function (pi: ExtensionAPI): void {
     description: "Print the current brief",
     handler: async (_args: string, ctx: ExtensionContext) => {
       const dir = projectDir(ctx);
+      // Without this guard it printed a brief for a project with no harness —
+      // a page of pipeline instructions for a pipeline that does not exist.
+      if (!isHarnessProject(dir)) {
+        notify(ctx, NO_HARNESS, "warning");
+        return;
+      }
       notify(ctx, await briefText(dir), "info");
     },
   });
@@ -1335,6 +1888,10 @@ export default function (pi: ExtensionAPI): void {
     description: "Run the gate for the current phase",
     handler: async (_args: string, ctx: ExtensionContext) => {
       const dir = projectDir(ctx);
+      if (!isHarnessProject(dir)) {
+        notify(ctx, NO_HARNESS, "warning");
+        return;
+      }
       const { config } = loadConfig(dir);
       if (!config.currentPhase) {
         notify(ctx, "No current phase.", "warning");
@@ -1355,7 +1912,7 @@ export default function (pi: ExtensionAPI): void {
         notify(ctx, NO_HARNESS, "warning");
         return;
       }
-      loopEnabled = true;
+      armRun(dir, sessionId);
       notify(
         ctx,
         `infinity-harness: continuous run armed. It stops on completion, on an exhausted retry budget, ` +
@@ -1399,7 +1956,7 @@ export default function (pi: ExtensionAPI): void {
       }
 
       try {
-        const { state } = await startGoal({ targetDir: dir, goal: text, runId: `goal-${runId}` });
+        const { state } = await startGoal({ targetDir: dir, goal: text, runId: `goal-${runFor(dir)}` });
         refreshWidget(ctx);
         notify(
           ctx,
@@ -1484,7 +2041,7 @@ export default function (pi: ExtensionAPI): void {
           taskId: target.id,
           key: target.key,
           reason: "rework from /infinity:rework",
-          runId,
+          runId: runFor(dir),
         });
         refreshWidget(ctx);
         notify(
@@ -1504,8 +2061,15 @@ export default function (pi: ExtensionAPI): void {
   pi.registerCommand("infinity:halt", {
     description: "Stop the continuous loop after the current turn",
     handler: async (_args: string, ctx: ExtensionContext) => {
-      loopEnabled = false;
+      const dir = projectDir(ctx);
+      if (!isHarnessProject(dir)) {
+        notify(ctx, NO_HARNESS, "warning");
+        return;
+      }
+      disarmRun(dir, "halted from /infinity:halt");
+      clearHandoff(dir);
       notify(ctx, "infinity-harness: continuous run stopped.", "info");
+      refreshWidget(ctx);
     },
   });
 
@@ -1513,13 +2077,17 @@ export default function (pi: ExtensionAPI): void {
     description: "Pause the pipeline (persisted in harness/config.json)",
     handler: async (_args: string, ctx: ExtensionContext) => {
       const dir = projectDir(ctx);
+      if (!isHarnessProject(dir)) {
+        notify(ctx, NO_HARNESS, "warning");
+        return;
+      }
       const { value } = await withLock(configPath(dir), () => {
         const { config, ok } = loadConfig(dir);
         if (!ok) return false;
         config.paused = true;
         return saveConfig(dir, config).ok;
       });
-      loopEnabled = false;
+      disarmRun(dir, "paused from /infinity:pause");
       notify(ctx, value ? "infinity-harness: paused." : "Could not pause — config unreadable.", value ? "info" : "error");
       refreshWidget(ctx);
     },
@@ -1529,6 +2097,10 @@ export default function (pi: ExtensionAPI): void {
     description: "Unpause the pipeline",
     handler: async (_args: string, ctx: ExtensionContext) => {
       const dir = projectDir(ctx);
+      if (!isHarnessProject(dir)) {
+        notify(ctx, NO_HARNESS, "warning");
+        return;
+      }
       const { value } = await withLock(configPath(dir), () => {
         const { config, ok } = loadConfig(dir);
         if (!ok) return false;
@@ -1601,10 +2173,83 @@ export default function (pi: ExtensionAPI): void {
     },
   });
 
+  // -- keys -----------------------------------------------------------------
+  //
+  // The widget is nine rows of a plan that is routinely sixty. Without these
+  // the other fifty-one are unreachable without opening the dashboard, which
+  // is not a thing anyone does mid-glance.
+  //
+  // `alt+` and not `ctrl+`: pi already binds ctrl+j (newline), ctrl+k (delete
+  // to line end) and ctrl+o (expand tool output). Shadowing an editor key to
+  // scroll a widget would be a worse bug than the one being fixed.
+
+  pi.registerShortcut("alt+j", {
+    description: "infinity-harness: scroll the plan down",
+    handler: async (ctx: ExtensionContext) => moveView(ctx, SCROLL_STEP),
+  });
+
+  pi.registerShortcut("alt+k", {
+    description: "infinity-harness: scroll the plan up",
+    handler: async (ctx: ExtensionContext) => moveView(ctx, -SCROLL_STEP),
+  });
+
+  pi.registerShortcut("alt+o", {
+    description: "infinity-harness: expand or collapse the plan widget",
+    handler: async (ctx: ExtensionContext) => {
+      view = { ...view, expanded: !view.expanded };
+      refreshWidget(ctx);
+    },
+  });
+
+  pi.registerCommand("infinity:scroll", {
+    description: "Move the plan widget — up, down, top, bottom, expand, follow",
+    handler: async (args: string, ctx: ExtensionContext) => {
+      const dir = projectDir(ctx);
+      if (!isHarnessProject(dir)) {
+        notify(ctx, NO_HARNESS, "warning");
+        return;
+      }
+      const what = args.trim().toLowerCase() || "down";
+      const rows = planRowCount(dir);
+      switch (what) {
+        case "up":
+          moveView(ctx, -SCROLL_STEP);
+          return;
+        case "down":
+          moveView(ctx, SCROLL_STEP);
+          return;
+        case "top":
+          view = { ...view, scroll: 0 };
+          break;
+        case "bottom":
+          view = { ...view, scroll: rows };
+          break;
+        case "expand":
+          view = { ...view, expanded: true };
+          break;
+        case "collapse":
+          view = { ...view, expanded: false };
+          break;
+        case "follow":
+          // Back to tracking the active task, which is where it starts.
+          view = defaultView();
+          break;
+        default:
+          notify(ctx, "Use: up · down · top · bottom · expand · collapse · follow", "warning");
+          return;
+      }
+      refreshWidget(ctx);
+    },
+  });
+
   pi.registerCommand("infinity:dashboard", {
     description: "Open the read-only web dashboard for this run",
     handler: async (_args: string, ctx: ExtensionContext) => {
       const dir = projectDir(ctx);
+      if (!isHarnessProject(dir)) {
+        notify(ctx, NO_HARNESS, "warning");
+        return;
+      }
       const remote = await import("../../src/remote.ts");
       if (remoteServer) {
         notify(ctx, `Dashboard already live at ${remoteServer.url}`, "info");
@@ -1620,6 +2265,52 @@ export default function (pi: ExtensionAPI): void {
 
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+
+/**
+ * The few sentences the run cannot afford to have summarised away.
+ *
+ * Short on purpose: this is paid for on every single request, and a long
+ * system prompt crowds out the work. It carries only what stops the agent
+ * going freelance after a compaction — where the pipeline is, what it is
+ * working on, and the three rules that make the harness a harness.
+ */
+function harnessContract(dir: string): string | null {
+  const { config, ok } = loadConfig(dir);
+  if (!ok || !config.currentPhase) return null;
+
+  const { list } = loadFeatureList(dir);
+  const progress = computeProgress(list);
+  const phase = config.currentPhase.toUpperCase();
+  const role = config.currentRole ?? "";
+
+  const L: string[] = [];
+  L.push("## infinity-harness");
+  L.push("");
+  L.push(
+    `This project is driven by the infinity-harness pipeline. You are at **${phase}**` +
+      (role ? ` wearing the ${role} hat` : "") +
+      `, with ${progress.tasksDone}/${progress.tasksTotal} tasks done across ` +
+      `${progress.featuresTotal} feature(s). Plan revision ${list.baseRevision}.`,
+  );
+  L.push("");
+  L.push("Rules that do not change, whatever the conversation above says:");
+  L.push("");
+  L.push("1. The plan of record is `harness/features/feature-list.json`, reached through the");
+  L.push("   `infinity_plan` tool. It is the truth; your memory of it is not.");
+  L.push("2. You never advance a phase and never mark your own work complete. Call");
+  L.push("   `infinity_validate`; the gate is the only referee. Do not edit");
+  L.push("   `harness/config.json` by hand.");
+  L.push("3. If you do not know what to do next, call `infinity_brief` rather than guessing.");
+  if (config.awaitingApproval) {
+    L.push(
+      `4. ${String(config.awaitingApproval).toUpperCase()} is waiting for a human signature. Do not start the next phase.`,
+    );
+  }
+  if (config.paused) {
+    L.push("4. The pipeline is PAUSED. Do not continue autonomously — report and stop.");
+  }
+  return L.join("\n");
 }
 
 /** Our injected reminders, so they can be pruned before the next call. */

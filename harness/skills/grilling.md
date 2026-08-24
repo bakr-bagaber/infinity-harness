@@ -3,7 +3,7 @@ name: grilling
 description: Stress-test a spec or plan with relentless one-at-a-time questions before committing
 tags: [grill, spec, requirements, questions, stress, interview, scope, clarify]
 when: before proposing the sprint contract, or when a plan feels underspecified
-phases: [define]
+phases: [research, define]
 kind: process
 provenance: { origin: "mattpocock/skills", license: MIT, adapted: true }
 ---

@@ -42,6 +42,8 @@ const SKILL_SUGGESTIONS = 2;
 
 const PHASE_INTENT: Record<Phase, string> = {
   init: "Set up the project skeleton and confirm the harness can see it.",
+  research:
+    "Find out what this actually has to be. Prior art, constraints, options with costs, a recommendation, and the questions only the human can answer. Write harness/docs/RESEARCH.md. No code.",
   define: "Write down what is being built and how you will know it is done. Acceptance criteria per feature.",
   plan: "Break each feature into ordered, dependency-aware tasks. No code yet.",
   build: "Implement the current task. One task at a time, tests alongside.",
@@ -65,6 +67,25 @@ export async function buildBrief(targetDir: string, options: BuildBriefOptions =
 
   const notes: string[] = [];
   if (!ok) notes.push("harness/config.json is missing or unreadable — run init.");
+
+  // The human rejected this phase and said why. Repeating the phase without
+  // repeating their words produces the same output and the same rejection.
+  if (phase) {
+    const rejections = rejectionNotes(config, phase);
+    const last = rejections[rejections.length - 1];
+    if (last) {
+      notes.push(
+        `A human reviewed ${phase.toUpperCase()} and sent it back. Address this before validating again: ${last.note}`,
+      );
+    }
+  }
+
+  if (config.awaitingApproval) {
+    notes.push(
+      `${String(config.awaitingApproval).toUpperCase()} is waiting for a human signature. ` +
+        "Do not start the next phase — stop and let them answer.",
+    );
+  }
 
   const nextTask = nextActionableTask(list);
   const feature = nextTask ? findFeature(list, nextTask.featureId) : null;
@@ -108,7 +129,11 @@ export async function buildBrief(targetDir: string, options: BuildBriefOptions =
     role,
     paused: Boolean(config.paused),
     complete,
-    goal: (list.goals ?? [])[0]?.title ?? null,
+    // The plan's goal is what the agent wrote down; the intake brief is what
+    // the human actually said. Before a plan exists, the second is all there
+    // is — and a run that starts with neither invents its own scope, which is
+    // exactly the failure this field was added to stop.
+    goal: (list.goals ?? [])[0]?.title ?? intakeBrief(config),
     feature: feature ? { id: feature.id, name: feature.name } : null,
     task: nextTask
       ? {
@@ -134,7 +159,7 @@ export async function buildBrief(targetDir: string, options: BuildBriefOptions =
       max: retry.tasks.max,
     },
     skills: suggestSkills(phase, {
-      goal: (list.goals ?? [])[0]?.title ?? null,
+      goal: (list.goals ?? [])[0]?.title ?? intakeBrief(config),
       feature: feature?.name ?? null,
       task: nextTask?.description ?? null,
       criteria: collectCriteria(feature, nextTask?.criteria),
@@ -164,6 +189,30 @@ function suggestSkills(
   } catch {
     return [];
   }
+}
+
+/**
+ * Notes a human left when they sent a phase back.
+ *
+ * Read here rather than imported from `src/approval.ts` on purpose: `core/`
+ * owns the config file format and must not depend on the layer above it.
+ */
+function rejectionNotes(config: HarnessConfig, phase: Phase): { note: string }[] {
+  const raw = Array.isArray(config.approvalNotes) ? config.approvalNotes : [];
+  return raw.filter(
+    (n): n is { phase: string; note: string } =>
+      typeof n === "object" &&
+      n !== null &&
+      (n as { phase?: unknown }).phase === phase &&
+      typeof (n as { note?: unknown }).note === "string",
+  );
+}
+
+/** What the human typed into the start-up wizard, if anything. */
+function intakeBrief(config: HarnessConfig): string | null {
+  const intake = config.intake as { brief?: unknown } | undefined;
+  const brief = intake?.brief;
+  return typeof brief === "string" && brief.trim() ? brief.trim() : null;
 }
 
 function collectCriteria(
