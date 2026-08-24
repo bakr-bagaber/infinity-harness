@@ -49,6 +49,9 @@ export type SettingsGroup = {
 
 // ── The schema ──────────────────────────────────────────────────────────────
 
+/** The two things a phase can do when its gate passes. */
+const PHASE_MODE_CHOICES = ["autopilot", "copilot"] as const;
+
 const DIFFICULTY_HELP =
   "Tasks the planner marked at this difficulty run on this model. Empty means: use whatever model pi is already on.";
 
@@ -152,30 +155,156 @@ export const SETTINGS: SettingsGroup[] = [
     ],
   },
   {
-    id: "approvals",
-    label: "Your approvals",
-    help: "Which phases stop and wait for your signature. These are the three that decide WHAT gets built — after PLAN, a wrong turn fails a gate and retries.",
+    id: "workflow",
+    label: "Workflow",
+    help: "Which phases stop and wait for your signature, one phase at a time. `/infinity:workflow` picks a named one or builds a new one.",
     settings: [
       {
-        path: "approvals.research",
+        path: "phaseModes.research",
         file: "config",
-        label: "Sign off RESEARCH",
-        help: "You read harness/docs/RESEARCH.md and say whether it is looking at the right problem. Only applies when the RESEARCH phase is enabled.",
-        type: { kind: "boolean" },
+        label: "RESEARCH",
+        help: "copilot stops so you can read harness/docs/RESEARCH.md before anything is specified.",
+        type: { kind: "choice", choices: PHASE_MODE_CHOICES },
       },
       {
-        path: "approvals.define",
+        path: "phaseModes.define",
         file: "config",
-        label: "Sign off DEFINE",
+        label: "DEFINE",
         help: "The highest-leverage signature: a wrong definition is a weekend building the wrong thing perfectly.",
+        type: { kind: "choice", choices: PHASE_MODE_CHOICES },
+      },
+      {
+        path: "phaseModes.plan",
+        file: "config",
+        label: "PLAN",
+        help: "copilot shows you the whole task list before a line of it is built.",
+        type: { kind: "choice", choices: PHASE_MODE_CHOICES },
+      },
+      {
+        path: "phaseModes.build",
+        file: "config",
+        label: "BUILD",
+        help: "copilot stops once the code passes its gate, so you can read the diff.",
+        type: { kind: "choice", choices: PHASE_MODE_CHOICES },
+      },
+      {
+        path: "phaseModes.verify",
+        file: "config",
+        label: "VERIFY",
+        help: "copilot asks whether the tests prove the thing works or only that it runs.",
+        type: { kind: "choice", choices: PHASE_MODE_CHOICES },
+      },
+      {
+        path: "phaseModes.simplify",
+        file: "config",
+        label: "SIMPLIFY",
+        help: "copilot shows you what was deleted before it moves on.",
+        type: { kind: "choice", choices: PHASE_MODE_CHOICES },
+      },
+      {
+        path: "phaseModes.review",
+        file: "config",
+        label: "REVIEW",
+        help: "copilot asks whether you would approve this if someone else had written it.",
+        type: { kind: "choice", choices: PHASE_MODE_CHOICES },
+      },
+      {
+        path: "phaseModes.ship",
+        file: "config",
+        label: "SHIP",
+        help: "copilot stops before the tag goes on. The last chance to say no.",
+        type: { kind: "choice", choices: PHASE_MODE_CHOICES },
+      },
+    ],
+  },
+  {
+    id: "display",
+    label: "Display",
+    help: "What the terminal widget and the web dashboard draw. `/infinity:display` picks a template or edits this level by level.",
+    settings: [
+      {
+        path: "display.levels.goal",
+        file: "config",
+        label: "Goals",
+        help: "The outermost level. Off on a plan with one goal costs you nothing.",
         type: { kind: "boolean" },
       },
       {
-        path: "approvals.plan",
+        path: "display.levels.sprint",
         file: "config",
-        label: "Sign off PLAN",
-        help: "You see the whole task list before a line of it is built, and can send it back with a note.",
+        label: "Sprints",
+        help: "Off hides the sprint rows; the features under them still show, one level shallower.",
         type: { kind: "boolean" },
+      },
+      {
+        path: "display.levels.feature",
+        file: "config",
+        label: "Features",
+        help: "Off hides the feature rows; their tasks still show.",
+        type: { kind: "boolean" },
+      },
+      {
+        path: "display.levels.task",
+        file: "config",
+        label: "Tasks",
+        help: "Off leaves the shape of the run without the work — see the `overview` template.",
+        type: { kind: "boolean" },
+      },
+      {
+        path: "display.levels.subtask",
+        file: "config",
+        label: "Subtasks",
+        help: "active shows them only on the task being worked, which is what fits in a widget.",
+        type: { kind: "choice", choices: ["none", "active", "all"] },
+      },
+      {
+        path: "display.counts",
+        file: "config",
+        label: "Counts",
+        help: "The done/total figure on goals, sprints and features.",
+        type: { kind: "boolean" },
+      },
+      {
+        path: "display.dependencies",
+        file: "config",
+        label: "Dependency labels",
+        help: "The `← #3` markers that say which task a task is waiting on.",
+        type: { kind: "boolean" },
+      },
+      {
+        path: "display.criteria",
+        file: "config",
+        label: "Acceptance criteria",
+        help: "Shown under each feature on the dashboard. No room for them in a terminal widget.",
+        type: { kind: "boolean" },
+      },
+      {
+        path: "display.rail",
+        file: "config",
+        label: "Phase rail",
+        help: "The `define ─ plan ─ BUILD ─ …` strip.",
+        type: { kind: "boolean" },
+      },
+      {
+        path: "display.progress",
+        file: "config",
+        label: "Progress meter",
+        help: "The bar and the task/feature counts beside it.",
+        type: { kind: "boolean" },
+      },
+      {
+        path: "display.alerts",
+        file: "config",
+        label: "Alert strip",
+        help: "Blocked and rework counts, retries, sessions, and any phase waiting for you.",
+        type: { kind: "boolean" },
+      },
+      {
+        path: "display.taskWindow",
+        file: "config",
+        label: "Widget rows",
+        help: "How many rows of plan the terminal shows before it starts scrolling.",
+        type: { kind: "number", min: 3, max: 60 },
       },
     ],
   },

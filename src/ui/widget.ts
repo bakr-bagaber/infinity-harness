@@ -16,6 +16,8 @@ import type { FeatureList, Phase, TaskStatus } from "../core/types.ts";
 import { computeProgress, flattenTasks, nextActionableTask } from "../core/featureList.ts";
 import { getPhaseOrder } from "../core/phases.ts";
 import { buildPlanRows, focusRowIndex, type PlanRow } from "./planTree.ts";
+import { defaultDisplay, normalizeDisplay } from "./display.ts";
+import type { DisplayPolicy } from "../core/types.ts";
 import {
   createStyler,
   detectGlyphs,
@@ -73,6 +75,13 @@ export type WidgetState = {
   view?: WidgetView | null;
   /** Sessions this run has spent. Only meaningful once handoff is on. */
   sessions?: number | null;
+  /**
+   * What this reader has asked to see.
+   *
+   * The same policy drives the dashboard, so a level turned off here is off
+   * there too — configuring how you read a plan once, rather than twice.
+   */
+  display?: DisplayPolicy | null;
   /**
    * What the human asked for, before a plan exists to hold a goal.
    *
@@ -268,26 +277,30 @@ function renderRow(
   indexByKey: Map<string, number>,
   g: GlyphSet,
   s: Styler,
+  display: DisplayPolicy,
 ): string[] {
   const indent = "  ".repeat(row.depth);
+  const tagFor = (r: PlanRow): string => (display.counts ? countTag(r, s) : "");
 
   if (row.level === "goal" || row.level === "sprint") {
     const icon = s.fg(LEVEL_ROLE[row.level], row.level === "goal" ? g.goal : g.sprint);
-    const tag = countTag(row, s);
+    const tag = tagFor(row);
     const prefix = indent + icon + " ";
     const head =
       s.bold(s.fg(LEVEL_ROLE[row.level], row.title)) +
       (row.label && row.label !== row.title ? s.fg("rule", "  " + row.label) : "");
-    const body = truncate(prefix + head, Math.max(8, inner - width(tag) - 1));
+    const body = truncate(prefix + head, tag ? Math.max(8, inner - width(tag) - 1) : inner);
+    if (!tag) return [body];
     const gap = Math.max(1, inner - width(body) - width(tag));
     return [body + " ".repeat(gap) + tag];
   }
 
   if (row.level === "feature") {
-    const tag = countTag(row, s);
+    const tag = tagFor(row);
     const prefix = indent + s.fg("muted", g.branch + " ");
     const head = s.fg("muted", row.label) + s.fg("rule", " · ") + s.fg("text", row.title);
-    const body = truncate(prefix + head, Math.max(8, inner - width(tag) - 1));
+    const body = truncate(prefix + head, tag ? Math.max(8, inner - width(tag) - 1) : inner);
+    if (!tag) return [body];
     const gap = Math.max(1, inner - width(body) - width(tag));
     return [body + " ".repeat(gap) + tag];
   }
@@ -307,7 +320,7 @@ function renderRow(
   const role = statusRole(row.status ?? "pending");
   const icon = s.fg(role, statusGlyph(row.status ?? "pending", g));
   const num = s.fg("rule", row.label);
-  const dep = depLabel(row.dependsOn, indexByKey, g, s);
+  const dep = display.dependencies ? depLabel(row.dependsOn, indexByKey, g, s) : "";
   const prefix = indent + icon + " " + num + " ";
   const prefixW = width(prefix);
   const depW = dep ? width(dep) + 1 : 0;
@@ -369,7 +382,9 @@ export function renderWidget(state: WidgetState, options: WidgetOptions = {}): s
   const pad = boxed ? 2 : 0;
   const inner = Math.max(24, total - pad * 2);
   const view = state.view ?? defaultView();
-  const limit = options.taskWindow ?? (view.expanded ? EXPANDED_WINDOW : TASK_WINDOW);
+  const display = normalizeDisplay(state.display ?? defaultDisplay());
+  const limit =
+    options.taskWindow ?? (view.expanded ? Math.max(EXPANDED_WINDOW, display.taskWindow * 2) : display.taskWindow);
 
   const out: string[] = [];
   const push = (line = ""): void => {
@@ -398,7 +413,13 @@ export function renderWidget(state: WidgetState, options: WidgetOptions = {}): s
   // the tree — `buildPlanRows` collapses it there for exactly this reason.
   // Several goals are structure, and structure belongs in the tree.
   const goals = state.list.goals ?? [];
-  const headline = goals.length === 1 ? (goals[0]?.title ?? null) : goals.length === 0 ? (state.intake ?? null) : null;
+  const headline = !display.levels.goal
+    ? null
+    : goals.length === 1
+      ? (goals[0]?.title ?? null)
+      : goals.length === 0
+        ? (state.intake ?? null)
+        : null;
   if (headline) {
     const wrapped = wrap(headline, inner - 2);
     wrapped.forEach((line, i) => {
@@ -409,8 +430,10 @@ export function renderWidget(state: WidgetState, options: WidgetOptions = {}): s
   }
 
   // -- phase rail -----------------------------------------------------------
-  push();
-  push(phaseRail(state.phase, state.enabledPhases, inner, g, s));
+  if (display.rail) {
+    push();
+    push(phaseRail(state.phase, state.enabledPhases, inner, g, s));
+  }
 
   // -- progress -------------------------------------------------------------
   const full =
@@ -427,12 +450,14 @@ export function renderWidget(state: WidgetState, options: WidgetOptions = {}): s
   if (inner - width(full) < METER_MIN) stats = compact;
   if (inner - width(stats) < METER_MIN) stats = "";
 
-  const statsW = width(stats);
-  const barCells = Math.max(8, Math.min(24, inner - statsW - 8));
-  const bar = progressBar(progress.percent, barCells, g, s);
-  push();
-  const gap2 = inner - width(bar) - statsW;
-  push(truncate(bar + (gap2 > 0 ? " ".repeat(gap2) : " ") + stats, inner));
+  if (display.progress) {
+    const statsW = width(stats);
+    const barCells = Math.max(8, Math.min(24, inner - statsW - 8));
+    const bar = progressBar(progress.percent, barCells, g, s);
+    push();
+    const gap2 = inner - width(bar) - statsW;
+    push(truncate(bar + (gap2 > 0 ? " ".repeat(gap2) : " ") + stats, inner));
+  }
 
   // -- alerts ---------------------------------------------------------------
   const alerts: string[] = [];
@@ -462,7 +487,7 @@ export function renderWidget(state: WidgetState, options: WidgetOptions = {}): s
   if (state.gate && !state.gate.overall) {
     alerts.push(s.fg("blocked", "gate: " + state.gate.failures.slice(0, 3).join(", ")));
   }
-  if (alerts.length) push(truncate(alerts.join(s.fg("rule", " · ")), inner));
+  if (display.alerts && alerts.length) push(truncate(alerts.join(s.fg("rule", " · ")), inner));
 
   // -- the plan -------------------------------------------------------------
   //
@@ -484,7 +509,14 @@ export function renderWidget(state: WidgetState, options: WidgetOptions = {}): s
 
   const active = nextActionableTask(state.list);
   const rows = buildPlanRows(state.list, active?.compositeKey ?? null, {
-    expandSubtasks: view.expanded,
+    expandSubtasks: view.expanded || display.levels.subtask === "all",
+    levels: {
+      goal: display.levels.goal,
+      sprint: display.levels.sprint,
+      feature: display.levels.feature,
+      task: display.levels.task,
+      subtask: display.levels.subtask !== "none",
+    },
   });
 
   const bounds = rowWindow(rows, limit, view.scroll);
@@ -497,7 +529,7 @@ export function renderWidget(state: WidgetState, options: WidgetOptions = {}): s
   }
 
   for (const row of rows.slice(bounds.start, bounds.end)) {
-    for (const line of renderRow(row, inner, indexByKey, g, s)) push(line);
+    for (const line of renderRow(row, inner, indexByKey, g, s, display)) push(line);
   }
 
   if (hiddenAfter > 0) {

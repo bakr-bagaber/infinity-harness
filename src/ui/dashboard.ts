@@ -39,6 +39,8 @@ import { getPhaseOrder } from "../core/phases.ts";
 import { statusGlyph } from "./widget.ts";
 import { UNICODE_GLYPHS } from "./theme.ts";
 import { groupPlan, type PlanGoalGroup, type PlanSprintGroup } from "./planTree.ts";
+import { defaultDisplay, normalizeDisplay } from "./display.ts";
+import type { DisplayPolicy } from "../core/types.ts";
 
 export type DashboardState = {
   list: FeatureList;
@@ -59,6 +61,11 @@ export type DashboardState = {
   sessions?: number | null;
   /** Which goal pass this is, out of how many. */
   goalPass?: { current: number; max: number } | null;
+  /**
+   * What this reader has asked to see — the same policy the terminal widget
+   * reads, so a level turned off in one is off in the other.
+   */
+  display?: DisplayPolicy | null;
 };
 
 // ── escaping ────────────────────────────────────────────────────────────────
@@ -492,7 +499,8 @@ function depLabel(task: FlatTask, indexByKey: ReadonlyMap<string, number>): stri
  * cannot fit, so hiding four of the five plan levels here made it a worse copy
  * of the widget rather than the place you go for the full picture.
  */
-function renderSubtasks(task: FlatTask): string {
+function renderSubtasks(task: FlatTask, mode: DisplayPolicy["levels"]["subtask"], active: boolean): string {
+  if (mode === "none" || (mode === "active" && !active)) return "";
   const subs = Array.isArray(task.subtasks) ? task.subtasks : [];
   if (subs.length === 0) return "";
   const items = subs
@@ -506,7 +514,11 @@ function renderSubtasks(task: FlatTask): string {
   return `<ul class="subs">${items}</ul>`;
 }
 
-function renderTaskRow(task: FlatTask, indexByKey: ReadonlyMap<string, number>): string {
+function renderTaskRow(
+  task: FlatTask,
+  indexByKey: ReadonlyMap<string, number>,
+  display: DisplayPolicy,
+): string {
   const status = task.status;
   const cls = STATUS_CLASS[status];
   const isActive = status === "in_progress" || status === "rework";
@@ -522,9 +534,9 @@ function renderTaskRow(task: FlatTask, indexByKey: ReadonlyMap<string, number>):
       <div class="task-line">
         <span class="task-desc">${esc(task.description || task.compositeKey)}</span>
         ${difficulty}
-        ${depLabel(task, indexByKey)}
+        ${display.dependencies ? depLabel(task, indexByKey) : ""}
       </div>
-      ${renderSubtasks(task)}
+      ${renderSubtasks(task, display.levels.subtask, isActive)}
     </td>
     <td class="cell-status"><span class="pill pill-${cls}">${esc(STATUS_LABEL[status])}</span></td>
   </tr>`;
@@ -536,6 +548,7 @@ function renderFeature(
   indexByKey: ReadonlyMap<string, number>,
   sprintName: string | null,
   goalName: string | null,
+  display: DisplayPolicy,
 ): string {
   const counts = countByStatus(tasks);
   const total = tasks.length;
@@ -547,14 +560,23 @@ function renderFeature(
     feature.passes === true ? `<span class="chip chip-complete">verified</span>` : "",
   ].join("");
 
-  const body = total
-    ? `<div class="table-wrap">
+  const body = !display.levels.task
+    ? ""
+    : total
+      ? `<div class="table-wrap">
       <table class="tasks">
         <thead><tr><th scope="col" class="cell-n">#</th><th scope="col">Task</th><th scope="col" class="cell-status">Status</th></tr></thead>
-        <tbody>${tasks.map((t) => renderTaskRow(t, indexByKey)).join("")}</tbody>
+        <tbody>${tasks.map((t) => renderTaskRow(t, indexByKey, display)).join("")}</tbody>
       </table>
     </div>`
-    : `<p class="empty-inline">No tasks planned for this feature yet.</p>`;
+      : `<p class="empty-inline">No tasks planned for this feature yet.</p>`;
+
+  const criteria =
+    display.criteria && Array.isArray(feature.criteria) && feature.criteria.length
+      ? `<ul class="criteria">${feature.criteria
+          .map((c) => `<li>${esc(String(c))}</li>`)
+          .join("")}</ul>`
+      : "";
 
   return `<section class="card feature${complete ? " is-complete" : ""}">
   <div class="feature-head">
@@ -564,11 +586,12 @@ function renderFeature(
       ${chips}
     </div>
     <div class="feature-progress">
-      <span class="feature-count mono">${esc(String(counts.complete))}/${esc(String(total))}</span>
+      ${display.counts ? `<span class="feature-count mono">${esc(String(counts.complete))}/${esc(String(total))}</span>` : ""}
       ${meter(counts, total)}
     </div>
   </div>
   ${feature.description ? `<p class="feature-desc">${esc(feature.description)}</p>` : ""}
+  ${criteria}
   ${body}
 </section>`;
 }
@@ -585,9 +608,10 @@ function renderGoalGroup(
   tasksByFeature: ReadonlyMap<string, FlatTask[]>,
   indexByKey: ReadonlyMap<string, number>,
   show: { showGoal: boolean; showSprints: boolean },
+  display: DisplayPolicy,
 ): string {
   const sprints = group.sprints
-    .map((sg) => renderSprintGroup(sg, tasksByFeature, indexByKey, show.showSprints))
+    .map((sg) => renderSprintGroup(sg, tasksByFeature, indexByKey, show.showSprints, display))
     .join("");
 
   if (!show.showGoal || !group.goal) return sprints;
@@ -597,7 +621,7 @@ function renderGoalGroup(
     <span class="tier-kind">goal</span>
     <span class="tier-name">${esc(group.goal.title ?? group.goal.id ?? "")}</span>
     <span class="mono faint">${esc(group.goal.id ?? "")}</span>
-    <span class="tier-count mono">${esc(String(group.done))}/${esc(String(group.total))}</span>
+    ${display.counts ? `<span class="tier-count mono">${esc(String(group.done))}/${esc(String(group.total))}</span>` : ""}
   </summary>
   <div class="tier-body">${sprints}</div>
 </details>`;
@@ -608,10 +632,16 @@ function renderSprintGroup(
   tasksByFeature: ReadonlyMap<string, FlatTask[]>,
   indexByKey: ReadonlyMap<string, number>,
   showSprints: boolean,
+  display: DisplayPolicy,
 ): string {
-  const features = group.features
-    .map((f) => renderFeature(f, tasksByFeature.get(f.id) ?? [], indexByKey, null, null))
-    .join("");
+  const features = display.levels.feature
+    ? group.features
+        .map((f) => renderFeature(f, tasksByFeature.get(f.id) ?? [], indexByKey, null, null, display))
+        .join("")
+    : // Hiding the feature card must not hide its tasks: they move up into the
+      // sprint, which is what "hide features" has to mean on a page whose whole
+      // job is to show the plan.
+      renderLooseTasks(group.features.flatMap((f) => tasksByFeature.get(f.id) ?? []), indexByKey, display);
 
   if (!showSprints || !group.sprint) return features;
 
@@ -620,10 +650,27 @@ function renderSprintGroup(
     <span class="tier-kind">sprint</span>
     <span class="tier-name">${esc(group.sprint.name ?? group.sprint.id ?? "")}</span>
     <span class="mono faint">${esc(group.sprint.id ?? "")}</span>
-    <span class="tier-count mono">${esc(String(group.done))}/${esc(String(group.total))}</span>
+    ${display.counts ? `<span class="tier-count mono">${esc(String(group.done))}/${esc(String(group.total))}</span>` : ""}
   </summary>
   <div class="tier-body">${features}</div>
 </details>`;
+}
+
+/** Tasks with no feature card above them, for the templates that hide features. */
+function renderLooseTasks(
+  tasks: readonly FlatTask[],
+  indexByKey: ReadonlyMap<string, number>,
+  display: DisplayPolicy,
+): string {
+  if (!display.levels.task || tasks.length === 0) return "";
+  return `<section class="card feature">
+  <div class="table-wrap">
+    <table class="tasks">
+      <thead><tr><th scope="col" class="cell-n">#</th><th scope="col">Task</th><th scope="col" class="cell-status">Status</th></tr></thead>
+      <tbody>${tasks.map((t) => renderTaskRow(t, indexByKey, display)).join("")}</tbody>
+    </table>
+  </div>
+</section>`;
 }
 
 function renderEmptyPlan(phase: Phase | null): string {
@@ -857,6 +904,11 @@ body{
 .alert-rework{color:var(--t-rework);background:rgba(var(--rgb-rework),.10);border-color:rgba(var(--rgb-rework),.28)}
 .alert-active{color:var(--t-active);background:rgba(var(--rgb-active),.10);border-color:rgba(var(--rgb-active),.28)}
 .alert-quiet{color:var(--muted);background:var(--surface-2);border-color:var(--border)}
+
+/* -- acceptance criteria -------------------------------------------------- */
+.criteria{margin:10px 0 0;padding:0 0 0 18px;color:var(--muted);font-size:13px}
+.criteria li{margin:3px 0;overflow-wrap:anywhere}
+.criteria li::marker{color:var(--t-accent)}
 
 /* -- gate ----------------------------------------------------------------- */
 .gate-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
@@ -1134,14 +1186,21 @@ export function renderDashboard(state: DashboardState): string {
   // chips on a feature card — throws away the only structure that tells you
   // whether the run is nearly done with something or scattered across
   // everything.
+  const display = normalizeDisplay(state.display ?? defaultDisplay());
   const groups = groupPlan(list);
   const body = features.length
     ? groups
         .map((group) =>
-          renderGoalGroup(group, tasksByFeature, indexByKey, {
-            showGoal: goals.length > 0,
-            showSprints: sprints.length > 0,
-          }),
+          renderGoalGroup(
+            group,
+            tasksByFeature,
+            indexByKey,
+            {
+              showGoal: display.levels.goal && goals.length > 0,
+              showSprints: display.levels.sprint && sprints.length > 0,
+            },
+            display,
+          ),
         )
         .join("")
     : renderEmptyPlan(state.phase);
@@ -1168,14 +1227,18 @@ export function renderDashboard(state: DashboardState): string {
 <div id="app">
 <div class="page">
 ${renderMasthead(state.phase, paused, progress.percent, state.baseRevision, badges)}
-${renderGoals(goals)}
-${renderRail(state.phase, state.enabledPhases, paused)}
-${renderAlerts(counts, paused, state.retries, gate, {
-  awaitingApproval: state.awaitingApproval ?? null,
-  sessions: state.sessions ?? null,
-  goalPass: state.goalPass ?? null,
-})}
-${renderProgress(counts, progress.tasksTotal, progress.featuresDone, progress.featuresTotal)}
+${display.levels.goal ? renderGoals(goals) : ""}
+${display.rail ? renderRail(state.phase, state.enabledPhases, paused) : ""}
+${
+  display.alerts
+    ? renderAlerts(counts, paused, state.retries, gate, {
+        awaitingApproval: state.awaitingApproval ?? null,
+        sessions: state.sessions ?? null,
+        goalPass: state.goalPass ?? null,
+      })
+    : ""
+}
+${display.progress ? renderProgress(counts, progress.tasksTotal, progress.featuresDone, progress.featuresTotal) : ""}
 ${renderGate(gate)}
 ${body}
 <footer class="foot">

@@ -78,7 +78,29 @@ import {
   type HandoffReason,
 } from "../../src/handoff.ts";
 import { needsApproval, resolveApproval, approvedPhases } from "../../src/approval.ts";
-import { runIntakeWizard, unattendedIntake } from "../../src/ui/wizard.ts";
+import {
+  buildDisplay,
+  pickDisplay,
+  pickWorkflow,
+  runIntakeWizard,
+  unattendedIntake,
+} from "../../src/ui/wizard.ts";
+import {
+  applyWorkflow,
+  findWorkflow,
+  listWorkflows,
+  matchWorkflow,
+  renderWorkflow,
+  signedPhases,
+  summarizeWorkflow,
+} from "../../src/workflow.ts";
+import {
+  findDisplay,
+  listDisplays,
+  normalizeDisplay,
+  summarizeDisplay,
+} from "../../src/ui/display.ts";
+import type { DisplayPolicy } from "../../src/core/types.ts";
 import { defaultView, scrollView, SCROLL_STEP, TASK_WINDOW, EXPANDED_WINDOW, type WidgetView } from "../../src/ui/widget.ts";
 import { buildPlanRows } from "../../src/ui/planTree.ts";
 
@@ -165,6 +187,7 @@ export default function (pi: ExtensionAPI): void {
         sessions: run?.sessions ?? null,
         intake: typeof config.intake?.brief === "string" ? config.intake.brief : null,
         awaitingApproval: config.awaitingApproval ?? null,
+        display: normalizeDisplay(config.display),
         phase: config.currentPhase,
         enabledPhases: config.phases?.enabled,
         paused: Boolean(config.paused),
@@ -1246,7 +1269,7 @@ export default function (pi: ExtensionAPI): void {
   });
 
   pi.registerCommand("infinity:init", {
-    description: "Set up a harness here — mode, goal, research, approvals, sessions",
+    description: "Set up a harness here — workflow, goal, sessions, display",
     handler: async (args: string, ctx: ExtensionContext) => {
       const dir = projectDir(ctx);
       const force = /\bforce\b/.test(args);
@@ -1262,57 +1285,36 @@ export default function (pi: ExtensionAPI): void {
       }
 
       const detected = detectStack(dir);
-      let phases: Phase[] | undefined;
 
-      // Two things used to be wrong here, and they compounded.
+      // Three things used to be wrong here, and they compounded.
       //
-      // First, the wizard never asked what was being built — so picking
-      // "autopilot" started a run with no idea and no scope, and the harness
-      // invented a project and began building it. Autopilot was being read as
-      // "you decide everything, including what I want".
+      // The wizard never asked what was being built — so picking "autopilot"
+      // started a run with no idea and no scope, and the harness invented a
+      // project and began building it.
       //
-      // Second, "mode" was the only question. There was no way to say "drive
-      // yourself, but show me the plan before you build it", which is what
-      // most people actually want from an unattended run.
+      // "mode" was the only question, and one switch cannot say "drive
+      // yourself, but show me the plan before you build it".
       //
-      // The wizard now asks for the goal in both modes, offers an optional
-      // research phase, and — in autopilot — lets the human pick exactly which
-      // of RESEARCH / DEFINE / PLAN they sign. `src/intake.ts` owns what the
-      // answers mean; `src/ui/wizard.ts` owns asking them.
+      // And even that switch only reached three phases. It is a mode per
+      // phase now, chosen from a workflow the human can build, name and reuse.
+      // `src/workflow.ts` owns what a workflow is, `src/intake.ts` what the
+      // answers mean, `src/ui/wizard.ts` how they are asked.
       if (ctx.hasUI) {
         const cmds = Object.entries(detected.commands).filter(([, v]) => Boolean(v));
         const summary = cmds.length ? cmds.map(([k, v]) => `${k}: ${v}`).join(", ") : "no commands detected";
-        const go = await ctx.ui.select(
-          `Create a harness here? ${detected.label} · ${summary}`,
-          ["yes", "yes, and let me choose the phases", "cancel"],
-        );
+        const go = await ctx.ui.select(`Create a harness here? ${detected.label} · ${summary}`, [
+          "yes",
+          "cancel",
+        ]);
         if (go === undefined || go === "cancel") {
           notify(ctx, "init cancelled — nothing was written.", "info");
           return;
         }
-
-        if (go.includes("phases")) {
-          const chosen = new Set<Phase>(DEFAULT_ENABLED_PHASES);
-          for (;;) {
-            const rows = SELECTABLE_PHASES.map((p) => `${chosen.has(p) ? "[x]" : "[ ]"} ${p}`);
-            const hit = await ctx.ui.select("Phases to run", [...rows, "✓ done"]);
-            if (hit === undefined || hit === "✓ done") break;
-            const key = SELECTABLE_PHASES[rows.indexOf(hit)];
-            if (!key) break;
-            if (chosen.has(key)) chosen.delete(key);
-            else chosen.add(key);
-          }
-          phases = [...chosen];
-        }
       }
 
       const wizard = ctx.hasUI
-        ? await runIntakeWizard({
-            prompt: prompterFor(ctx),
-            phases,
-            brief: goalFromArgs || null,
-          })
-        : ({ cancelled: false, plan: unattendedIntake(goalFromArgs || null, phases) } as const);
+        ? await runIntakeWizard({ prompt: prompterFor(ctx), brief: goalFromArgs || null })
+        : ({ cancelled: false, plan: unattendedIntake(goalFromArgs || null) } as const);
 
       if (wizard.cancelled) {
         notify(ctx, "init cancelled — nothing was written.", "info");
@@ -1324,6 +1326,9 @@ export default function (pi: ExtensionAPI): void {
         mode: plan.mode,
         phases: plan.phases,
         approvals: plan.approvals,
+        phaseModes: plan.phaseModes,
+        workflow: plan.workflow,
+        display: plan.display,
         session: plan.session,
         brief: plan.brief,
         force,
@@ -1350,6 +1355,143 @@ export default function (pi: ExtensionAPI): void {
         : `The human has not said what they want built yet. Ask them, in one short question, ` +
           `and do not start any work or invent a scope until they answer.\n\n${brief}`;
       pi.sendUserMessage(opener, { deliverAs: "followUp" });
+    },
+  });
+
+  /**
+   * Change the workflow mid-run.
+   *
+   * Any of this is editable at any time and takes effect on the next gate —
+   * a run three phases deep is exactly when someone realises they do want to
+   * see the review after all.
+   */
+  pi.registerCommand("infinity:workflow", {
+    description: "Choose or build the workflow — which phases run, and which stop for you",
+    handler: async (args: string, ctx: ExtensionContext) => {
+      const dir = projectDir(ctx);
+      if (!isHarnessProject(dir)) {
+        notify(ctx, NO_HARNESS, "warning");
+        return;
+      }
+
+      const { config } = loadConfig(dir);
+      const arg = args.trim();
+
+      if (arg === "" && !ctx.hasUI) {
+        notify(ctx, describeCurrentWorkflow(dir), "info");
+        return;
+      }
+      if (arg === "show" || arg === "list") {
+        const rows = listWorkflows().map((w) => `  ${w.builtIn ? " " : "*"} ${w.name} — ${w.description}`);
+        notify(
+          ctx,
+          `${describeCurrentWorkflow(dir)}\n\nAvailable (* = yours):\n${rows.join("\n")}`,
+          "info",
+        );
+        return;
+      }
+
+      // `/infinity:workflow <name>` switches without a menu, which is what a
+      // second run in the same terminal wants.
+      let chosen = arg ? findWorkflow(arg) : undefined;
+      if (arg && !chosen) {
+        notify(ctx, `No workflow called "${arg}". \`/infinity:workflow list\` shows them.`, "warning");
+        return;
+      }
+      if (!chosen) {
+        if (!ctx.hasUI) {
+          notify(ctx, "This mode has no dialogs — `/infinity:workflow <name>` switches directly.", "warning");
+          return;
+        }
+        chosen = (await pickWorkflow(prompterFor(ctx))) ?? undefined;
+        if (!chosen) {
+          notify(ctx, "Unchanged.", "info");
+          return;
+        }
+      }
+
+      const { value } = await withLock(configPath(dir), () => {
+        const fresh = loadConfig(dir);
+        if (!fresh.ok) return false;
+        applyWorkflow(fresh.config, chosen!);
+        // Keep the legacy field in step so a 2.3 tool reading this config
+        // still sees the same three answers it understands.
+        fresh.config.approvals = {
+          research: fresh.config.phaseModes?.research === "copilot",
+          define: fresh.config.phaseModes?.define === "copilot",
+          plan: fresh.config.phaseModes?.plan === "copilot",
+        };
+        fresh.config.mode = signedPhases(fresh.config).length > 0 ? "copilot" : "autopilot";
+        return saveConfig(dir, fresh.config).ok;
+      });
+
+      if (!value) {
+        notify(ctx, "Could not save the workflow — config unreadable.", "error");
+        return;
+      }
+      notify(ctx, `${renderWorkflow(chosen)}\n\nIt takes effect at the next gate.`, "info");
+      refreshWidget(ctx);
+      void config;
+    },
+  });
+
+  pi.registerCommand("infinity:display", {
+    description: "Choose what the widget and the dashboard show, level by level",
+    handler: async (args: string, ctx: ExtensionContext) => {
+      const dir = projectDir(ctx);
+      if (!isHarnessProject(dir)) {
+        notify(ctx, NO_HARNESS, "warning");
+        return;
+      }
+      const arg = args.trim();
+      const current = normalizeDisplay(loadConfig(dir).config.display);
+
+      if (arg === "show" || arg === "list") {
+        const rows = listDisplays().map((d) => `  ${d.builtIn ? " " : "*"} ${d.name} — ${d.description}`);
+        notify(
+          ctx,
+          `Now: ${summarizeDisplay(current)}\n\nTemplates (* = yours):\n${rows.join("\n")}`,
+          "info",
+        );
+        return;
+      }
+
+      let next: DisplayPolicy | undefined;
+      if (arg) {
+        const template = findDisplay(arg);
+        if (!template) {
+          notify(ctx, `No template called "${arg}". \`/infinity:display list\` shows them.`, "warning");
+          return;
+        }
+        next = template.policy;
+      } else {
+        if (!ctx.hasUI) {
+          notify(ctx, `Now: ${summarizeDisplay(current)}. \`/infinity:display <template>\` switches.`, "info");
+          return;
+        }
+        next = await pickDisplay(prompterFor(ctx));
+        if (!next) {
+          notify(ctx, "Unchanged.", "info");
+          return;
+        }
+      }
+
+      const { value } = await withLock(configPath(dir), () => {
+        const fresh = loadConfig(dir);
+        if (!fresh.ok) return false;
+        fresh.config.display = normalizeDisplay(next);
+        return saveConfig(dir, fresh.config).ok;
+      });
+
+      if (!value) {
+        notify(ctx, "Could not save the display settings — config unreadable.", "error");
+        return;
+      }
+      // The widget is the answer to "did that do what I wanted", so redraw it
+      // before saying anything about it.
+      view = defaultView();
+      refreshWidget(ctx);
+      notify(ctx, `Showing: ${summarizeDisplay(normalizeDisplay(next))}`, "info");
     },
   });
 
@@ -2293,6 +2435,20 @@ export default function (pi: ExtensionAPI): void {
 
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+
+/** The workflow this project is on, and whether it still matches a named one. */
+function describeCurrentWorkflow(dir: string): string {
+  const { config } = loadConfig(dir);
+  const named = matchWorkflow(config);
+  const head = `Workflow: ${summarizeWorkflow(config)}`;
+  const rail = (config.phases?.enabled ?? [])
+    .map((p) => (config.phaseModes?.[p] === "copilot" ? `[${p}]` : p))
+    .join(" → ");
+  const drift = named
+    ? ""
+    : "\n\nThese settings do not match any saved workflow. `/infinity:workflow` can save them as one.";
+  return `${head}\n  ${rail}\n  (a phase in [brackets] stops for you)${drift}`;
 }
 
 /**

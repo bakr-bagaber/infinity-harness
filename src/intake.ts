@@ -7,100 +7,98 @@
  * "you decide everything, including what I want", which is not a mode anybody
  * asked for.
  *
- * The fix is to separate two questions that were tangled together:
+ * The fix was to separate two questions that were tangled together:
  *
- *   1. What are we building?      — always asked, in both modes
- *   2. Who signs off on what?     — the mode's actual meaning
+ *   1. What are we building?      — always asked
+ *   2. Who signs off on what?     — the workflow
  *
- * copilot     the human is in the loop. DEFINE and PLAN are theirs to approve
- *             (and RESEARCH too, when it is on). Not negotiable — that is what
- *             the word means.
- * autopilot   the human is *optionally* in the loop. They pick which of
- *             RESEARCH / DEFINE / PLAN they want to sign and which they hand
- *             to the model. Forfeiting all three is the "give it a goal and
- *             walk away" mode; keeping DEFINE is the common middle.
- *
- * RESEARCH is a separate, optional phase that runs before DEFINE: the human
- * gives an idea, the model goes and finds out what it actually has to be.
+ * And the second of those turned out to be tangled too. "copilot" and
+ * "autopilot" are one switch, and one switch cannot say "let it define and
+ * plan on its own but show me the review". So the answer is a **workflow**: a
+ * mode per phase, with the two familiar words as two named points in that
+ * space rather than the only two points in it. `src/workflow.ts` owns what a
+ * workflow is and where saved ones live.
  *
  * Nothing here talks to pi. It takes answers and returns a plan of record, so
  * the flow can be unit-tested without a terminal and driven from the adapter,
  * from a test, or from a config file.
  */
 
-import type { ApprovalPolicy, Phase, SessionPolicy } from "./core/types.ts";
+import type { ApprovalPolicy, DisplayPolicy, Phase, SessionPolicy } from "./core/types.ts";
 import { DEFAULT_ENABLED_PHASES, PHASE_ORDER } from "./core/types.ts";
+import {
+  BUILTIN_WORKFLOWS,
+  describeModes,
+  normalizeModes,
+  normalizePhases,
+  signedPhases as signedIn,
+  type PhaseMode,
+  type PhaseModes,
+  type Workflow,
+} from "./workflow.ts";
+import { defaultDisplay, normalizeDisplay } from "./ui/display.ts";
 
 export type Mode = "copilot" | "autopilot";
 
 /** The wizard's questions, in the order they are asked. */
-export const INTAKE_STEPS = ["mode", "brief", "research", "approvals", "handoff"] as const;
+export const INTAKE_STEPS = ["workflow", "brief", "handoff", "display"] as const;
 export type IntakeStep = (typeof INTAKE_STEPS)[number];
 
 export type IntakeAnswers = {
-  mode: Mode;
+  /** The chosen workflow: a built-in, one they saved, or one they just built. */
+  workflow: Workflow;
   /** What the human wants built, in their words. Empty is allowed but warned about. */
   brief: string;
-  /** Run the optional RESEARCH phase before DEFINE. */
-  research: boolean;
-  /**
-   * Which phases the human wants to sign, for autopilot only.
-   * Ignored in copilot, where all three are always signed.
-   */
-  approvals?: Partial<ApprovalPolicy>;
   /** Session handoff policy. Defaults to a fresh session per phase. */
   handoff?: SessionPolicy["handoff"];
-  /** Phases the human explicitly chose. Overrides the research toggle. */
-  phases?: Phase[];
+  /** What the surfaces should draw. Defaults to the `focus` template. */
+  display?: DisplayPolicy;
 };
 
 export type IntakePlan = {
+  /** Derived: "copilot" when the run stops for the human anywhere, else "autopilot". */
   mode: Mode;
+  workflow: { id: string; name: string };
   brief: string | null;
   phases: Phase[];
+  phaseModes: PhaseModes;
+  /** Kept in step with `phaseModes` so a 2.3 config read by a 2.3 tool still works. */
   approvals: ApprovalPolicy;
   session: SessionPolicy;
+  display: DisplayPolicy;
   /** What the human should be told about what they just chose. */
   summary: string;
   /** Things that will bite later if left as they are. */
   warnings: string[];
 };
 
-/**
- * In copilot the human is in the loop by definition, so every approvable
- * phase that is enabled is theirs. Making this configurable would make
- * "copilot" mean nothing.
- */
-export function copilotApprovals(phases: Phase[]): ApprovalPolicy {
-  return {
-    research: phases.includes("research"),
-    define: true,
-    plan: true,
-  };
+export function builtInByName(name: string): Workflow | null {
+  return BUILTIN_WORKFLOWS.find((w) => w.id === name || w.name === name) ?? null;
 }
 
-function normalizePhases(base: Phase[], research: boolean): Phase[] {
-  const wanted = new Set<Phase>(base.filter((p) => (PHASE_ORDER as readonly string[]).includes(p)));
-  wanted.delete("init");
-  if (research) wanted.add("research");
-  else wanted.delete("research");
-  const ordered = PHASE_ORDER.filter((p) => wanted.has(p));
-  return ordered.length ? [...ordered] : [...DEFAULT_ENABLED_PHASES];
+/** Build an ad-hoc workflow from a phase list and a mode per phase. */
+export function customWorkflow(
+  phases: Phase[],
+  modes: PhaseModes,
+  name = "custom",
+): Workflow {
+  const ordered = normalizePhases(phases);
+  const normalized = normalizeModes(modes, ordered);
+  return {
+    id: "custom",
+    name,
+    description: describeModes(ordered, normalized),
+    builtIn: false,
+    phases: ordered,
+    modes: normalized,
+  };
 }
 
 /** Turn the wizard's answers into everything `initHarness` needs. */
 export function planIntake(answers: IntakeAnswers): IntakePlan {
-  const research = answers.research === true;
-  const phases = normalizePhases(answers.phases ?? [...DEFAULT_ENABLED_PHASES], research);
-
-  const approvals: ApprovalPolicy =
-    answers.mode === "copilot"
-      ? copilotApprovals(phases)
-      : {
-          research: phases.includes("research") && answers.approvals?.research === true,
-          define: answers.approvals?.define === true,
-          plan: answers.approvals?.plan === true,
-        };
+  const workflow = answers.workflow;
+  const phases = normalizePhases(workflow.phases);
+  const phaseModes = normalizeModes(workflow.modes, phases);
 
   const handoff = answers.handoff ?? "phase";
   const session: SessionPolicy = {
@@ -109,7 +107,10 @@ export function planIntake(answers: IntakeAnswers): IntakePlan {
     carryNotes: true,
   };
 
+  const display = normalizeDisplay(answers.display ?? defaultDisplay());
   const brief = answers.brief?.trim() ? answers.brief.trim() : null;
+  const signed = PHASE_ORDER.filter((p) => phaseModes[p] === "copilot");
+  const mode: Mode = signed.length > 0 ? "copilot" : "autopilot";
 
   const warnings: string[] = [];
   if (!brief) {
@@ -118,11 +119,17 @@ export function planIntake(answers: IntakeAnswers): IntakePlan {
         "It will not guess a project.",
     );
   }
-  if (answers.mode === "autopilot" && !approvals.define && !approvals.plan && !approvals.research) {
+  if (signed.length === 0) {
     warnings.push(
       "Nothing is being approved by you. The model decides what to build and how, " +
         "and you see it when it is done. This is the right setting for a run you " +
         "want to walk away from — and the wrong one if the goal is vague.",
+    );
+  }
+  if (signed.length === phases.length) {
+    warnings.push(
+      "Every phase stops for you. Nothing moves while you are away, which is the " +
+        "point — just do not expect to start this and go to bed.",
     );
   }
   if (handoff === "off") {
@@ -132,20 +139,36 @@ export function planIntake(answers: IntakeAnswers): IntakePlan {
     );
   }
 
-  return { mode: answers.mode, brief, phases, approvals, session, summary: summarize(answers.mode, phases, approvals, session, brief), warnings };
+  return {
+    mode,
+    workflow: { id: workflow.id, name: workflow.name },
+    brief,
+    phases,
+    phaseModes,
+    approvals: {
+      research: phaseModes.research === "copilot",
+      define: phaseModes.define === "copilot",
+      plan: phaseModes.plan === "copilot",
+    },
+    session,
+    display,
+    summary: summarize(workflow, phases, phaseModes, session, display, brief),
+    warnings,
+  };
 }
 
 function summarize(
-  mode: Mode,
+  workflow: Workflow,
   phases: Phase[],
-  approvals: ApprovalPolicy,
+  modes: PhaseModes,
   session: SessionPolicy,
+  display: DisplayPolicy,
   brief: string | null,
 ): string {
-  const signed = (["research", "define", "plan"] as const).filter((p) => approvals[p]);
+  const signed = phases.filter((p) => modes[p] === "copilot");
   const L: string[] = [];
-  L.push(`Mode      ${mode}`);
-  L.push(`Pipeline  ${phases.join(" → ")}`);
+  L.push(`Workflow  ${workflow.name}`);
+  L.push(`Pipeline  ${phases.map((p) => (modes[p] === "copilot" ? `[${p}]` : p)).join(" → ")}`);
   L.push(
     `You sign  ${signed.length ? signed.map((s) => s.toUpperCase()).join(", ") : "nothing — the model decides and runs"}`,
   );
@@ -158,6 +181,7 @@ function summarize(
           : "fresh session per phase"
     }`,
   );
+  L.push(`Display   ${display.preset}`);
   L.push(`Goal      ${brief ?? "(none yet — you will be asked first thing)"}`);
   return L.join("\n");
 }
@@ -177,44 +201,15 @@ export type Question = {
   placeholder?: string;
 };
 
-export const MODE_QUESTION: Question = {
-  id: "mode",
-  title: "How much do you want to be involved?",
-  options: [
-    {
-      value: "copilot",
-      label: "copilot — I approve the definition and the plan",
-      help: "The run stops and shows you its work before it starts building. You can send any phase back with a note.",
-    },
-    {
-      value: "autopilot",
-      label: "autopilot — I choose what to approve, if anything",
-      help: "You pick which of research, definition and plan you sign. Approve none of them and the run is yours to walk away from.",
-    },
-  ],
+export const WORKFLOW_QUESTION: Question = {
+  id: "workflow",
+  title: "How should this run — which phases, and which of them stop for you?",
 };
 
 export const BRIEF_QUESTION: Question = {
   id: "brief",
   title: "What are you building? One or two sentences is enough.",
   placeholder: "e.g. a CLI that reconciles Stripe payouts against our ledger",
-};
-
-export const RESEARCH_QUESTION: Question = {
-  id: "research",
-  title: "Research the idea first?",
-  options: [
-    {
-      value: "no",
-      label: "no — go straight to defining it",
-      help: "Right when you already know what has to be built.",
-    },
-    {
-      value: "yes",
-      label: "yes — find out what it has to be first",
-      help: "Adds a RESEARCH phase before DEFINE: prior art, constraints, options with costs, a recommendation, and the questions only you can answer.",
-    },
-  ],
 };
 
 export const HANDOFF_QUESTION: Question = {
@@ -239,25 +234,39 @@ export const HANDOFF_QUESTION: Question = {
   ],
 };
 
-/** The approval checklist, offered only in autopilot. */
-export function approvalOptions(research: boolean): { value: keyof ApprovalPolicy; label: string; help: string }[] {
-  const out: { value: keyof ApprovalPolicy; label: string; help: string }[] = [];
-  if (research) {
-    out.push({
-      value: "research",
-      label: "RESEARCH — what it found before anything is specified",
-      help: "You read harness/docs/RESEARCH.md and say whether it is looking at the right problem.",
-    });
-  }
-  out.push({
-    value: "define",
-    label: "DEFINE — the scope and the acceptance criteria",
-    help: "The single highest-leverage signature: a wrong definition is a weekend building the wrong thing perfectly.",
-  });
-  out.push({
-    value: "plan",
-    label: "PLAN — the task list before any code is written",
-    help: "You see the whole decomposition and can send it back before it is built.",
-  });
-  return out;
-}
+export const DISPLAY_QUESTION: Question = {
+  id: "display",
+  title: "How much of the plan do you want on screen?",
+};
+
+/** The two modes, as a question about one phase. */
+export const PHASE_MODE_OPTIONS: { value: PhaseMode; label: string; help: string }[] = [
+  {
+    value: "autopilot",
+    label: "autopilot — it passes the gate and moves on",
+    help: "The deterministic gate is the only referee for this phase.",
+  },
+  {
+    value: "copilot",
+    label: "copilot — it stops and waits for you",
+    help: "When the gate passes, the run parks and asks you to sign it off before advancing.",
+  },
+];
+
+/** What each phase is for, one line, shown while picking modes. */
+export const PHASE_PURPOSE: Record<Phase, string> = {
+  init: "set the project up",
+  research: "find out what it actually has to be",
+  define: "write down what is being built, and the criteria",
+  plan: "break it into ordered, dependency-aware tasks",
+  build: "implement it, one task at a time",
+  verify: "prove it behaves; hunt what the tests miss",
+  simplify: "delete more than you add",
+  review: "judge it as if someone else wrote it",
+  ship: "tag, changelog, leave the tree clean",
+};
+
+/** Phases someone can put in a pipeline. INIT is not one of them. */
+export const SELECTABLE_PHASES: Phase[] = PHASE_ORDER.filter((p) => p !== "init");
+
+export { DEFAULT_ENABLED_PHASES, signedIn as signedPhases };

@@ -39,6 +39,7 @@ export class PiDriver {
    * @param {string[]} [opts.extensions] extension files to load
    * @param {string} [opts.sessionDir]   session storage
    * @param {number} [opts.contextWindow] declared context window of the mock model
+   * @param {object} [opts.env]           extra environment for the pi process
    */
   constructor(opts) {
     this.opts = opts;
@@ -111,6 +112,10 @@ export class PiDriver {
         PI_SKIP_VERSION_CHECK: "1",
         PI_TELEMETRY: "0",
         NO_COLOR: "1",
+        // A scenario that needs the harness's *user* store somewhere it owns
+        // — saved workflows and display templates live there — overrides it
+        // last, so it wins over the config dir set above.
+        ...(this.opts.env ?? {}),
       },
       stdio: ["pipe", "pipe", "pipe"],
     });

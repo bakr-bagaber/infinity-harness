@@ -55,6 +55,14 @@ export type PlanTreeOptions = {
    * goal and no sprints should not spend two rows saying so.
    */
   collapseTrivial?: boolean;
+  /**
+   * Which levels the reader has asked to see.
+   *
+   * A hidden level does not hide what is under it: turning off sprints on a
+   * plan organised into sprints must still show the features, one indent
+   * shallower, or the setting silently deletes half the plan from view.
+   */
+  levels?: Partial<Record<PlanLevel, boolean>>;
 };
 
 function taskCounts(tasks: Task[] | undefined): { done: number; total: number } {
@@ -185,35 +193,48 @@ export function buildPlanRows(
 ): PlanRow[] {
   const collapse = options.collapseTrivial !== false;
   const groups = groupPlan(list);
+  const wants = (level: PlanLevel): boolean => options.levels?.[level] !== false;
 
   // A single goal is the run's headline and the surface draws it separately.
-  const showGoals = collapse ? groups.filter((g) => g.goal !== null).length > 1 : groups.some((g) => g.goal);
-  const showSprints = groups.some((g) => g.sprints.some((sg) => sg.sprint !== null));
+  const showGoals =
+    wants("goal") &&
+    (collapse ? groups.filter((g) => g.goal !== null).length > 1 : groups.some((g) => g.goal));
+  const showSprints = wants("sprint") && groups.some((g) => g.sprints.some((sg) => sg.sprint !== null));
 
   const rows: PlanRow[] = [];
   let taskIndex = 0;
 
   const emitFeature = (feature: Feature, depth: number): void => {
     const counts = taskCounts(feature.tasks);
-    rows.push({
-      level: "feature",
-      depth,
-      id: feature.id,
-      label: feature.id,
-      title: feature.name ?? feature.id,
-      status: null,
-      done: counts.done,
-      total: counts.total,
-      criteria: Array.isArray(feature.criteria) ? feature.criteria : undefined,
-    });
+    let taskDepth = depth;
+    if (wants("feature")) {
+      rows.push({
+        level: "feature",
+        depth,
+        id: feature.id,
+        label: feature.id,
+        title: feature.name ?? feature.id,
+        status: null,
+        done: counts.done,
+        total: counts.total,
+        criteria: Array.isArray(feature.criteria) ? feature.criteria : undefined,
+      });
+    } else {
+      // Hiding the feature row must not hide its tasks — nor indent them as
+      // though the row were still there.
+      taskDepth = Math.max(0, depth - 1);
+    }
 
     for (const task of feature.tasks ?? []) {
+      // Numbered even when hidden: `← #3` has to keep meaning the same task
+      // whatever the reader has chosen to look at.
       taskIndex += 1;
+      if (!wants("task")) continue;
       const id = task.key ?? `${feature.id}/${task.id}`;
       const active = activeTaskId !== null && (id === activeTaskId || task.id === activeTaskId);
       rows.push({
         level: "task",
-        depth: depth + 1,
+        depth: taskDepth + 1,
         id,
         label: String(taskIndex),
         title: task.description ?? id,
@@ -233,8 +254,8 @@ export function buildPlanRows(
       // one, so a task that is plainly in progress counts too.
       const subs = Array.isArray(task.subtasks) ? task.subtasks : [];
       const working = task.status === "in_progress" || task.status === "rework";
-      const show = options.expandSubtasks || active || working;
-      if (show && subs.length) rows.push(...subtaskRows(task, id, depth + 2, subs));
+      const show = wants("subtask") && (options.expandSubtasks || active || working);
+      if (show && subs.length) rows.push(...subtaskRows(task, id, taskDepth + 2, subs));
     }
   };
 
@@ -255,6 +276,7 @@ export function buildPlanRows(
     }
     for (const sg of group.sprints) {
       let featureDepth = depth;
+      // Every feature row hidden means the tasks sit where the features were.
       if (showSprints && sg.sprint) {
         rows.push({
           level: "sprint",

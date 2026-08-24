@@ -1,14 +1,17 @@
 /**
- * Human sign-off on the phases that decide what gets built.
+ * Human sign-off on the phases the person wants to see.
  *
  * The gate can prove a feature has acceptance criteria. It cannot prove they
  * are the right criteria, and no amount of determinism will make it able to.
- * These are the three phases where the run stops and asks.
+ * These are the phases where the run stops and asks.
  *
  * The subtle half of this module is the *rejection*. A gate is deterministic,
  * so the instant a phase is sent back it passes again and the run would ask
  * the identical question about the identical artefact, forever. A rejection is
  * therefore pinned to what the project looked like when it was made.
+ *
+ * Which phases stop is a mode per phase now, not a three-phase switch — see
+ * `tests/workflow.test.ts` for the workflows those modes come from.
  */
 
 import assert from "node:assert/strict";
@@ -40,34 +43,45 @@ function project(mutate: (c: ReturnType<typeof defaultConfig>) => void = () => {
   return dir;
 }
 
-// ── which phases are approvable at all ─────────────────────────────────────
+// ── which phases can be a checkpoint ───────────────────────────────────────
 {
-  for (const p of ["research", "define", "plan"] as const) assert.equal(isApprovable(p), true);
-  // Everything after PLAN is execution: a wrong BUILD fails a gate and
-  // retries, so there is nothing useful for a human to sign there.
-  for (const p of ["init", "build", "verify", "simplify", "review", "ship"] as const) {
-    assert.equal(isApprovable(p), false, `${p} must not be approvable`);
+  // Every phase can stop for a human. Someone may not care about the plan and
+  // care very much about the review; the tool should not have an opinion.
+  for (const p of ["research", "define", "plan", "build", "verify", "simplify", "review", "ship"] as const) {
+    assert.equal(isApprovable(p), true, `${p} should be signable`);
   }
+  // INIT is plumbing — there is nothing there for a human to judge.
+  assert.equal(isApprovable("init"), false);
   assert.equal(isApprovable(null), false);
 
   const config = defaultConfig();
-  config.approvals = { research: false, define: true, plan: true };
+  config.phases = { enabled: ["define", "plan", "build", "verify", "review", "ship"] };
+  config.phaseModes = { define: "copilot", plan: "copilot", review: "copilot" };
   assert.equal(needsApproval(config, "define"), true);
-  assert.equal(needsApproval(config, "research"), false);
-  assert.equal(needsApproval(config, "build"), false, "an unapprovable phase never needs approval");
-  assert.deepEqual(approvedPhases(config), ["define", "plan"]);
+  assert.equal(needsApproval(config, "build"), false);
+  assert.equal(needsApproval(config, "review"), true, "a late phase is signable like any other");
+  assert.deepEqual(approvedPhases(config), ["define", "plan", "review"]);
 
-  // A config written before this feature existed has no `approvals` key.
+  // A config written before this feature existed has no `phaseModes` key.
   const legacy = defaultConfig();
-  delete (legacy as Record<string, unknown>).approvals;
+  delete (legacy as Record<string, unknown>).phaseModes;
   assert.equal(needsApproval(legacy, "define"), false, "a missing policy is 'sign nothing', not a crash");
   assert.deepEqual(approvedPhases(legacy), []);
-  console.log("✓ only the three phases that decide what gets built are approvable");
+  console.log("✓ every phase but INIT can be a checkpoint, and a missing policy signs nothing");
 }
 
 // ── what the human is shown ────────────────────────────────────────────────
 {
-  for (const phase of ["research", "define", "plan"] as const) {
+  for (const phase of [
+    "research",
+    "define",
+    "plan",
+    "build",
+    "verify",
+    "simplify",
+    "review",
+    "ship",
+  ] as const) {
     const request = describeApproval(phase);
     assert.ok(request.prompt.length > 20, `${phase} asks a real question`);
     assert.ok(request.artifacts.length > 0, `${phase} says what to look at`);
@@ -83,7 +97,7 @@ function project(mutate: (c: ReturnType<typeof defaultConfig>) => void = () => {
 {
   const dir = project((c) => {
     c.currentPhase = "define";
-    c.approvals = { research: false, define: true, plan: true };
+    c.phaseModes = { define: "copilot", plan: "copilot" };
   });
 
   assert.deepEqual(resolveApproval(dir), { ok: false, error: "Nothing is waiting for approval." });
@@ -129,7 +143,7 @@ function project(mutate: (c: ReturnType<typeof defaultConfig>) => void = () => {
 {
   const dir = project((c) => {
     c.currentPhase = "define";
-    c.approvals = { research: false, define: true, plan: true };
+    c.phaseModes = { define: "copilot", plan: "copilot" };
   });
 
   requestApproval(dir, "define");

@@ -29,6 +29,7 @@ import { DEFAULT_ENABLED_PHASES, PHASE_ORDER, PHASE_ROLE } from "./types.ts";
 import { defaultConfig, saveConfig } from "./config.ts";
 import { emptyFeatureList, saveFeatureList } from "./featureList.ts";
 import * as P from "./paths.ts";
+import { normalizeDisplay } from "../ui/display.ts";
 
 export type StackId = "node" | "python" | "rust" | "go" | "unknown";
 
@@ -149,8 +150,14 @@ export type InitOptions = {
   commands?: Partial<ProjectCommands>;
   /** Re-scaffold missing files in a project that already has a config. */
   force?: boolean;
-  /** Which phases stop for a human signature. See SessionPolicy / ApprovalPolicy. */
+  /** Legacy three-phase approval switch, kept in step with `phaseModes`. */
   approvals?: Partial<HarnessConfig["approvals"]>;
+  /** Mode per phase — which of them stop for a human signature. */
+  phaseModes?: HarnessConfig["phaseModes"];
+  /** Which named workflow those modes came from. */
+  workflow?: HarnessConfig["workflow"];
+  /** What the widget and the dashboard draw. */
+  display?: HarnessConfig["display"];
   /** Session-handoff policy. Defaults to a fresh session per phase. */
   session?: Partial<HarnessConfig["session"]>;
   /** What the human said they want built. Recorded, and read by the first brief. */
@@ -210,6 +217,20 @@ export function initHarness(targetDir: string, options: InitOptions = {}): InitR
   config.commands = { ...stack.commands, ...stripUndefined(options.commands ?? {}) };
   config.approvals = { ...config.approvals, ...stripUndefined(options.approvals ?? {}) };
   config.session = { ...config.session, ...stripUndefined(options.session ?? {}) };
+  // Every enabled phase gets a mode, so a phase list and a mode map cannot
+  // disagree about which phases exist. A caller that still passes the 2.3
+  // `approvals` shape and no modes gets what it asked for rather than silently
+  // getting autopilot — the same rule `loadConfig` applies to an older file.
+  const legacy = (options.approvals ?? {}) as Record<string, unknown>;
+  const hasModes = options.phaseModes && Object.keys(options.phaseModes).length > 0;
+  config.phaseModes = Object.fromEntries(
+    phases.map((p) => [
+      p,
+      (hasModes ? options.phaseModes?.[p] === "copilot" : legacy[p] === true) ? "copilot" : "autopilot",
+    ]),
+  );
+  if (options.workflow) config.workflow = options.workflow;
+  if (options.display) config.display = normalizeDisplay(options.display);
   if (options.brief !== undefined) {
     config.intake = {
       completed: true,

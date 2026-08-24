@@ -5,9 +5,34 @@
  * Nothing outside this module hardcodes a harness path.
  */
 
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 
 export const HARNESS_DIRNAME = "harness";
+
+/**
+ * Where things that belong to the *person* live, rather than to a project.
+ *
+ * A workflow someone designed and named is worth exactly as much on their next
+ * project as on this one, so it cannot live under `harness/`. This follows
+ * pi's own config directory, honouring the same override pi honours, so a
+ * sandboxed or rebranded install keeps everything in one place.
+ */
+export function userDir(env: NodeJS.ProcessEnv = process.env): string {
+  const override = env.PI_CODING_AGENT_DIR;
+  if (override && override.trim()) return resolve(override.trim(), "infinity-harness");
+  return resolve(homedir(), ".pi", "agent", "infinity-harness");
+}
+
+/** The workflows this person has saved, reusable across every project. */
+export function userWorkflowsPath(env?: NodeJS.ProcessEnv): string {
+  return resolve(userDir(env), "workflows.json");
+}
+
+/** The display templates this person has saved. */
+export function userDisplayPath(env?: NodeJS.ProcessEnv): string {
+  return resolve(userDir(env), "displays.json");
+}
 
 export function harnessDir(targetDir: string): string {
   return resolve(targetDir, HARNESS_DIRNAME);

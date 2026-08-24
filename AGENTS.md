@@ -49,6 +49,12 @@ the extension, that is the bug that ended every run at its first session handoff
 every turn and is never summarised; a message in the transcript is one compaction away from
 "the assistant was working on a harness".
 
+**A setting the person chose belongs to the person.** Saved workflows and display templates live in
+`~/.pi/agent/infinity-harness/`, not under a project's `harness/`, because a workflow someone
+designed is worth as much on their next project as on this one. Anything read on every render or in
+a lifecycle hook is normalised on the way in (`normalizeDisplay`, `normalizeModes`): a hand-edited
+config must produce a widget, never an exception that takes the session down.
+
 **No new runtime dependencies without a reason.** The package ships with two (`proper-lockfile`,
 `string-width`). Every addition is weight a user carries.
 

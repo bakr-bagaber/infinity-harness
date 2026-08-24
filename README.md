@@ -100,11 +100,10 @@ It detects your stack and its lint/test/build commands, then asks you five quest
 
 | | |
 |---|---|
-| **How involved do you want to be?** | copilot — you approve the definition and the plan · autopilot — you choose what to approve, if anything |
-| **What are you building?** | One or two sentences. Asked in *both* modes, because a run with no goal has no business inventing one. |
-| **Research it first?** | Adds an optional RESEARCH phase before DEFINE: prior art, constraints, options with costs, a recommendation, and the questions only you can answer. |
-| **Which phases do you sign?** *(autopilot only)* | RESEARCH, DEFINE, PLAN — tick any, all or none. None is the walk-away setting. |
+| **Which workflow?** | A built-in, one you saved, or *build one* — pick the phases, then say for each whether it stops for you |
+| **What are you building?** | One or two sentences. Asked whatever the workflow, because a run with no goal has no business inventing one. |
 | **When should it start a fresh session?** | Every phase (default) · every task · never |
+| **How much of the plan on screen?** | A display template — `focus`, `everything`, `overview`, `worklist`, or level by level |
 
 Then it writes `harness/` — the config, an empty plan, the phase and role docs, and starters
 for the documents the review gate will demand — and hands the model its first brief. It never
@@ -134,14 +133,45 @@ the craft skills that match the work, and what to do next. Do the work, then:
 
 ## Who decides what
 
-The two words are about **who signs off**, not about how autonomous the agent is. Both modes
-run the same pipeline, the same gates and the same loop.
+"copilot" and "autopilot" used to be one switch, and one switch is the wrong shape for the
+question. What people actually want is per-phase: let the model define and plan on its own but
+show me the review; or grill me on the definition and then leave me alone until it ships. Two
+words cannot say that.
 
-| | copilot | autopilot |
-|---|---|---|
-| RESEARCH, DEFINE, PLAN | you approve each one | you pick which, if any |
-| Everything after PLAN | the gate decides | the gate decides |
-| When it is right | you care what gets built | you have said what you want and you are leaving |
+So the setting is a **mode per phase**, and the two familiar words are two named points in that
+space rather than the only two points in it.
+
+| Mode | When a phase's gate passes |
+|---|---|
+| `autopilot` | it advances |
+| `copilot` | it stops and waits for your signature |
+
+Five workflows ship with the package, and none of them can be edited — `copilot` has to mean the
+same thing in every conversation about this tool:
+
+| Workflow | Stops at |
+|---|---|
+| **copilot** | DEFINE, PLAN |
+| **autopilot** | nothing |
+| **spec and ship** | DEFINE, SHIP — you sign the scope going in and the release coming out |
+| **research first** | adds a RESEARCH phase, and stops on all three thinking phases |
+| **every gate** | every phase. Slowest, and the one you want on something that matters |
+
+Anything else you build yourself: pick the phases, then say for each whether it stops for you. Give
+it a name and it is saved with *you*, not with the project, so it is the first thing offered on your
+next one.
+
+```
+/infinity:workflow                 choose one, or build one
+/infinity:workflow spec-and-ship   switch to a named one, no menu
+/infinity:workflow list            what is available, and what you are on now
+```
+
+Any of it changes at any time and takes effect at the next gate — three phases into a run is
+exactly when someone realises they do want to see the review after all. `/infinity:config` →
+**Workflow** edits one phase at a time.
+
+### Signing a phase
 
 When a phase you signed up for passes its gate, the run **stops and asks you** rather than
 advancing. Approving continues it; answering with a sentence sends the phase back carrying your
@@ -152,9 +182,9 @@ words, so it is redone against your objection rather than redone identically:
 /infinity:approve the criteria say nothing about refunds
 ```
 
-A rejection is pinned to the state of the project when you made it, so the run will not ask you
-the same question again until the agent has actually changed something in response. If it never
-does, the run stops and says so instead of nagging forever.
+A rejection is pinned to the state of the project when you made it, so the run will not ask you the
+same question again until the agent has actually changed something in response. If it never does,
+the run stops and says so instead of nagging forever.
 
 ## One run, many sessions
 
@@ -224,7 +254,8 @@ valid; the menu is the same data with prompts and bounds checking attached.
 |---|---|
 | **Models** | Which model runs each difficulty tier, the master model, consultation budget |
 | **Pipeline** | Which phases run, copilot vs autopilot, role strictness, pause |
-| **Your approvals** | Which of RESEARCH / DEFINE / PLAN stop and wait for your signature |
+| **Workflow** | The mode for each phase — which of them stop and wait for your signature |
+| **Display** | Which plan levels and which chrome the widget and the dashboard draw |
 | **Sessions** | Fresh session per phase or per task, the context threshold, the carry note |
 | **Project commands** | lint / test / coverage / build — what the gate actually runs |
 | **Gates** | Enable, coverage threshold, placeholder rejection |
@@ -349,7 +380,7 @@ The agent edits it by submitting the **complete** task list through the `infinit
 
 ## Watching it work
 
-**In the terminal** — the widget above updates on every turn, showing all five levels of the plan:
+**In the terminal** — the widget updates on every turn, showing the plan as deep as you asked for:
 goal, sprint, feature, task, subtask. It is a *window*, not a truncation — the rows above and
 below are counted, and one keypress away:
 
@@ -362,13 +393,42 @@ below are counted, and one keypress away:
 It is responsive down to ~58 columns, degrades to ASCII when the locale isn't UTF-8, and drops
 colour under `NO_COLOR`.
 
-**In a browser** — `/infinity:dashboard` serves a live page on loopback: phase rail, stacked progress
-meters that show stuck work as colour rather than absence, the whole plan as a collapsible
-goal → sprint → feature → task → subtask tree with counts at every level, and the last gate
-verdict. It refreshes itself every 5 seconds and reconnects with backoff if the run ends.
+**In a browser** — `/infinity:dashboard` serves a live page on loopback: phase rail, stacked
+progress meters that show stuck work as colour rather than absence, the plan as a collapsible tree
+with counts at every level, and the last gate verdict. It refreshes itself every 5 seconds and
+reconnects with backoff if the run ends.
 
 The dashboard is strictly read-only and binds to `127.0.0.1`. It never writes, and never bumps
 `baseRevision` — opening it can't perturb the run you're watching.
+
+### What they show is yours to choose
+
+Two people watching the same run want different things on screen. One works in sprints and never
+opens a subtask; the next has no sprints and lives in the subtask list. So it is a setting, and
+**the widget and the dashboard read the same one** — configure how you like to read a plan once,
+not twice.
+
+| Template | |
+|---|---|
+| **focus** *(default)* | every level, with subtasks on the task being worked |
+| **everything** | all five levels, every subtask on every task, a taller window |
+| **overview** | goals, sprints and features with their counts. No tasks — the shape, not the work |
+| **worklist** | tasks only. No grouping rows, no rail — for when you already know the plan |
+
+```
+/infinity:display              pick a template, or choose level by level
+/infinity:display overview     switch straight to one
+/infinity:display list         what is available, and what you are on now
+```
+
+Choosing level by level also lets you turn off the phase rail, the progress meter, the alert strip,
+the `done/total` counts, the `← #3` dependency labels and the acceptance criteria, and set how many
+rows the terminal shows before it scrolls. Name what you end up with and it is saved with you,
+offered on your next project. `/infinity:config` → **Display** edits the same things one at a time.
+
+Hiding a level never hides what is under it: turn off sprints on a plan organised into sprints and
+the features move up one indent, they do not vanish. A task nobody can see is a task that gets
+stuck forever.
 
 ## Craft skills
 
@@ -447,10 +507,12 @@ infinity-harness/
 │   │                              · featureList (the SSOT) · lock · exec
 │   │                              · skills (match) · skillsAudit (guard)
 │   ├── ui/                        theme · planTree (the five levels, once)
+│   │                              · display (what to draw, and the templates)
 │   │                              · widget (terminal) · dashboard (web) · wizard · config
 │   ├── loop.ts                    the continuous-run driver and its stop conditions
 │   ├── runState.ts                is a run armed, and which run is it — on disk, across sessions
 │   ├── handoff.ts                 when to continue in a fresh session, and what to tell it
+│   ├── workflow.ts                a mode per phase, the built-ins, and the ones you save
 │   ├── approval.ts · intake.ts    human sign-off · what the start-up wizard's answers mean
 │   ├── escalate.ts                the ladder's actuator: chooses a rung and takes it
 │   ├── goal.ts                    the outer loop: is the thing asked for actually done?
@@ -467,7 +529,10 @@ infinity-harness/
 │   ├── model-router.json          optional routing
 │   ├── docs/                      architecture · decisions · phase and role docs
 │   └── skills/                    28 craft skills the brief points at
-├── tests/                         31 files, plain node:assert
+│
+│   ~/.pi/agent/infinity-harness/  the workflows and display templates you saved —
+│                                  they belong to you, not to a project
+├── tests/                         33 files, plain node:assert
 └── scripts/
     ├── run-tests.mjs
     ├── e2e.mjs                    16 scenarios, including one against a real pi process
@@ -482,7 +547,7 @@ there is one implementation, and the adapter calls it.
 ```bash
 npm install
 npm run check                    # tsc --noEmit, strict
-npm test                         # 31 test files
+npm test                         # 33 test files
 npm run e2e                      # 16 end-to-end scenarios
 npm run e2e -- --only realpi     # just the ones that drive a real pi process
 npm run e2e -- --list            # what the scenarios are

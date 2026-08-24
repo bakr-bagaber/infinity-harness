@@ -9,6 +9,7 @@
 
 import type { HarnessConfig, GateHistoryEntry, Phase, Role } from "./types.ts";
 import { DEFAULT_ENABLED_PHASES, PHASE_ROLE } from "./types.ts";
+import { defaultDisplay, normalizeDisplay } from "../ui/display.ts";
 import { configPath } from "./paths.ts";
 import { readJson, writeJsonAtomic, backupOnce, fileExists } from "./fsx.ts";
 
@@ -51,6 +52,9 @@ export function defaultConfig(): HarnessConfig {
     roles: { strict: false },
     session: { handoff: "phase", contextThreshold: 0.7, carryNotes: true },
     approvals: { research: false, define: false, plan: false },
+    phaseModes: Object.fromEntries(DEFAULT_ENABLED_PHASES.map((p) => [p, "autopilot"])),
+    workflow: { id: "autopilot", name: "autopilot" },
+    display: defaultDisplay(),
     intake: { completed: false, brief: null, at: null },
     awaitingApproval: null,
     loop: {
@@ -89,6 +93,45 @@ function deepMerge<T>(defaults: T, partial: unknown): T {
   return out as T;
 }
 
+/**
+ * Bring an older config forward on read.
+ *
+ * 2.3 had a three-phase `approvals` switch; 2.4 has a mode for every phase.
+ * A project mid-run must not lose the approvals it was configured with just
+ * because the shape moved, and nobody should have to edit JSON to upgrade.
+ * The migration is read-only — it takes effect on the next save like any other
+ * change — so a downgrade still finds the old field where it left it.
+ */
+function migrate(config: HarnessConfig, stored: Partial<HarnessConfig>): HarnessConfig {
+  const out = config as Record<string, unknown>;
+  const phases = Array.isArray(config.phases?.enabled) ? config.phases.enabled : [...DEFAULT_ENABLED_PHASES];
+
+  // The signal is what the *file* had, not what the merge produced: defaults
+  // supply a `phaseModes` for every phase, so a merged config always looks
+  // migrated and the old approvals would be silently dropped.
+  const hadModes =
+    typeof stored.phaseModes === "object" &&
+    stored.phaseModes !== null &&
+    Object.keys(stored.phaseModes).length > 0;
+
+  if (!hadModes) {
+    const approvals = (stored.approvals ?? {}) as Record<string, unknown>;
+    const next: Record<string, string> = {};
+    for (const p of phases) next[p] = approvals[p] === true ? "copilot" : "autopilot";
+    out.phaseModes = next;
+    if (!stored.workflow) {
+      const signed = phases.filter((p) => next[p] === "copilot");
+      out.workflow =
+        signed.length === 0
+          ? { id: "autopilot", name: "autopilot" }
+          : { id: "copilot", name: "copilot" };
+    }
+  }
+
+  config.display = normalizeDisplay(config.display);
+  return config;
+}
+
 export type LoadResult = {
   ok: boolean;
   config: HarnessConfig;
@@ -114,7 +157,7 @@ export function loadConfig(targetDir: string): LoadResult {
     if (raw === null) {
       return { ok: false, config: defaultConfig(), error: "harness/config.json is empty", seeded: true };
     }
-    return { ok: true, config: deepMerge(defaultConfig(), raw), error: null, seeded: false };
+    return { ok: true, config: migrate(deepMerge(defaultConfig(), raw), raw), error: null, seeded: false };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return { ok: false, config: defaultConfig(), error: msg, seeded: false };

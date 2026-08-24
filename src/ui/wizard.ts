@@ -7,13 +7,16 @@
  * suite, by a script answering over pi's RPC extension-UI protocol, which is
  * as close to watching a human use it as this gets.
  *
- * The flow is short on purpose. Five questions, three of them one keypress:
+ * The flow is short on purpose. Four questions, three of them one keypress:
  *
- *   1. copilot or autopilot?
+ *   1. which workflow? — a built-in, one you saved, or "build one"
  *   2. what are you building?
- *   3. research it first?
- *   4. (autopilot only) which phases do you want to sign?
- *   5. when should the run start a fresh session?
+ *   3. when should it start a fresh session?
+ *   4. how much of the plan do you want on screen?
+ *
+ * Building a workflow is its own small flow: pick the phases, then say for
+ * each one whether it stops for you, then optionally give it a name and keep
+ * it. A kept workflow is offered first thing on the next project.
  *
  * Cancelling any question cancels the wizard. Nothing is written until the
  * human has seen the summary and said yes, because a wizard that half-commits
@@ -21,27 +24,41 @@
  */
 
 import type { Prompter } from "./config.ts";
-import type { ApprovalPolicy, Phase } from "../core/types.ts";
+import type { DisplayPolicy, Phase } from "../core/types.ts";
 import {
   BRIEF_QUESTION,
+  DISPLAY_QUESTION,
   HANDOFF_QUESTION,
-  MODE_QUESTION,
-  RESEARCH_QUESTION,
-  approvalOptions,
+  PHASE_MODE_OPTIONS,
+  PHASE_PURPOSE,
+  SELECTABLE_PHASES,
+  WORKFLOW_QUESTION,
+  customWorkflow,
   planIntake,
   type IntakeAnswers,
   type IntakePlan,
-  type Mode,
 } from "../intake.ts";
+import {
+  listWorkflows,
+  normalizeModes,
+  normalizePhases,
+  renderWorkflow,
+  saveWorkflow,
+  type PhaseMode,
+  type PhaseModes,
+  type Workflow,
+} from "../workflow.ts";
+import { DEFAULT_ENABLED_PHASES } from "../core/types.ts";
+import { defaultDisplay, listDisplays, normalizeDisplay, saveDisplay } from "./display.ts";
 
 export type WizardOptions = {
   prompt: Prompter;
-  /** Phases already chosen elsewhere (e.g. the phase picker). */
-  phases?: Phase[];
-  /** Pre-fill the goal, e.g. from `/infinity:start <goal>`. */
+  /** Pre-fill the goal, e.g. from `/infinity:init <goal>`. */
   brief?: string | null;
   /** Skip the final confirmation. Used when the caller does its own. */
   skipConfirm?: boolean;
+  /** Where saved workflows and templates live. Tests point this elsewhere. */
+  env?: NodeJS.ProcessEnv;
 };
 
 export type WizardResult =
@@ -51,6 +68,8 @@ export type WizardResult =
 const CONFIRM = "start with these settings";
 const RESTART = "change something";
 const CANCEL = "cancel";
+const BUILD_ONE = "build one — I choose the phases and which of them stop for me";
+const DONE = "✓ done";
 
 /** Render a choice as one selectable line: the label, then why you would pick it. */
 function line(label: string, help: string): string {
@@ -58,44 +77,22 @@ function line(label: string, help: string): string {
 }
 
 export async function runIntakeWizard(options: WizardOptions): Promise<WizardResult> {
-  const { prompt } = options;
+  const { prompt, env } = options;
 
   for (;;) {
-    // -- 1. mode ------------------------------------------------------------
-    const modeOptions = MODE_QUESTION.options ?? [];
-    const modeLabels = modeOptions.map((o) => line(o.label, o.help));
-    const modePick = await prompt.select(MODE_QUESTION.title, modeLabels);
-    if (modePick === undefined) return { cancelled: true };
-    const mode = (modeOptions[modeLabels.indexOf(modePick)]?.value ?? "copilot") as Mode;
+    // -- 1. the workflow ----------------------------------------------------
+    const workflow = await pickWorkflow(prompt, env);
+    if (workflow === undefined) return { cancelled: true };
 
     // -- 2. what are we building -------------------------------------------
     //
-    // Asked in *both* modes. This is the question the old flow skipped, and
-    // skipping it is why autopilot used to invent a project and start
-    // building it.
+    // Asked whatever the workflow is. This is the question the old flow
+    // skipped, and skipping it is why autopilot used to invent a project and
+    // start building it.
     const brief =
       (await prompt.input(BRIEF_QUESTION.title, BRIEF_QUESTION.placeholder)) ?? options.brief ?? "";
 
-    // -- 3. research --------------------------------------------------------
-    const researchOptions = RESEARCH_QUESTION.options ?? [];
-    const researchLabels = researchOptions.map((o) => line(o.label, o.help));
-    const researchPick = await prompt.select(RESEARCH_QUESTION.title, researchLabels);
-    if (researchPick === undefined) return { cancelled: true };
-    const research = researchOptions[researchLabels.indexOf(researchPick)]?.value === "yes";
-
-    // -- 4. approvals -------------------------------------------------------
-    //
-    // Only autopilot gets a choice. In copilot the human is in the loop by
-    // definition, and offering them a way out of it would make the word mean
-    // nothing.
-    let approvals: Partial<ApprovalPolicy> | undefined;
-    if (mode === "autopilot") {
-      const picked = await pickApprovals(prompt, research);
-      if (picked === undefined) return { cancelled: true };
-      approvals = picked;
-    }
-
-    // -- 5. sessions --------------------------------------------------------
+    // -- 3. sessions --------------------------------------------------------
     const handoffOptions = HANDOFF_QUESTION.options ?? [];
     const handoffLabels = handoffOptions.map((o) => line(o.label, o.help));
     const handoffPick = await prompt.select(HANDOFF_QUESTION.title, handoffLabels);
@@ -105,14 +102,11 @@ export async function runIntakeWizard(options: WizardOptions): Promise<WizardRes
       | "phase"
       | "task";
 
-    const answers: IntakeAnswers = {
-      mode,
-      brief,
-      research,
-      approvals,
-      handoff,
-      phases: options.phases,
-    };
+    // -- 4. display ---------------------------------------------------------
+    const display = await pickDisplay(prompt, env);
+    if (display === undefined) return { cancelled: true };
+
+    const answers: IntakeAnswers = { workflow, brief, handoff, display };
     const plan = planIntake(answers);
 
     if (options.skipConfirm) return { cancelled: false, plan, answers };
@@ -129,62 +123,235 @@ export async function runIntakeWizard(options: WizardOptions): Promise<WizardRes
   }
 }
 
-const APPROVALS_DONE = "✓ done";
+// ── choosing a workflow ─────────────────────────────────────────────────────
 
 /**
- * A checklist, built out of `select` because that is the only list widget pi
- * gives an extension. Each pick toggles a row and redraws; `done` commits.
+ * Pick a workflow, or build one.
+ *
+ * Built-ins first, then whatever this person has saved, then "build one".
+ * Undefined means they cancelled.
  */
-async function pickApprovals(
+export async function pickWorkflow(
   prompt: Prompter,
-  research: boolean,
-): Promise<Partial<ApprovalPolicy> | undefined> {
-  const options = approvalOptions(research);
-  // DEFINE is pre-ticked: it is the signature that pays for itself, and a
-  // human who genuinely wants to forfeit everything unticks one box.
-  const chosen = new Set<keyof ApprovalPolicy>(["define"]);
+  env?: NodeJS.ProcessEnv,
+): Promise<Workflow | undefined> {
+  const available = listWorkflows(env);
+  const rows = available.map((w) => line(w.builtIn ? w.name : `${w.name} (yours)`, w.description));
+  const picked = await prompt.select(WORKFLOW_QUESTION.title, [...rows, BUILD_ONE]);
+  if (picked === undefined) return undefined;
+  if (picked === BUILD_ONE) return buildWorkflow(prompt, env);
+  return available[rows.indexOf(picked)];
+}
 
+/**
+ * The custom flow: phases, then a mode for each, then keep it or don't.
+ *
+ * Saving is offered rather than required. Someone trying a one-off shape for
+ * one project should not have to name it, and someone who has found the shape
+ * they always want should not have to rebuild it every time.
+ */
+export async function buildWorkflow(
+  prompt: Prompter,
+  env?: NodeJS.ProcessEnv,
+): Promise<Workflow | undefined> {
+  // -- which phases run ---------------------------------------------------
+  const chosen = new Set<Phase>(DEFAULT_ENABLED_PHASES);
   for (;;) {
-    const rows = options.map((o) => `${chosen.has(o.value) ? "[x]" : "[ ]"} ${line(o.label, o.help)}`);
-    const summary = chosen.size
-      ? `you will sign ${[...chosen].map((c) => c.toUpperCase()).join(", ")}`
-      : "you will sign nothing — the model decides and runs";
-    const pick = await prompt.select(`Which phases do you want to approve? (${summary})`, [
-      ...rows,
-      APPROVALS_DONE,
-    ]);
-    if (pick === undefined) return undefined;
-    if (pick === APPROVALS_DONE) break;
-    const hit = options[rows.indexOf(pick)];
-    if (!hit) break;
-    if (chosen.has(hit.value)) chosen.delete(hit.value);
-    else chosen.add(hit.value);
+    const rows = SELECTABLE_PHASES.map(
+      (p) => `${chosen.has(p) ? "[x]" : "[ ]"} ${p} — ${PHASE_PURPOSE[p]}`,
+    );
+    const hit = await prompt.select(
+      `Which phases should run? (${chosen.size ? [...SELECTABLE_PHASES].filter((p) => chosen.has(p)).join(" → ") : "none yet"})`,
+      [...rows, DONE],
+    );
+    if (hit === undefined) return undefined;
+    if (hit === DONE) break;
+    const key = SELECTABLE_PHASES[rows.indexOf(hit)];
+    if (!key) break;
+    if (chosen.has(key)) chosen.delete(key);
+    else chosen.add(key);
   }
 
-  return {
-    research: chosen.has("research"),
-    define: chosen.has("define"),
-    plan: chosen.has("plan"),
-  };
+  const phases = normalizePhases([...chosen]);
+
+  // -- a mode for each ----------------------------------------------------
+  //
+  // Asked one phase at a time rather than as a checklist, because "does this
+  // one stop for me" is a different question for RESEARCH than for SHIP and
+  // the help text is the useful part.
+  const modes: PhaseModes = {};
+  const modeLabels = PHASE_MODE_OPTIONS.map((o) => line(o.label, o.help));
+  for (const phase of phases) {
+    const answer = await prompt.select(
+      `${phase.toUpperCase()} — ${PHASE_PURPOSE[phase]}`,
+      modeLabels,
+    );
+    if (answer === undefined) return undefined;
+    modes[phase] = (PHASE_MODE_OPTIONS[modeLabels.indexOf(answer)]?.value ?? "autopilot") as PhaseMode;
+  }
+
+  const draft = customWorkflow(phases, modes);
+  prompt.notify(renderWorkflow(draft), "info");
+
+  // -- keep it? -----------------------------------------------------------
+  const KEEP = "save it under a name I can reuse";
+  const ONCE = "just use it here";
+  const keep = await prompt.select("Keep this workflow?", [KEEP, ONCE]);
+  if (keep === undefined) return undefined;
+  if (keep !== KEEP) return draft;
+
+  for (;;) {
+    const name = await prompt.input("Call it what?", "e.g. spec-heavy, weekend-run, client-work");
+    if (name === undefined || !name.trim()) return draft;
+    const saved = saveWorkflow(
+      { name: name.trim(), phases, modes },
+      env,
+    );
+    if (saved.ok && saved.workflow) {
+      prompt.notify(`Saved "${saved.workflow.name}". It will be offered on every project.`, "info");
+      return saved.workflow;
+    }
+    prompt.notify(saved.error ?? "Could not save that.", "warning");
+  }
+}
+
+// ── choosing a display template ─────────────────────────────────────────────
+
+const CUSTOMISE = "choose level by level";
+
+export async function pickDisplay(
+  prompt: Prompter,
+  env?: NodeJS.ProcessEnv,
+): Promise<DisplayPolicy | undefined> {
+  const available = listDisplays(env);
+  const rows = available.map((d) => line(d.builtIn ? d.name : `${d.name} (yours)`, d.description));
+  const picked = await prompt.select(DISPLAY_QUESTION.title, [...rows, CUSTOMISE]);
+  if (picked === undefined) return undefined;
+  if (picked !== CUSTOMISE) return available[rows.indexOf(picked)]?.policy ?? defaultDisplay();
+  return buildDisplay(prompt, defaultDisplay(), env);
+}
+
+const SUBTASK_CYCLE: DisplayPolicy["levels"]["subtask"][] = ["none", "active", "all"];
+
+/**
+ * The level-by-level editor, shared by the wizard and `/infinity:display`.
+ *
+ * Every row toggles; subtasks cycle through none → active → all, because
+ * "only on the task being worked" is the answer most people want and a plain
+ * on/off cannot express it.
+ */
+export async function buildDisplay(
+  prompt: Prompter,
+  starting: DisplayPolicy,
+  env?: NodeJS.ProcessEnv,
+): Promise<DisplayPolicy | undefined> {
+  let policy = normalizeDisplay(starting);
+
+  for (;;) {
+    const rows = [
+      `${policy.levels.goal ? "[x]" : "[ ]"} goals`,
+      `${policy.levels.sprint ? "[x]" : "[ ]"} sprints`,
+      `${policy.levels.feature ? "[x]" : "[ ]"} features`,
+      `${policy.levels.task ? "[x]" : "[ ]"} tasks`,
+      `[${policy.levels.subtask}] subtasks — none · active (only the task being worked) · all`,
+      `${policy.counts ? "[x]" : "[ ]"} done/total counts on goals, sprints and features`,
+      `${policy.dependencies ? "[x]" : "[ ]"} dependency labels (← #3)`,
+      `${policy.criteria ? "[x]" : "[ ]"} acceptance criteria (dashboard only)`,
+      `${policy.rail ? "[x]" : "[ ]"} the phase rail`,
+      `${policy.progress ? "[x]" : "[ ]"} the progress meter`,
+      `${policy.alerts ? "[x]" : "[ ]"} the alert strip (blocked, rework, retries, approvals)`,
+      `[${policy.taskWindow}] rows of plan in the terminal before it scrolls`,
+    ];
+    const SAVE = "save this as a template I can reuse";
+    const hit = await prompt.select("What should the widget and the dashboard show?", [
+      ...rows,
+      SAVE,
+      DONE,
+    ]);
+    if (hit === undefined) return undefined;
+    if (hit === DONE) return { ...policy, preset: "custom" };
+
+    if (hit === SAVE) {
+      const name = await prompt.input("Call it what?", "e.g. sprint-view, my-focus");
+      if (name && name.trim()) {
+        const saved = saveDisplay({ name: name.trim(), policy }, env);
+        if (saved.ok && saved.template) {
+          prompt.notify(`Saved "${saved.template.name}".`, "info");
+          return saved.template.policy;
+        }
+        prompt.notify(saved.error ?? "Could not save that.", "warning");
+      }
+      continue;
+    }
+
+    const idx = rows.indexOf(hit);
+    switch (idx) {
+      case 0:
+        policy = { ...policy, levels: { ...policy.levels, goal: !policy.levels.goal } };
+        break;
+      case 1:
+        policy = { ...policy, levels: { ...policy.levels, sprint: !policy.levels.sprint } };
+        break;
+      case 2:
+        policy = { ...policy, levels: { ...policy.levels, feature: !policy.levels.feature } };
+        break;
+      case 3:
+        policy = { ...policy, levels: { ...policy.levels, task: !policy.levels.task } };
+        break;
+      case 4: {
+        const next = SUBTASK_CYCLE[(SUBTASK_CYCLE.indexOf(policy.levels.subtask) + 1) % SUBTASK_CYCLE.length]!;
+        policy = { ...policy, levels: { ...policy.levels, subtask: next } };
+        break;
+      }
+      case 5:
+        policy = { ...policy, counts: !policy.counts };
+        break;
+      case 6:
+        policy = { ...policy, dependencies: !policy.dependencies };
+        break;
+      case 7:
+        policy = { ...policy, criteria: !policy.criteria };
+        break;
+      case 8:
+        policy = { ...policy, rail: !policy.rail };
+        break;
+      case 9:
+        policy = { ...policy, progress: !policy.progress };
+        break;
+      case 10:
+        policy = { ...policy, alerts: !policy.alerts };
+        break;
+      case 11: {
+        const answer = await prompt.input("How many rows?", String(policy.taskWindow));
+        const n = Number(String(answer ?? "").trim());
+        if (Number.isFinite(n)) policy = normalizeDisplay({ ...policy, taskWindow: n });
+        break;
+      }
+      default:
+        return { ...policy, preset: "custom" };
+    }
+  }
 }
 
 /**
  * The wizard's answers when nobody is there to give any.
  *
  * A headless run must not stall on a prompt, and it must not silently become
- * a mode the human did not pick. The safe default is autopilot with nothing
- * approved — because a run with an approval gate and no human to answer it
- * would park forever — plus a loud warning that says exactly that.
+ * a workflow the human did not pick. The safe default is autopilot with
+ * nothing approved — because an approval gate with no human to answer it would
+ * park forever — plus a loud warning that says exactly that.
  */
 export function unattendedIntake(brief: string | null, phases?: Phase[]): IntakePlan {
-  const plan = planIntake({
-    mode: "autopilot",
-    brief: brief ?? "",
-    research: false,
-    approvals: { research: false, define: false, plan: false },
-    handoff: "phase",
-    phases,
-  });
+  const ordered = normalizePhases(phases ?? [...DEFAULT_ENABLED_PHASES]);
+  const workflow: Workflow = {
+    id: "autopilot",
+    name: "autopilot",
+    description: "You approve nothing.",
+    builtIn: true,
+    phases: ordered,
+    modes: normalizeModes({}, ordered),
+  };
+  const plan = planIntake({ workflow, brief: brief ?? "", handoff: "phase" });
   return {
     ...plan,
     warnings: [

@@ -3306,13 +3306,14 @@ async function scenarioColdStart() {
   await step("/infinity:init asks what is being built before it starts building", async () => {
     // The bug this replaces: picking a mode was the *only* question, so
     // "autopilot" started a run with no idea and no scope, and the harness
-    // invented a project. The wizard now asks for the goal in both modes.
+    // invented a project. The wizard now asks for the goal whatever the
+    // workflow.
     const ctx = fakeCtx(dir, [
       /^yes$/,
-      /copilot/,
+      /^copilot/,
       "reconcile Stripe payouts against the ledger",
-      /go straight to defining/,
       /every phase/,
+      /^focus/,
       /start with these settings/,
     ]);
     await pi.command("infinity:init", "", ctx);
@@ -3322,10 +3323,10 @@ async function scenarioColdStart() {
     assert.match(ctx.asked[0].title, /Node/, "and said what it detected");
 
     const titles = ctx.asked.map((a) => a.title).join("\n");
-    assert.match(titles, /How much do you want to be involved/);
+    assert.match(titles, /which phases, and which of them stop for you/);
     assert.match(titles, /What are you building/, "the goal is asked for, not assumed");
-    assert.match(titles, /Research the idea first/);
     assert.match(titles, /fresh session/);
+    assert.match(titles, /How much of the plan/);
 
     const said = ctx.notices.map((n) => n.m).join("\n");
     assert.match(said, /infinity-harness ready/);
@@ -3335,11 +3336,13 @@ async function scenarioColdStart() {
     const config = cfg(dir);
     assert.equal(config.mode, "copilot");
     assert.equal(config.intake.brief, "reconcile Stripe payouts against the ledger");
+    assert.equal(config.workflow?.id, "copilot", "the config records which workflow it came from");
     assert.deepEqual(
-      { research: config.approvals.research, define: config.approvals.define, plan: config.approvals.plan },
-      { research: false, define: true, plan: true },
-      "copilot signs DEFINE and PLAN — that is what the word means",
+      { define: config.phaseModes.define, plan: config.phaseModes.plan, build: config.phaseModes.build },
+      { define: "copilot", plan: "copilot", build: "autopilot" },
+      "copilot signs the thinking phases and leaves the building alone",
     );
+    assert.equal(config.display.preset, "focus", "and which display template");
 
     assert.ok(ctx.widgets["infinity-harness"]?.length, "the widget appears immediately");
     assert.equal(pi.userMessages.length, 1, "the session that created the harness gets the first brief");
@@ -3347,34 +3350,98 @@ async function scenarioColdStart() {
     assert.match(pi.userMessages[0].text, /reconcile Stripe payouts/, "and the goal it was given");
   });
 
-  await step("autopilot lets the human choose what to sign, and research is opt-in", async () => {
-    const auto = mkTempDir("coldstart-auto");
-    writeFileSync(join(auto, "package.json"), JSON.stringify({ scripts: { test: "vitest" } }));
-    const ctx = fakeCtx(auto, [
+  await step("a built-in workflow can put the checkpoint anywhere in the pipeline", async () => {
+    const late = mkTempDir("coldstart-late");
+    writeFileSync(join(late, "package.json"), JSON.stringify({ scripts: { test: "vitest" } }));
+    const ctx = fakeCtx(late, [
       /^yes$/,
-      /autopilot/,
+      /^spec and ship/,
       "a nightly reconciliation job",
-      /find out what it has to be first/,
-      // DEFINE starts ticked; tick PLAN too, then finish.
-      (_t, options) => options.find((o) => /PLAN —/.test(o)),
-      (_t, options) => options.at(-1),
       /every phase/,
+      /^overview/,
       /start with these settings/,
     ]);
     await pi.command("infinity:init", "", ctx);
 
-    const config = cfg(auto);
-    assert.equal(config.mode, "autopilot");
-    assert.ok(config.phases.enabled.includes("research"), "research was turned on");
-    assert.equal(config.currentPhase, "research", "and it is the phase the run starts in");
-    assert.equal(config.approvals.define, true);
-    assert.equal(config.approvals.plan, true);
-    assert.equal(config.approvals.research, false, "the one they did not tick is not signed");
-    assert.ok(
-      existsSync(join(auto, "harness", "docs", "RESEARCH.md")),
-      "the research phase gets somewhere to write its findings",
-    );
-    rmSync(auto, { recursive: true, force: true });
+    const config = cfg(late);
+    // The shape a single copilot/autopilot switch could not express.
+    assert.equal(config.phaseModes.define, "copilot", "you sign the scope going in");
+    assert.equal(config.phaseModes.ship, "copilot", "and the release coming out");
+    assert.equal(config.phaseModes.plan, "autopilot", "the middle is its own");
+    assert.equal(config.phaseModes.build, "autopilot");
+    assert.equal(config.display.levels.task, false, "and the display template came with it");
+    rmSync(late, { recursive: true, force: true });
+  });
+
+  await step("a custom workflow is built phase by phase, named, and offered next time", async () => {
+    const store = mkTempDir("coldstart-store");
+    const custom = mkTempDir("coldstart-custom");
+    writeFileSync(join(custom, "package.json"), JSON.stringify({ scripts: { test: "vitest" } }));
+
+    // The store lives with the person, not the project, so point it somewhere
+    // this test owns.
+    const previous = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = store;
+    try {
+      const ctx = fakeCtx(custom, [
+        /^yes$/,
+        /build one/,
+        // Phases: add RESEARCH, then done.
+        (_t, options) => options.find((o) => /\[ \] research/.test(o)),
+        (_t, options) => options.at(-1),
+        // A mode for each, in pipeline order.
+        /copilot/, // research
+        /autopilot/, // define
+        /autopilot/, // plan
+        /autopilot/, // build
+        /autopilot/, // verify
+        /copilot/, // review
+        /copilot/, // ship
+        /save it under a name/,
+        "Client work",
+        "a client project",
+        /every phase/,
+        /^everything/,
+        /start with these settings/,
+      ]);
+      await pi.command("infinity:init", "", ctx);
+
+      const config = cfg(custom);
+      assert.ok(config.phases.enabled.includes("research"));
+      assert.equal(config.phaseModes.research, "copilot");
+      assert.equal(config.phaseModes.plan, "autopilot");
+      assert.equal(config.phaseModes.review, "copilot");
+      assert.equal(config.phaseModes.ship, "copilot");
+      assert.equal(config.workflow?.name, "Client work");
+      assert.equal(config.display.levels.subtask, "all");
+
+      const saved = JSON.parse(
+        readFileSync(join(store, "infinity-harness", "workflows.json"), "utf-8"),
+      );
+      assert.equal(saved.workflows.length, 1, "it was written to the person's store");
+      assert.equal(saved.workflows[0].name, "Client work");
+
+      // And a second project is offered it.
+      const next = mkTempDir("coldstart-reuse");
+      writeFileSync(join(next, "package.json"), JSON.stringify({ scripts: { test: "vitest" } }));
+      const ctx2 = fakeCtx(next, [
+        /^yes$/,
+        /Client work \(yours\)/,
+        "the next one",
+        /every phase/,
+        /^focus/,
+        /start with these settings/,
+      ]);
+      await pi.command("infinity:init", "", ctx2);
+      assert.equal(cfg(next).workflow?.name, "Client work", "a saved workflow is reusable");
+      assert.equal(cfg(next).phaseModes.ship, "copilot");
+      rmSync(next, { recursive: true, force: true });
+    } finally {
+      if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previous;
+      rmSync(store, { recursive: true, force: true });
+      rmSync(custom, { recursive: true, force: true });
+    }
   });
 
   await step("forfeiting every signature is allowed, and says what it means", async () => {
@@ -3382,20 +3449,19 @@ async function scenarioColdStart() {
     writeFileSync(join(walkAway, "package.json"), JSON.stringify({ scripts: { test: "vitest" } }));
     const ctx = fakeCtx(walkAway, [
       /^yes$/,
-      /autopilot/,
+      /^autopilot/,
       "a URL shortener",
-      /go straight to defining/,
-      // Untick DEFINE, leaving nothing, then finish.
-      (_t, options) => options.find((o) => /DEFINE —/.test(o)),
-      (_t, options) => options.at(-1),
       /every phase/,
+      /^focus/,
       /start with these settings/,
     ]);
     await pi.command("infinity:init", "", ctx);
 
     const config = cfg(walkAway);
-    assert.equal(config.approvals.define, false);
-    assert.equal(config.approvals.plan, false);
+    assert.ok(
+      Object.values(config.phaseModes).every((m) => m === "autopilot"),
+      "autopilot stops nowhere",
+    );
     const said = ctx.notices.map((n) => n.m).join("\n");
     assert.match(said, /Nothing is being approved by you/, "the trade-off is stated, not buried");
     rmSync(walkAway, { recursive: true, force: true });
@@ -3407,11 +3473,10 @@ async function scenarioColdStart() {
     const before = pi.userMessages.length;
     const ctx = fakeCtx(vague, [
       /^yes$/,
-      /autopilot/,
+      /^autopilot/,
       "",
-      /go straight to defining/,
-      (_t, options) => options.at(-1),
       /every phase/,
+      /^focus/,
       /start with these settings/,
     ]);
     await pi.command("infinity:init", "", ctx);
@@ -3426,6 +3491,40 @@ async function scenarioColdStart() {
       "and the human is told that is what will happen",
     );
     rmSync(vague, { recursive: true, force: true });
+  });
+
+  await step("the workflow and the display can both be changed mid-run", async () => {
+    // Everything the wizard set is editable afterwards, because a run three
+    // phases deep is exactly when someone realises they do want to see the
+    // review after all.
+    const ctx = fakeCtx(dir, []);
+    await pi.command("infinity:workflow", "every-gate", ctx);
+    const after = cfg(dir);
+    assert.ok(
+      after.phases.enabled.every((p) => after.phaseModes[p] === "copilot"),
+      "switching workflow by name rewrites every mode",
+    );
+    assert.equal(after.workflow?.id, "every-gate");
+    assert.match(ctx.notices.map((n) => n.m).join("\n"), /\[define\]/, "and shows what it now does");
+
+    await pi.command("infinity:display", "worklist", ctx);
+    assert.equal(cfg(dir).display.levels.feature, false, "and the display too");
+    assert.equal(cfg(dir).display.levels.task, true);
+
+    ctx.notices.length = 0;
+    await pi.command("infinity:workflow", "no-such-thing", ctx);
+    assert.match(ctx.notices.map((n) => n.m).join("\n"), /No workflow called/, "a typo is reported, not applied");
+    assert.equal(cfg(dir).workflow?.id, "every-gate", "and changes nothing");
+
+    ctx.notices.length = 0;
+    await pi.command("infinity:workflow", "list", ctx);
+    const listed = ctx.notices.map((n) => n.m).join("\n");
+    assert.match(listed, /copilot/);
+    assert.match(listed, /every gate/);
+
+    // Put it back so the later steps see the harness they expect.
+    await pi.command("infinity:workflow", "copilot", ctx);
+    await pi.command("infinity:display", "focus", ctx);
   });
 
   await step("cancelling writes nothing", async () => {
@@ -3518,10 +3617,10 @@ async function scenarioColdStart() {
     rmSync(rubric);
     const ctx = fakeCtx(dir, [
       /^yes$/,
-      /copilot/,
+      /^copilot/,
       "reconcile Stripe payouts against the ledger",
-      /go straight to defining/,
       /every phase/,
+      /^focus/,
       /start with these settings/,
     ]);
     await pi.command("infinity:init", "force", ctx);
@@ -3862,7 +3961,15 @@ async function scenarioRealPi() {
       settings,
     }).start();
     drivers.push(driver);
-    return { dir, driver, sessionDir: join(workdir, `sessions-${seq}`) };
+    // `configDir` is where the harness keeps the *person's* saved workflows and
+    // display templates, under `infinity-harness/` — a scenario that saves one
+    // looks for it there.
+    return {
+      dir,
+      driver,
+      sessionDir: join(workdir, `sessions-${seq}`),
+      configDir: join(workdir, `pi-${seq}`),
+    };
   };
 
   const settled = (d, ms = 60_000) => d.settle(d.events.length ? d.events.length - 1 : 0, ms);
@@ -3901,16 +4008,14 @@ async function scenarioRealPi() {
       await new Promise((r) => setTimeout(r, 1500));
 
       driver.answer((r) => /Create a harness here/.test(r.title ?? ""), (r) => r.options[0]);
-      driver.answer((r) => /How much do you want to be involved/.test(r.title ?? ""), (r) =>
-        r.options.find((o) => /autopilot/.test(o)),
+      driver.answer((r) => /which phases, and which of them stop for you/.test(r.title ?? ""), (r) =>
+        r.options.find((o) => /^research first/.test(o)),
       );
       driver.answer((r) => /What are you building/.test(r.title ?? ""), "a nightly reconciliation job");
-      driver.answer((r) => /Research the idea first/.test(r.title ?? ""), (r) =>
-        r.options.find((o) => /find out what it has to be/.test(o)),
-      );
-      driver.answer((r) => /approve/.test(r.title ?? ""), (r) => r.options.find((o) => /PLAN —/.test(o)));
-      driver.answer((r) => /approve/.test(r.title ?? ""), (r) => r.options.at(-1));
       driver.answer((r) => /fresh session/.test(r.title ?? ""), (r) => r.options[0]);
+      driver.answer((r) => /How much of the plan/.test(r.title ?? ""), (r) =>
+        r.options.find((o) => /^everything/.test(o)),
+      );
       driver.answer((r) => /Ready\?/.test(r.title ?? ""), (r) => r.options[0]);
 
       await driver.prompt("/infinity:init");
@@ -3918,16 +4023,140 @@ async function scenarioRealPi() {
       await new Promise((r) => setTimeout(r, 800));
 
       const config = JSON.parse(readFileSync(join(dir, "harness", "config.json"), "utf-8"));
-      assert.equal(config.mode, "autopilot");
       assert.equal(config.intake.brief, "a nightly reconciliation job", "the goal it was told, not one it invented");
+      assert.equal(config.workflow.id, "research-first");
       assert.ok(config.phases.enabled.includes("research"));
       assert.equal(config.currentPhase, "research");
-      assert.equal(config.approvals.define, true);
-      assert.equal(config.approvals.plan, true);
+      assert.equal(config.phaseModes.research, "copilot");
+      assert.equal(config.phaseModes.define, "copilot");
+      assert.equal(config.phaseModes.build, "autopilot");
+      assert.equal(config.display.levels.subtask, "all", "the display template was applied too");
       assert.ok(existsSync(join(dir, "harness", "docs", "RESEARCH.md")));
 
       const asked = driver.uiRequests.filter((r) => r.method === "select" || r.method === "input");
       note(`${asked.length} dialogs answered as a human would`);
+    });
+
+    await step("a workflow is built phase by phase inside real pi, and kept for next time", async () => {
+      // The whole point of a custom workflow is that it survives the project
+      // it was designed in, so this checks the store on disk as well as the
+      // config it produced.
+      const { dir, driver, configDir } = launch("custom", { initOptions: false });
+      const store = join(configDir, "infinity-harness");
+      await new Promise((r) => setTimeout(r, 1500));
+
+      driver.answer((r) => /Create a harness here/.test(r.title ?? ""), (r) => r.options[0]);
+      driver.answer((r) => /which phases, and which of them stop for you/.test(r.title ?? ""), (r) =>
+        r.options.find((o) => /build one/.test(o)),
+      );
+      // Phases: turn RESEARCH on, then finish.
+      driver.answer((r) => /Which phases should run/.test(r.title ?? ""), (r) =>
+        r.options.find((o) => /\[ \] research/.test(o)),
+      );
+      driver.answer((r) => /Which phases should run/.test(r.title ?? ""), (r) => r.options.at(-1));
+      // A mode for each phase, in pipeline order. The interesting shape: the
+      // model thinks for itself and still shows you the release.
+      for (const [phase, want] of [
+        ["RESEARCH", /autopilot/],
+        ["DEFINE", /autopilot/],
+        ["PLAN", /autopilot/],
+        ["BUILD", /autopilot/],
+        ["VERIFY", /autopilot/],
+        ["REVIEW", /copilot/],
+        ["SHIP", /copilot/],
+      ]) {
+        driver.answer(
+          (r) => new RegExp(`^${phase} —`).test(r.title ?? ""),
+          (r) => r.options.find((o) => want.test(o)),
+        );
+      }
+      driver.answer((r) => /Keep this workflow/.test(r.title ?? ""), (r) =>
+        r.options.find((o) => /save it under a name/.test(o)),
+      );
+      driver.answer((r) => /Call it what/.test(r.title ?? ""), "Ship review");
+      driver.answer((r) => /What are you building/.test(r.title ?? ""), "an internal tool");
+      driver.answer((r) => /fresh session/.test(r.title ?? ""), (r) => r.options[0]);
+      driver.answer((r) => /How much of the plan/.test(r.title ?? ""), (r) => r.options[0]);
+      driver.answer((r) => /Ready\?/.test(r.title ?? ""), (r) => r.options[0]);
+
+      await driver.prompt("/infinity:init");
+      await waitUntil(async () => existsSync(join(dir, "harness", "config.json")), 40_000, "the harness to be written");
+      await new Promise((r) => setTimeout(r, 800));
+
+      const config = JSON.parse(readFileSync(join(dir, "harness", "config.json"), "utf-8"));
+      assert.equal(config.workflow.name, "Ship review");
+      assert.equal(config.phaseModes.plan, "autopilot", "the middle really is left alone");
+      assert.equal(config.phaseModes.review, "copilot");
+      assert.equal(config.phaseModes.ship, "copilot");
+
+      const saved = JSON.parse(readFileSync(join(store, "workflows.json"), "utf-8"));
+      assert.equal(saved.workflows.length, 1, "it was written to the person's store, not the project's");
+      assert.equal(saved.workflows[0].name, "Ship review");
+      assert.equal(saved.workflows[0].modes.review, "copilot");
+
+      assert.deepEqual(driver.events.filter((e) => e.type === "extension_error"), []);
+    });
+
+    await step("the display template changes what the widget draws, live", async () => {
+      const { driver } = launch("display", {
+        initOptions: { mode: "autopilot", brief: "a demo" },
+        plan: {
+          version: "2.0",
+          baseRevision: 1,
+          goals: [{ id: "goal-001", title: "Reconcile payouts" }],
+          sprints: [{ id: "sprint-001", name: "Foundations", goalId: "goal-001" }],
+          features: [
+            {
+              id: "feature-001",
+              name: "Ledger import",
+              sprintId: "sprint-001",
+              goalId: "goal-001",
+              criteria: ["it works"],
+              tasks: [
+                {
+                  id: "task-001",
+                  description: "Parse the payout CSV",
+                  status: "in_progress",
+                  dependsOn: [],
+                  subtasks: [{ id: "s1", title: "handle the BOM", status: "pending" }],
+                },
+              ],
+            },
+          ],
+        },
+      });
+      await driver.waitForUi((r) => r.method === "setWidget", 40_000, "the plan widget");
+
+      const drawn = async () => {
+        await new Promise((r) => setTimeout(r, 600));
+        return (driver.widget() ?? []).join("\n");
+      };
+
+      const focus = await drawn();
+      assert.match(focus, /Foundations/, "focus draws the sprint");
+      assert.match(focus, /Parse the payout CSV/);
+
+      await driver.prompt("/infinity:display overview");
+      const overview = await drawn();
+      assert.match(overview, /Foundations/, "overview keeps the shape");
+      assert.doesNotMatch(overview, /Parse the payout CSV/, "and drops the work");
+
+      await driver.prompt("/infinity:display worklist");
+      const worklist = await drawn();
+      assert.doesNotMatch(worklist, /Foundations/, "worklist drops the grouping rows");
+      assert.match(worklist, /Parse the payout CSV/, "and keeps the work");
+      assert.doesNotMatch(worklist, /◉ BUILD|◉ DEFINE/, "and the phase rail with them");
+
+      await driver.prompt("/infinity:display everything");
+      const everything = await drawn();
+      assert.match(everything, /handle the BOM/, "everything shows every subtask");
+
+      await driver.prompt("/infinity:display no-such-template");
+      await new Promise((r) => setTimeout(r, 600));
+      assert.match(driver.notes(), /No template called/, "a typo is reported rather than applied");
+      assert.match((driver.widget() ?? []).join("\n"), /handle the BOM/, "and changes nothing");
+
+      assert.deepEqual(driver.events.filter((e) => e.type === "extension_error"), []);
     });
 
     await step("a run spans several real pi sessions, and its budgets survive them", async () => {

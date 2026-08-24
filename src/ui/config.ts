@@ -15,6 +15,8 @@
  */
 
 import type { Setting, SettingsGroup } from "../core/settings.ts";
+import { summarizeWorkflow } from "../workflow.ts";
+import { normalizeDisplay, summarizeDisplay } from "./display.ts";
 import {
   SETTINGS,
   coerce,
@@ -92,6 +94,10 @@ function summarize(group: SettingsGroup, io: ReturnType<typeof readAll>): string
     }
     case "pipeline":
       return (io.config.phases?.enabled ?? []).join(" → ") || "(none)";
+    case "workflow":
+      return summarizeWorkflow(io.config);
+    case "display":
+      return summarizeDisplay(normalizeDisplay(io.config.display));
     case "commands": {
       const set = Object.entries(io.config.commands ?? {}).filter(([, v]) => Boolean(v));
       return set.length ? set.map(([k]) => k).join(", ") : "none set";

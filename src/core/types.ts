@@ -176,11 +176,53 @@ export type SessionPolicy = {
   carryNotes: boolean;
 };
 
-/** Which phases stop and wait for a human signature before the run continues. */
+/**
+ * Which phases stop and wait for a human signature before the run continues.
+ *
+ * Superseded by `HarnessConfig.phaseModes`, which says the same thing for
+ * *every* phase rather than only these three. Kept because configs written by
+ * 2.3 have it, and `loadConfig` migrates them on read.
+ */
 export type ApprovalPolicy = {
   research: boolean;
   define: boolean;
   plan: boolean;
+};
+
+/** What happens when a phase's gate passes: stop for the human, or advance. */
+export type PhaseMode = "copilot" | "autopilot";
+
+/**
+ * Which parts of the plan a surface draws.
+ *
+ * Two people watching the same run want different things on screen: one works
+ * in sprints and never opens a subtask, the next has no sprints at all and
+ * lives in the subtask list. Rather than pick a winner, the levels are a
+ * setting, and the widget and the dashboard read the same one.
+ */
+export type DisplayPolicy = {
+  /** Name of the template this came from, or "custom" once it is edited. */
+  preset: string;
+  levels: {
+    goal: boolean;
+    sprint: boolean;
+    feature: boolean;
+    task: boolean;
+    /** "active" shows them only on the task being worked. */
+    subtask: "none" | "active" | "all";
+  };
+  /** `2/5` counts on the grouping rows. */
+  counts: boolean;
+  /** `← #3` dependency labels on tasks. */
+  dependencies: boolean;
+  /** The phase rail, the progress meter and the alert strip. */
+  rail: boolean;
+  progress: boolean;
+  alerts: boolean;
+  /** Acceptance criteria under each feature. Dashboard only — no room in a widget. */
+  criteria: boolean;
+  /** Rows of plan in the terminal widget before it starts scrolling. */
+  taskWindow: number;
 };
 
 /** What the start-up wizard settled, so it is never asked twice. */
@@ -227,7 +269,13 @@ export type HarnessConfig = {
   phases: { enabled: Phase[] };
   roles: { strict: boolean };
   session: SessionPolicy;
+  /** Legacy: the three-phase approval switch 2.3 shipped. Migrated to `phaseModes`. */
   approvals: ApprovalPolicy;
+  /** Mode per phase — the setting `approvals` became. */
+  phaseModes: Partial<Record<Phase, PhaseMode>>;
+  /** Which named workflow the modes above came from, before any hand-editing. */
+  workflow: { id: string; name: string } | null;
+  display: DisplayPolicy;
   intake: IntakeState;
   /** Set when a gate passed but the phase needs a human signature first. */
   awaitingApproval: Phase | null;

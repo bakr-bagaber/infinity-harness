@@ -19,8 +19,8 @@
  */
 
 import type { HarnessConfig, Phase } from "./core/types.ts";
-import { APPROVABLE_PHASES } from "./core/types.ts";
 import { loadConfig, saveConfig } from "./core/config.ts";
+import { modeFor, signedPhases, SIGNABLE_PHASES } from "./workflow.ts";
 
 export type ApprovalRequest = {
   phase: Phase;
@@ -29,26 +29,31 @@ export type ApprovalRequest = {
   prompt: string;
 };
 
+/** Every phase except INIT, which is plumbing rather than work. */
 export function isApprovable(phase: Phase | null): boolean {
-  return phase !== null && (APPROVABLE_PHASES as readonly string[]).includes(phase);
+  return phase !== null && SIGNABLE_PHASES.includes(phase);
 }
 
 /** Does `phase` need a signature before the pipeline may leave it? */
 export function needsApproval(config: HarnessConfig, phase: Phase | null): boolean {
   if (!isApprovable(phase)) return false;
-  const approvals = (config.approvals ?? {}) as Record<string, unknown>;
-  return approvals[phase as string] === true;
+  return modeFor(config, phase) === "copilot";
 }
 
 /** Which phases the human has asked to sign, in pipeline order. */
 export function approvedPhases(config: HarnessConfig): Phase[] {
-  return APPROVABLE_PHASES.filter((p) => needsApproval(config, p)) as Phase[];
+  return signedPhases(config);
 }
 
 const ARTIFACTS: Record<string, string[]> = {
   research: ["harness/docs/RESEARCH.md"],
   define: ["specs/prd.md", "harness/sprint-contract.md", "the acceptance criteria in the plan"],
   plan: ["the task list in the widget, or `/infinity:dashboard`"],
+  build: ["the diff since the last phase — `git diff`", "the tasks marked complete in the plan"],
+  verify: ["the test output", "what the tests still do not cover"],
+  simplify: ["what was deleted — `git diff --stat`"],
+  review: ["harness/evaluator-rubric.md and the score against it", "README.md and harness/docs/"],
+  ship: ["CHANGELOG.md", "the tag, and `git log` since the last one"],
 };
 
 const ASKS: Record<string, string> = {
@@ -57,6 +62,11 @@ const ASKS: Record<string, string> = {
   define:
     "Is this the thing you want built, and would meeting these criteria convince you it works?",
   plan: "Does this plan build that thing, in an order that makes sense, with nothing important missing?",
+  build: "Is this the code you wanted written, and would you be happy to own it?",
+  verify: "Do these tests actually prove the thing works, or only that it runs?",
+  simplify: "Is what is left simpler, and is anything missing that should not be?",
+  review: "Would you approve this if someone else had written it?",
+  ship: "Is this ready to go out, under this version, with this changelog?",
 };
 
 export function describeApproval(phase: Phase): ApprovalRequest {

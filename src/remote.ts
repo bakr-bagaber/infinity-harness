@@ -18,12 +18,13 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { resolve } from "node:path";
 
-import type { FeatureList, Feature, Goal, GateResult, Phase, Sprint } from "./core/types.ts";
+import type { DisplayPolicy, FeatureList, Feature, Goal, GateResult, Phase, Sprint } from "./core/types.ts";
 import { loadFeatureList, computeProgress } from "./core/featureList.ts";
 import { loadConfig } from "./core/config.ts";
 import { modelRouterPath, reworkPath } from "./core/paths.ts";
 import { readJsonSafe } from "./core/fsx.ts";
 import { loadRunState } from "./runState.ts";
+import { normalizeDisplay } from "./ui/display.ts";
 import { renderDashboard, escapeHtml, type DashboardState } from "./ui/dashboard.ts";
 
 export { escapeHtml };
@@ -54,6 +55,8 @@ export interface RemoteState {
   /** pi sessions this run has spent — proof the handoff is doing its job. */
   sessions: number | null;
   goalPass: { current: number; max: number } | null;
+  /** What the reader has asked the dashboard to draw. */
+  display: DisplayPolicy;
 }
 
 export interface RemoteServer {
@@ -118,6 +121,7 @@ export function buildRemoteState(projectDir?: string): RemoteState {
         ? { current: config.goalPass, max: config.goalMaxPasses }
         : null,
     sprints: list.sprints ?? [],
+    display: normalizeDisplay(config.display),
   };
 }
 
@@ -136,6 +140,7 @@ function toDashboardState(s: RemoteState): DashboardState {
     awaitingApproval: s.awaitingApproval,
     sessions: s.sessions,
     goalPass: s.goalPass,
+    display: s.display,
   };
 }
 
@@ -159,6 +164,7 @@ export function buildApiPayload(state: RemoteState): Record<string, unknown> {
     sessions: state.sessions,
     goalPass: state.goalPass,
     sprints: state.sprints,
+    display: state.display,
     features: state.features.map((f) => ({
       id: f.id,
       name: f.name,

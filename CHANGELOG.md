@@ -4,6 +4,70 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] — 2026-08-24
+
+Two settings that were one switch each, and one switch turned out to be the wrong shape for both
+questions.
+
+### Added
+
+- **A mode per phase, not a mode per run.** "copilot" and "autopilot" could not say "let it define
+  and plan on its own but show me the review", and that is a thing people want. Every phase now
+  carries its own mode: `autopilot` advances when the gate passes, `copilot` stops and waits for
+  your signature. The two familiar words survive as two named points in that space rather than the
+  only two points in it, and every phase except INIT can be a checkpoint — the three that decide
+  *what gets built* are the ones that usually pay for themselves, but that is a default rather than
+  a limit.
+
+- **Five workflows ship, and you can build your own.** `copilot`, `autopilot`, `spec and ship`
+  (you sign the scope going in and the release coming out), `research first`, and `every gate`.
+  Building one is its own short flow: pick the phases, then say for each whether it stops for you.
+  Name it and it is kept — in `~/.pi/agent/infinity-harness/`, with *you* rather than with the
+  project, because a workflow you designed is worth as much on the next one. It is then the first
+  thing offered there.
+
+  Built-ins are read-only, and their names cannot be taken. "copilot" has to mean the same thing in
+  every conversation about this tool; someone who wants a different copilot makes their own and
+  gives it their own name.
+
+- **`/infinity:workflow`** — choose one, build one, switch by name (`/infinity:workflow
+  spec-and-ship`), or `list` what is available and what you are on. `/infinity:config` →
+  **Workflow** edits one phase at a time. All of it changes at any time and takes effect at the next
+  gate: three phases into a run is exactly when someone realises they do want to see the review.
+
+- **Display templates.** Shipping all five plan levels to everyone was the wrong answer for the same
+  reason shipping two was: one person works in sprints and never opens a subtask, the next has no
+  sprints and lives in the subtask list. Four ship — `focus`, `everything`, `overview` (the shape,
+  no tasks), `worklist` (tasks only, no rail) — and anything else is chosen level by level: the
+  five plan levels, the `done/total` counts, the `← #3` dependency labels, the acceptance criteria,
+  the phase rail, the progress meter, the alert strip, and how many rows the terminal shows before
+  it scrolls. Name what you end up with and it is saved with you like a workflow.
+
+- **`/infinity:display`** — pick a template, choose level by level, switch by name, or `list`.
+  `/infinity:config` → **Display** edits the same things one at a time.
+
+- **The widget and the dashboard read the same setting.** Configure how you like to read a plan
+  once, not twice.
+
+### Changed
+
+- `harness/config.json` gains `phaseModes`, `workflow` and `display`. A 2.3 config is migrated on
+  read: its three-phase `approvals` becomes the equivalent modes and is labelled with the workflow
+  it amounts to, so a project mid-run keeps exactly the approvals it was configured with and nobody
+  has to edit JSON to upgrade. The legacy field is kept in step on write.
+- Hiding a plan level hides the row, never the work beneath it: turn off sprints on a plan organised
+  into sprints and the features move up one indent rather than vanishing, and task numbers do not
+  shift, so `← #3` still points at the same task. A task nobody can see is a task that gets stuck
+  forever.
+
+### Fixed
+
+- **`initHarness` ignored a caller that passed the old `approvals` shape** once `phaseModes`
+  existed, silently producing an autopilot run. It falls back to `approvals` when no modes are
+  given — the same rule `loadConfig` applies to an older file.
+
+---
+
 ## [2.3.1] — 2026-08-24
 
 *(2.3.0 was staged at the registry and never completed; 2.3.1 is that release plus the last two
