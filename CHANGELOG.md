@@ -106,6 +106,23 @@ that matters most in this release: **the suite now drives a real `pi` process.**
 
 - **The phase picker did not offer RESEARCH** — a feature nobody could find.
 
+- **A handoff in a one-shot `pi -p` run replaced the session out from under the instance that
+  asked for it**, so every handler afterwards touched a torn-down context and pi reported
+  "This extension ctx is stale after session replacement" on every turn. A headless run has no
+  next turn to hand anything to, so it does not hand off — and the extension now stops touching
+  pi the moment its session is shut down, whatever the reason.
+
+- **A new phase counted as a stall.** The first failure of a phase was compared against the
+  fingerprint taken when the *previous* phase passed — identical, because nothing had happened
+  yet — so the run spent `retry` and `reframe` on the opening turn of every single phase, and
+  arrived at the rungs that matter with the cheap ones already gone. A stall is the agent
+  producing nothing when asked; a fresh brief has not asked yet.
+
+- **The gate history counted every pass twice.** `runChecks` recorded the verdict and
+  `transitionPhase` recorded it again, so the history read `define:pass → define:pass`, which says
+  a phase had to be attempted twice — the opposite of what happened. Repeated *failures* are still
+  every one of them: that is the fact a human comes back to read.
+
 ### Changed
 
 - The dashboard shows every subtask, not only the active task's. The widget has nine rows and a job

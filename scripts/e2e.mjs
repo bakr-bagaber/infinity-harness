@@ -4189,6 +4189,79 @@ async function scenarioRealPi() {
       assert.match(driver.notes(), /sent .* back|not acting on it|no change/i);
     });
 
+    await step("every command runs clean under `pi -p`, with no stale-context errors", async () => {
+      // Two failure modes lived here, both invisible to a suite that never ran
+      // pi. A command ending in `sendUserMessage(..., followUp)` waits for an
+      // agent that print mode never starts. And a handoff in a one-shot run
+      // replaces the session out from under the instance that asked for it,
+      // so every later handler touches a stale ctx.
+      const dir = mkTempDir("realpi-commands");
+      gitInit(dir);
+      writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "demo", scripts: { test: "node -e 0" } }));
+      gitCommitAll(dir, "chore: initial commit");
+
+      const configDir = join(workdir, "pi-commands");
+      mkdirSync(configDir, { recursive: true });
+      writeFileSync(
+        join(configDir, "models.json"),
+        JSON.stringify({
+          providers: {
+            mock: {
+              baseUrl: `http://127.0.0.1:${mock.port}`,
+              api: "openai-completions",
+              apiKey: "mock",
+              compat: { supportsDeveloperRole: false, supportsReasoningEffort: false },
+              models: [{ id: "mock-1", name: "Mock", contextWindow: 40000, maxTokens: 4096 }],
+            },
+          },
+        }),
+      );
+
+      const print = (prompt) =>
+        spawnSync(
+          process.execPath,
+          [piBin, "-p", "-a", "--offline", "--provider", "mock", "--model", "mock-1", "--api-key", "mock", "--no-session", "-e", EXT, prompt],
+          {
+            cwd: dir,
+            encoding: "utf-8",
+            timeout: 45_000,
+            env: { ...process.env, PI_CODING_AGENT_DIR: configDir, PI_OFFLINE: "1", PI_SKIP_VERSION_CHECK: "1", NO_COLOR: "1" },
+          },
+        );
+
+      // Before there is a harness, and after.
+      const beforeInit = print("/infinity:init");
+      assert.notEqual(beforeInit.signal, "SIGTERM", "/infinity:init hung with no harness present");
+      assert.doesNotMatch(beforeInit.stderr ?? "", /stale/i, beforeInit.stderr);
+
+      initHarness(dir, { mode: "autopilot", brief: "a demo" });
+
+      for (const command of [
+        "hello",
+        "/infinity:status",
+        "/infinity:next",
+        "/infinity:validate",
+        "/infinity:run",
+        "/infinity:approve",
+        "/infinity:scroll",
+        "/infinity:handoff",
+        "/infinity:goal",
+        "/infinity:halt",
+      ]) {
+        const res = print(command);
+        assert.notEqual(res.signal, "SIGTERM", `${command} hung under pi -p`);
+        assert.equal(res.status, 0, `${command} exited ${res.status}: ${res.stderr}`);
+        assert.doesNotMatch(
+          res.stderr ?? "",
+          /stale after session replacement/i,
+          `${command} touched a torn-down session: ${res.stderr}`,
+        );
+        assert.doesNotMatch(res.stderr ?? "", /Extension error/i, `${command}: ${res.stderr}`);
+      }
+      note("11 commands run headlessly, none hung, none touched a dead session");
+      rmSync(dir, { recursive: true, force: true });
+    });
+
     await step("`pi -p` does not hang on a harness project", async () => {
       // The brief used to be queued with `deliverAs: "nextTurn"`, which waits
       // for a user prompt. Print mode never has one, so every headless run

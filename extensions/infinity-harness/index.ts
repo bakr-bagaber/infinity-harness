@@ -118,6 +118,17 @@ export default function (pi: ExtensionAPI): void {
   let view: WidgetView = defaultView();
 
   /**
+   * Is this instance's session still the live one?
+   *
+   * After `ctx.newSession()` pi tears the old runtime down and rebinds
+   * extensions, but this closure and its registered handlers still exist. Any
+   * of them that touches `pi` or a captured `ctx` afterwards gets
+   * "This extension ctx is stale after session replacement" — which is what a
+   * handoff produced on every single turn until this flag existed.
+   */
+  let sessionLive = true;
+
+  /**
    * Is a continuous run armed?
    *
    * Read from disk, not from a closure variable. The old `let loopEnabled`
@@ -307,6 +318,10 @@ export default function (pi: ExtensionAPI): void {
     // this session stops driving and the replacement never arrives. One
     // attempt, then carry on here — a run that continues in a fat session is
     // far better than a run that stops.
+    // A one-shot `pi -p` run has no next turn to hand anything to: replacing
+    // its session mid-flight produces a stale-context error and nothing else.
+    if (ctx.mode !== "tui" && ctx.mode !== "rpc") return false;
+
     if (handingOff) {
       if (hasPendingHandoff(dir)) {
         notify(ctx, "infinity-harness: the new session never started — continuing here.", "warning");
@@ -531,6 +546,7 @@ export default function (pi: ExtensionAPI): void {
    * summarised. Anything the run cannot afford to forget belongs here.
    */
   pi.on("before_agent_start", async (event, ctx) => {
+    if (!sessionLive) return;
     const dir = projectDir(ctx);
     if (!isHarnessProject(dir)) return;
     try {
@@ -544,6 +560,7 @@ export default function (pi: ExtensionAPI): void {
   });
 
   pi.on("session_tree", async (_event, ctx) => {
+    if (!sessionLive) return;
     refreshWidget(ctx);
   });
 
@@ -553,6 +570,7 @@ export default function (pi: ExtensionAPI): void {
    * few calls costs little and keeps the plan honest.
    */
   pi.on("context", async (event, ctx) => {
+    if (!sessionLive) return;
     const dir = projectDir(ctx);
     if (!isHarnessProject(dir)) return;
 
@@ -630,6 +648,7 @@ export default function (pi: ExtensionAPI): void {
   });
 
   pi.on("session_compact", async (event, ctx) => {
+    if (!sessionLive) return;
     const dir = projectDir(ctx);
     if (!isHarnessProject(dir)) return;
     try {
@@ -658,6 +677,7 @@ export default function (pi: ExtensionAPI): void {
   });
 
   pi.on("turn_end", async (_event, ctx) => {
+    if (!sessionLive) return;
     refreshWidget(ctx);
   });
 
@@ -670,6 +690,7 @@ export default function (pi: ExtensionAPI): void {
    * `/reload`, `/resume`, and pi being restarted.
    */
   pi.on("agent_settled", async (_event, ctx) => {
+    if (!sessionLive) return;
     const dir = projectDir(ctx);
     if (!isHarnessProject(dir)) return;
     if (loopBusy || handingOff) return;
@@ -749,6 +770,7 @@ export default function (pi: ExtensionAPI): void {
    * touch of the config would stop the harness configuring itself.
    */
   pi.on("tool_call", async (event, ctx) => {
+    if (!sessionLive) return;
     const dir = projectDir(ctx);
     if (!isHarnessProject(dir)) return;
 
@@ -791,6 +813,7 @@ export default function (pi: ExtensionAPI): void {
   });
 
   pi.on("session_shutdown", async () => {
+    sessionLive = false;
     if (remoteServer) {
       try {
         await remoteServer.close();
@@ -1392,7 +1415,12 @@ export default function (pi: ExtensionAPI): void {
       } catch (e) {
         // A handoff that cannot happen must never end the run: fall back to
         // carrying on in this session, which is the pre-2.3 behaviour.
+        //
+        // Unless the session is already gone — `newSession` can fail *after*
+        // replacing the runtime, and reaching for the old `pi` then is the
+        // "stale ctx" error rather than a recovery.
         clearHandoff(dir);
+        if (!sessionLive) return;
         notify(ctx, `infinity-harness: could not start a new session — ${errMsg(e)}`, "warning");
         pi.sendUserMessage(pending.kickoff, { deliverAs: "followUp" });
       }
