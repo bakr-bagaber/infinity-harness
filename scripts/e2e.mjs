@@ -862,7 +862,14 @@ async function scenarioConvergence() {
     assert.ok(Date.parse(state.stoppedAt) >= Date.parse(state.startedAt));
     assert.equal(state.lastPhase, "ship");
     assert.equal(state.noProgressStreak, 0, "a run that kept advancing never stalled");
-    assert.match(state.lastFingerprint, /^[0-9a-f]{16}$/);
+    // A run that ended by advancing off the end of the pipeline holds no
+    // baseline: each advance clears it so the first failure of the next phase
+    // is not read as a stall against a fingerprint taken before the agent was
+    // asked to do anything.
+    assert.ok(
+      state.lastFingerprint === null || /^[0-9a-f]{16}$/.test(state.lastFingerprint),
+      `lastFingerprint should be null or a hash, got ${JSON.stringify(state.lastFingerprint)}`,
+    );
   });
 
   await step("a finished run stays finished when the loop is asked again", async () => {
@@ -3877,6 +3884,9 @@ async function scenarioRealPi() {
       assert.match(widget, /INFINITY/, "the widget is drawn in a real terminal session");
       assert.match(widget, /DEFINE/, "and says where the pipeline is");
       assert.match(widget, /a demo project/, "and what the human asked for");
+      // setWidget and setStatus are two separate fire-and-forget requests, so
+      // waiting only for the first races the second.
+      await driver.waitForUi((r) => r.method === "setStatus", 20_000, "the status line");
       assert.ok(driver.statuses.get("infinity"), "the status line is set too");
       assert.match(driver.notes(), /infinity-harness active/);
 
@@ -4029,6 +4039,103 @@ async function scenarioRealPi() {
       assert.ok(config.currentPhase, "and the pipeline still knows where it is");
 
       writeFileSync(scriptPath, JSON.stringify({ default: { content: "Working." } }));
+    });
+
+    await step("the whole pipeline, three signatures, five sessions", async () => {
+      const { dir, driver, sessionDir } = launch("pipeline", {
+        initOptions: {
+          mode: "copilot",
+          brief: "a CLI that reconciles Stripe payouts",
+          phases: ["research", "define", "plan", "build", "verify", "review", "ship"],
+          approvals: { research: true, define: true, plan: true },
+          session: { handoff: "phase" },
+        },
+        plan: {
+          version: "2.0",
+          baseRevision: 1,
+          goals: [{ id: "goal-001", title: "Reconcile Stripe payouts" }],
+          sprints: [{ id: "sprint-001", name: "Foundations", goalId: "goal-001" }],
+          features: [
+            {
+              id: "feature-001",
+              name: "Ledger import",
+              sprintId: "sprint-001",
+              goalId: "goal-001",
+              criteria: ["refunds reconcile against the ledger"],
+              tasks: [
+                { id: "task-001", description: "Parse the payout CSV", status: "complete", dependsOn: [], subtasks: [] },
+                { id: "task-002", description: "Reconcile fees", status: "complete", dependsOn: ["feature-001/task-001"], subtasks: [] },
+              ],
+            },
+          ],
+        },
+      });
+
+      // Everything the gates ask for, staged up front, so each one opens in
+      // turn and what is being watched is the human's path through the run.
+      put(
+        dir,
+        "harness/docs/RESEARCH.md",
+        `# Research\n\n${"FX must be fixed at settlement time, not at import time.\n".repeat(20)}`,
+      );
+      put(dir, "harness/sprint-contract.md", "# Sprint contract\n\nIn: import. Out: reporting.\n");
+      gitCommitAll(dir, "chore: the work");
+
+      for (const phase of ["RESEARCH", "DEFINE", "PLAN"]) {
+        driver.answer((r) => new RegExp(`${phase} is waiting for you`).test(r.title ?? ""), (r) => r.options[0]);
+      }
+
+      await driver.waitForUi((r) => r.method === "setWidget", 40_000, "the plan widget");
+      await driver.prompt("/infinity:run");
+      await waitUntil(async () => /run finished/.test(driver.notes()), 120_000, "the run to finish");
+
+      const notes = driver.notes();
+      for (const phase of ["RESEARCH", "DEFINE", "PLAN"]) {
+        assert.match(notes, new RegExp(`${phase} is waiting for your approval`), `${phase} never stopped for the human`);
+        assert.match(notes, new RegExp(`${phase} approved`));
+      }
+      assert.match(notes, /new session — phase: RESEARCH → DEFINE/);
+      assert.match(notes, /new session — phase: PLAN → BUILD/);
+
+      const files = readdirSync(sessionDir, { recursive: true }).filter((f) => String(f).endsWith(".jsonl"));
+      assert.ok(files.length >= 4, `the run should span a session per phase, got ${files.length}`);
+
+      const config = JSON.parse(readFileSync(join(dir, "harness", "config.json"), "utf-8"));
+      assert.ok(
+        ["verify", "review", "ship"].includes(String(config.currentPhase)),
+        `the pipeline should have reached at least VERIFY, sits at ${config.currentPhase}`,
+      );
+
+      // The same pass is not two passes. This read
+      // `research:pass → research:pass → define:pass → define:pass`, which
+      // says a phase had to be attempted twice — the opposite of the truth.
+      const history = (config.gateHistory ?? []).map((g) => `${g.phase}:${g.result}`);
+      const passes = history.filter((h) => h.endsWith(":pass"));
+      assert.deepEqual(
+        passes,
+        ["research:pass", "define:pass", "plan:pass", "build:pass"],
+        `each phase passed exactly once: ${history.join(" → ")}`,
+      );
+
+      // …but repeated failures are exactly what a human comes back to read.
+      assert.ok(
+        history.filter((h) => h === "verify:fail").length > 1,
+        "repeated failures on one phase are not collapsed",
+      );
+
+      // A fresh phase has not been asked to do anything yet, so its first
+      // failure is not a stall. The run used to spend `retry` and `reframe`
+      // on the opening turn of every phase.
+      const firstVerify = notes.indexOf("new session — phase: BUILD → VERIFY");
+      const afterVerify = notes.slice(firstVerify);
+      const firstReaction = afterVerify.split("\n").find((l) => /re-briefing/.test(l)) ?? "";
+      assert.doesNotMatch(
+        firstReaction,
+        /escalated/,
+        "the first turn of a new phase must not be treated as a stall",
+      );
+
+      assert.deepEqual(driver.events.filter((e) => e.type === "extension_error"), []);
     });
 
     await step("an approval gate stops the run for a human, and takes their answer", async () => {

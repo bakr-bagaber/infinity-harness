@@ -424,7 +424,10 @@ const RUN = "run-under-test";
     assert.match((decision as { message: string }).message, /NEXT STEP · VERIFY/, "the next brief comes with it");
     assert.equal(loadConfig(dir).config.currentPhase, "verify", "the advance is persisted");
     assert.equal(state.noProgressStreak, 0);
-    assert.ok(state.lastFingerprint);
+    // A new phase starts with no baseline: the first failure of the *next*
+    // phase must not be read as a stall against a fingerprint taken before
+    // the agent was asked to do anything.
+    assert.equal(state.lastFingerprint, null);
 
     // Passing the gate on the final phase is the end of the run.
     const cfg = loadConfig(dir).config;

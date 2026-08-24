@@ -163,6 +163,25 @@ export function recordGate(
     ...(scope?.feature ? { feature: scope.feature } : {}),
     ...(scope?.task ? { task: scope.task } : {}),
   };
+
+  // Two callers record the same *pass*: `runChecks` when the gate is run, and
+  // `transitionPhase` when that verdict lets the pipeline leave the phase. The
+  // history read `research:pass → research:pass → define:pass → define:pass`,
+  // which reads as a phase that had to be attempted twice — the opposite of
+  // what happened. The same pass is not two passes.
+  //
+  // Repeated *failures* are never collapsed: five failures on one phase is
+  // exactly the fact a human comes back to read.
+  const last = config.gateHistory[config.gateHistory.length - 1];
+  const duplicatePass =
+    result === "pass" &&
+    last !== undefined &&
+    last.phase === entry.phase &&
+    last.result === "pass" &&
+    (last.feature ?? null) === (entry.feature ?? null) &&
+    (last.task ?? null) === (entry.task ?? null);
+  if (duplicatePass) return;
+
   config.gateHistory.push(entry);
   trimGateHistory(config);
 }

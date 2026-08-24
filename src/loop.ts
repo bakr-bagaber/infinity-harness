@@ -368,6 +368,19 @@ export async function decideNext(options: DecideOptions): Promise<{ decision: Lo
       });
     }
 
+    // A new phase starts with no baseline.
+    //
+    // Without this the first failure of the new phase compares the tree
+    // against the fingerprint taken when the *previous* phase passed — which
+    // is of course identical, because nothing has happened yet — and is
+    // counted as a stall. The run then escalated on the first turn of every
+    // phase, spending `retry` and `reframe` on an agent that had not yet been
+    // given a chance to do anything. A stall means the agent produced nothing
+    // when asked; a fresh brief has not asked yet.
+    state.lastFingerprint = null;
+    state.noProgressStreak = 0;
+    state.escalation = { ...state.escalation, tried: [] };
+
     const brief = await buildBrief(targetDir);
     return finish({
       action: "advanced",
