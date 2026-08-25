@@ -247,7 +247,9 @@ export default function (pi: ExtensionAPI): void {
   const briefText = async (dir: string, includeGate = false): Promise<string> => {
     const { config } = loadConfig(dir);
     const brief = await buildBrief(dir, { includeGate });
-    return renderBrief(brief, config);
+    const routed = await routingSummaryForBrief(dir).catch(() => null as string | null);
+    const text = renderBrief(brief, config);
+    return routed ? `${text}\n\n${routed}` : text;
   };
 
   // -- configuration --------------------------------------------------------
@@ -294,6 +296,101 @@ export default function (pi: ExtensionAPI): void {
     input: (title, placeholder) => ctx.ui.input(title, placeholder),
     notify: (message, level) => notify(ctx, message, level ?? "info"),
   });
+
+  // -- model + thinking routing (live session) --------------------------------
+  const applyRouting = async (ctx: ExtensionContext, dir: string, source: string): Promise<void> => {
+    try {
+      const { resolveModel, resolveThinking } = await import("../../src/modelRouter.ts");
+      const { nextActionableTask, findFeature } = await import("../../src/core/featureList.ts");
+      const { loadFeatureList: loadList } = await import("../../src/core/featureList.ts");
+      const list = loadList(dir).list;
+      const task = nextActionableTask(list);
+      // Resolve against task/parent feature/sprint difficulty; fall through to default when no actionable.
+      const feature = task ? findFeature(list, task.featureId) ?? undefined : undefined;
+      const sprint = feature?.sprintId ? (list.sprints ?? []).find((s) => s.id === feature.sprintId) ?? undefined : undefined;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      type T = NonNullable<ReturnType<typeof nextActionableTask>>;
+      const routedModel = resolveModel({
+        projectDir: dir,
+        task: (task as T | null | undefined)?.difficulty || feature?.difficulty ? ({ difficulty: (task as T | undefined)?.difficulty, modelHint: (task as T | undefined)?.modelHint, id: task?.id, key: (task as T | undefined)?.compositeKey ?? (task as T | undefined)?.key } as never) : undefined,
+        feature: feature as never,
+        sprint: sprint as never,
+        phase: loadConfig(dir).config.currentPhase ?? undefined,
+        role: loadConfig(dir).config.currentRole ?? undefined,
+      });
+      const routedThinking = resolveThinking({
+        projectDir: dir,
+        task: (task as T | null | undefined) ? ({ difficulty: (task as T | undefined)?.difficulty, id: task?.id, key: (task as T | undefined)?.compositeKey ?? (task as T | undefined)?.key } as never) : undefined,
+        feature: feature as never,
+        sprint: sprint as never,
+      });
+
+      if (routedModel && routedModel.trim()) {
+        // Map "provider/id" -> Model via registry.
+        const ref = routedModel.trim();
+        const slash = ref.indexOf("/");
+        const provider = slash > 0 ? ref.slice(0, slash) : undefined;
+        const modelId = slash > 0 ? ref.slice(slash + 1) : ref;
+        const available: unknown[] = (() => { try { return (ctx.modelRegistry?.getAvailable?.() ?? []) as unknown[]; } catch { return []; } })();
+        const found = (() => {
+          if (!provider) return undefined;
+          try { return (ctx.modelRegistry as unknown as { find(provider: string, id: string): unknown }).find(provider, modelId); } catch { return undefined; }
+        })();
+        const candidate = found ?? available.find((m) => {
+          const id = (m as { id?: string })?.id;
+          const prov = (m as { provider?: string })?.provider;
+          return id && (prov ? `${prov}/${id}` === ref : id === ref || id === modelId);
+        }) as { id?: string; provider?: string } | undefined;
+        const modelObj = (found as { id?: string } | undefined) ?? candidate;
+        if (modelObj && routedModel) {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const ok = await (ctx as unknown as { setModel(m: unknown): Promise<boolean> }).setModel(modelObj as never);
+            (ctx.ui as unknown as { setStatus?: (k: string, v: string | undefined) => void })?.setStatus?.("infinity-model", routedModel);
+            if (!ok) {
+              notify(ctx, `infinity-harness: routed model ${ref} not available (no auth) — staying on current model.`, "warning");
+            } else if (source) {
+              notify(ctx, `infinity-harness: routed to ${ref}${routedThinking ? ` (${routedThinking})` : ""} for ${task?.compositeKey ?? task?.id ?? "next task"} [${source}]`, "info");
+            }
+          } catch (e) {
+            notify(ctx, `infinity-harness: setModel(${ref}) — ${(e as Error)?.message ?? String(e)}`, "warning");
+          }
+        } else {
+          // Model id present but not in registry — surface once per session, and in widget.
+          ;(ctx.ui as unknown as { setStatus?: (k: string, v: string | undefined) => void })?.setStatus?.("infinity-model", routedModel);
+          notify(ctx, `infinity-harness routing wants ${ref} for ${task?.compositeKey ?? "next task"} but that model is not in pi's registry (check auth / --models) [${source}]`, "warning");
+        }
+      } else {
+        // No routed model → show inherited; do not call setModel.
+        ;(ctx.ui as unknown as { setStatus?: (k: string, v: string | undefined) => void })?.setStatus?.("infinity-model", undefined);
+      }
+
+      if (routedThinking && routedThinking.trim()) {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (ctx as unknown as { setThinkingLevel(l: string): void }).setThinkingLevel(routedThinking as never);
+        } catch {}
+      }
+    } catch {}
+  };
+
+  const routingSummaryForBrief = async (dir: string): Promise<string | null> => {
+    try {
+      const { nextActionableTask, findFeature } = await import("../../src/core/featureList.ts");
+      const { resolveModel, resolveThinking } = await import("../../src/modelRouter.ts");
+      const { list } = loadFeatureList(dir);
+      const task = nextActionableTask(list);
+      if (!task) return null;
+      const feature = findFeature(list, task.featureId) ?? undefined;
+      const sprint = feature?.sprintId ? (list.sprints ?? []).find((s) => s.id === feature.sprintId) ?? undefined : undefined;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const m = resolveModel({ projectDir: dir, task: ({ difficulty: (task as any).difficulty, modelHint: (task as any).modelHint, id: task.id, key: (task as any).compositeKey ?? (task as any).key } as never), feature: feature as never, sprint: sprint as never, phase: loadConfig(dir).config.currentPhase ?? undefined });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const th = resolveThinking({ projectDir: dir, task: ({ difficulty: (task as any).difficulty } as never), feature: feature as never, sprint: sprint as never });
+      if (!m || !m.trim()) return null;
+      return `Routing: ${task.compositeKey} → ${m}${th ? ` · thinking ${th}` : ""}`;
+    } catch { return null; }
+  };
 
   // -- session handoff ------------------------------------------------------
 
@@ -544,10 +641,15 @@ export default function (pi: ExtensionAPI): void {
     view = defaultView();
     refreshWidget(ctx);
     installTerminalShortcuts(ctx);
+    const reason = (event as { reason?: string } | undefined)?.reason ?? "startup";
     const { config } = loadConfig(dir);
     lastBriefPhase = config.currentPhase;
+    // Route on session start (including after handoff) so the fresh session
+    // actually runs on the tier model, not whatever the harness was started with.
+    try { await applyRouting(ctx, dir, `session_start:${reason}`); } catch {}
+    ;(async () => { try { await applyRouting(ctx, dir, "session_start"); } catch {} })();
 
-    const reason = (event as { reason?: string } | undefined)?.reason ?? "startup";
+    
     const run = reason === "startup" ? loadRunState(dir) : countSession(dir);
     const armed = run?.armed === true;
 
@@ -620,11 +722,18 @@ export default function (pi: ExtensionAPI): void {
     if (!sessionLive) return;
     const dir = projectDir(ctx);
     if (!isHarnessProject(dir)) return;
+    // Live-model routing: switch the pi session model/thinking for the next
+    // actionable task. This is what makes harness/model-router.json do anything
+    // in the main session; without it the GUI pointing at the same model was
+    // the whole behavior.
+    try { await applyRouting(ctx, dir, "before_agent_start"); } catch {}
     try {
       const contract = harnessContract(dir);
       if (!contract) return;
       const base = (event as { systemPrompt?: string }).systemPrompt ?? ctx.getSystemPrompt();
-      return { systemPrompt: `${base}\n\n${contract}` };
+      const routed = await routingSummaryForBrief(dir);
+      const suffix = routed ? `\n\n${routed}` : "";
+      return { systemPrompt: `${base}${suffix}\n\n${contract}` };
     } catch {
       return;
     }
