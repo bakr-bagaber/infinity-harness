@@ -398,8 +398,9 @@ export default function (pi: ExtensionAPI): void {
   const activePlanKeys = (dir: string): { task: string | null; feature: string | null; sprint: string | null; goal: string | null; subtask: string | null; } => {
     try {
       const { list } = loadFeatureList(dir);
-      const task = nextActionableTask(list);
-      const flat = task ? loadFeatureList(dir).list.features?.find((f) => f.id === task.featureId) ?? null : null;
+      const { config } = loadConfig(dir);
+      const phaseTask = nextActionableTask(list, config.currentPhase as string | null);
+      const task = phaseTask ?? nextActionableTask(list);
       // Resolve sprint/goal via list, and active subtask of the focused task.
       const taskKey = task?.compositeKey ?? null;
       const featureId = task?.featureId ?? null;

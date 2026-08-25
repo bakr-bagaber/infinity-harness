@@ -11,6 +11,8 @@ import type { HarnessConfig, Phase } from "./types.ts";
 import { PHASE_ORDER, DEFAULT_ENABLED_PHASES } from "./types.ts";
 import { loadConfig, saveConfig, recordGate, currentRoleFor } from "./config.ts";
 import { gitBranch, gitIsClean, gitHasUpstream, gitLastCommitMessage } from "./exec.ts";
+import { loadFeatureList, saveFeatureList, tasksForPhase } from "./featureList.ts";
+import type { RetryLevel } from "./types.ts";
 
 export { PHASE_ORDER };
 
@@ -123,6 +125,64 @@ export async function transitionPhase(targetDir: string, toPhase: Phase): Promis
     return { ok: false, error: saved.error, config: null, from, to: toPhase };
   }
   return { ok: true, error: null, config, from, to: toPhase };
+}
+
+/** Starter tasks seeded when a phase has no tasks at all (idempotent, fixes DEFINE rev 0).
+ *
+ * Only phases that are *gated on doc artefacts* get starters. BUILD/VERIFY etc
+ * already have tasks from PLAN; seeding them would pollute BUILD's tasksComplete.
+ */
+export const STARTER_TASKS: Record<string, Array<{ id: string; description: string; difficulty: "easy" | "moderate" | "difficult" }>> = {
+  // Research has its doc gate but no task gate; a doc checklist, not tasks — no seed.
+  define: [
+    { id: "define/d1", description: "Interview scope and write bounded PRD + acceptance criteria", difficulty: "moderate" },
+    { id: "define/d2", description: "Record sprint contract and branch (not main)", difficulty: "easy" },
+  ],
+  plan: [
+    { id: "plan/p1", description: "Break each feature into ordered, dependency-aware tasks", difficulty: "moderate" },
+    { id: "plan/p2", description: "Commit plan (feature-list) and validate", difficulty: "easy" },
+  ],
+};
+
+export function isPhaseDone(dir: string, phase: import("./types.ts").Phase): boolean {
+  const { list } = loadFeatureList(dir);
+  const tasks = tasksForPhase(list, phase);
+  return tasks.length > 0 && tasks.every((t) => t.status === "complete");
+}
+
+export function seedPhaseIfEmpty(dir: string, phase: import("./types.ts").Phase): { seeded: boolean; error: string | null } {
+  const seeded = STARTER_TASKS[phase] ?? [];
+  if (seeded.length === 0) return { seeded: false, error: null };
+  try {
+    const { list } = loadFeatureList(dir);
+    const existing = tasksForPhase(list, phase);
+    if (existing.length > 0) return { seeded: false, error: null };
+    // Append to first feature matching phase, or create a phase feature.
+    const feature = (
+      list.features.find((f) => (f as { phase?: string }).phase === phase) ??
+      list.features[0] ??
+      ({ id: `phase-${phase}`, name: phase.toUpperCase(), tasks: [] } as unknown as typeof list.features[number])
+    );
+    if (!list.features.includes(feature as any)) {
+      (feature as { phase?: string }).phase = phase;
+      list.features.push(feature as any);
+    }
+    for (const t of seeded) {
+      if (feature.tasks.some((x) => x.id === t.id)) continue;
+      feature.tasks.push({
+        id: t.id,
+        description: t.description,
+        status: "pending" as const,
+        phase,
+        difficulty: t.difficulty,
+      } as any);
+    }
+    list.baseRevision = (list.baseRevision ?? 0) + 1;
+    saveFeatureList(dir, list);
+    return { seeded: true, error: null };
+  } catch (e) {
+    return { seeded: false, error: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 /** Advance one step along the enabled pipeline. */

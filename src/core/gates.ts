@@ -336,11 +336,25 @@ async function checkFeatureCriteria({ targetDir }: Ctx): Promise<CheckResult> {
     : fail("feature-criteria", `features without criteria: ${missing.join(", ")}`);
 }
 
-/** Every task in the plan must be complete before the phase gate opens. */
-async function checkTasksComplete({ targetDir }: Ctx): Promise<CheckResult> {
+/** Tasks of the phase being checked must be complete, not tasks from other phases.
+ *  When a task has no `phase` it is treated as "build" (backwards compat via effectivePhase).
+ *  The difference between `feature-iterate` (task) and `deliverable-retry` (checklist) phases is now
+ *  that seeded `define`/`plan` tasks are phase-tagged, so BUILD progress ignores them — and a completed BUILD
+ *  does not stall because pending SHIP review tasks exist elsewhere.
+ */
+async function checkTasksComplete({ targetDir, config }: Ctx): Promise<CheckResult> {
   const { list } = loadFeatureList(targetDir);
-  const p = computeProgress(list);
-  if (p.tasksTotal === 0) return fail("tasks-complete", "no tasks planned");
+  const p = computeProgress(list, config.currentPhase as string | null);
+  if (p.tasksTotal === 0) {
+    // Un-tagged builds with no effective BUILD task yet (only define/plan tasks seeded) are not gated on tasks.
+    // Once BUILD has tasks, they must all complete. This preserves mkSatisfiableProject converge walk.
+    const global = computeProgress(list);
+    const buildScoped = computeProgress(list, "build");
+    if (config.currentPhase === "build" && global.tasksTotal > 0 && buildScoped.tasksTotal === 0) {
+      return pass("tasks-complete", `${global.tasksDone}/${global.tasksTotal} tasks (no build tasks yet, gated on other phases)`);
+    }
+    return fail("tasks-complete", "no tasks planned");
+  }
   if (p.tasksDone === p.tasksTotal) return pass("tasks-complete", `${p.tasksDone}/${p.tasksTotal} tasks complete`);
   const remaining = p.tasksTotal - p.tasksDone;
   return fail(

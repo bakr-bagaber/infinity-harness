@@ -87,7 +87,8 @@ export async function buildBrief(targetDir: string, options: BuildBriefOptions =
     );
   }
 
-  const nextTask = nextActionableTask(list);
+  const phaseTask = phase ? nextActionableTask(list, phase) : null;
+  const nextTask = phaseTask ?? nextActionableTask(list);
   const feature = nextTask ? findFeature(list, nextTask.featureId) : null;
 
   let gate: GateResult | null = null;
