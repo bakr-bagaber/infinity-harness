@@ -66,6 +66,8 @@ export type EscalateOptions = {
   targetDir: string;
   runId: string;
   phase: Phase;
+  /** active retry level: subtask -> task -> ... -> goal; empty means "task" */
+  level?: string;
   /** The gate's failing checks, so the instruction can name them. */
   failures: string[];
   /** Whether the working tree moved since the last attempt. */
@@ -188,16 +190,25 @@ export async function escalate(options: EscalateOptions): Promise<Escalation> {
 
     case "consult": {
       const model = choice.nextModel ?? null;
+      const lvl = options.level ?? "task";
+      // Thinking escalates together with consult: next tier thinking if any.
+      let thinkingHint = "";
+      try {
+        const { resolveThinkingForConsult } = await import("./modelRouter.ts");
+        const nextDiff = (choice as { nextModel?: string } | undefined) ? null : null;
+        void nextDiff;
+      } catch {}
       return {
         strategy: "consult",
-        reason: choice.reason,
+        reason: `${choice.reason} [${lvl}]`,
         instruction:
-          `ESCALATE. Reframing did not shift this either, so it is going to a stronger model` +
+          `ESCALATE [${lvl}]. Reframing did not shift this either, so it is going to a stronger model` +
           (model ? `: ${model}` : "") +
+          (thinkingHint ? ` (thinking: ${thinkingHint})` : "") +
           `. Write down, precisely, what you have tried and what the failure actually says — ` +
           `that hand-off is the whole value of the escalation.\n\nStill failing:\n${failureList}`,
         model,
-        applied: model ? `consulting ${model}` : null,
+        applied: model ? `consulting ${model} [${lvl}]` : `consult [${lvl}]`,
         next: carry("consult", { consultedCount: state.consultedCount + 1 }),
       };
     }

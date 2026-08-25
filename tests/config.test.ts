@@ -236,11 +236,15 @@ function writeRaw(dir: string, text: string): void {
 {
   const c = defaultConfig();
   const r = getRetryConfig(c);
-  assert.deepEqual(r, {
-    tasks: { enabled: true, max: DEFAULT_MAX_RETRIES },
-    features: { enabled: false, max: DEFAULT_FEATURE_RETRIES },
-    phases: { enabled: false, max: DEFAULT_PHASE_RETRIES },
-  });
+  assert.equal(r.tasks.enabled, true);
+  assert.equal(r.tasks.max, DEFAULT_MAX_RETRIES);
+  assert.equal(r.features.enabled, false);
+  assert.equal(r.features.max, DEFAULT_FEATURE_RETRIES);
+  assert.equal(r.phases.enabled, false);
+  assert.equal(r.phases.max, DEFAULT_PHASE_RETRIES);
+  assert.equal(r.levels.task.enabled, true);
+  assert.equal(r.levels.subtask.max, 3);
+  assert.equal(r.levels.goal.max, 2);
 
   // A null task budget inherits the legacy `maxRetries` knob.
   c.maxRetries = 3;

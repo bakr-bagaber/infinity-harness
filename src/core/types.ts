@@ -151,6 +151,10 @@ export type RetryBucket = {
   maxRetries: number | null;
 };
 
+/** Levels that can each have their own retry budget and escalation state. */
+export const RETRY_LEVELS = ["goal", "phase", "sprint", "feature", "task", "subtask"] as const;
+export type RetryLevel = (typeof RETRY_LEVELS)[number];
+
 /**
  * How the run divides itself into pi sessions.
  *
@@ -305,12 +309,16 @@ export type HarnessConfig = {
     tasks: RetryBucket;
     features: RetryBucket;
     phases: RetryBucket;
+    /** New per-level budgets keyed by RetryLevel. Legacy fields remain for compat. */
+    levels: Partial<Record<RetryLevel, RetryBucket>>;
   };
   maxRetries: number;
   retryCount: number;
   taskRetryCount: number;
   featureRetryCount: number;
   phaseRetryCount: number;
+  /** Fine-grained counters per RetryLevel; zeroed on success at that level. */
+  retryPerLevel: Partial<Record<RetryLevel, number>>;
   pipelineIteration: number;
   gateHistory: GateHistoryEntry[];
   [k: string]: unknown;

@@ -71,6 +71,7 @@ const RUN = "run-under-test";
       stoppedAt: null,
       stopReason: null,
       escalation: { consultedCount: 0, masterUsed: false, lastUnstuckAt: null, fingerprints: [], tried: [] },
+      perLevelEscalation: {},
       escalations: [],
     });
 

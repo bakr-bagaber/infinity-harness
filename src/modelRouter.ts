@@ -168,6 +168,20 @@ export function resolveModel(opts: ResolveOpts = {}): string {
  * MASTER never assigned, only via consultNext after exhaustion.
  * Returns next model or null if at top/budget exhausted.
  */
+export function consultNextWithThinking(
+  currentDifficulty: string | null | undefined,
+  opts: { projectDir?: string; consultedCount?: number } = {},
+): { model: string | null; thinking: ThinkingLevel | "" } {
+  const model = consultNext(currentDifficulty, opts);
+  let thinking: ThinkingLevel | "" = "";
+  if (model) {
+    const idx = DIFFICULTY_LADDER.indexOf(currentDifficulty as any);
+    const nextDiff = idx >= 0 && idx < DIFFICULTY_LADDER.length - 1 ? DIFFICULTY_LADDER[idx + 1] as string : (idx === DIFFICULTY_LADDER.length - 1 ? null : null);
+    thinking = resolveThinkingForConsult(nextDiff, opts.projectDir) ?? "";
+  }
+  return { model, thinking };
+}
+
 export function consultNext(
   currentDifficulty: string | null | undefined,
   opts: { projectDir?: string; consultedCount?: number } = {},

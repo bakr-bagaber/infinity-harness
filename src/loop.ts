@@ -24,7 +24,7 @@
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import type { HarnessConfig, Phase } from "./core/types.ts";
-import { loadConfig, saveConfig, isRetryExhausted, incrementPhaseRetry } from "./core/config.ts";
+import { loadConfig, saveConfig, isRetryExhausted, incrementPhaseRetry, incrementRetryLevel, zeroLowerOnPass } from "./core/config.ts";
 import { loadFeatureList, computeProgress, nextActionableTask } from "./core/featureList.ts";
 import { runChecks } from "./core/gates.ts";
 import { advancePhase, isFinalPhase, nextPhase } from "./core/phases.ts";
@@ -67,10 +67,12 @@ export type LoopState = {
   lastDecision: string | null;
   stoppedAt: string | null;
   stopReason: string | null;
-  /** Where this run sits on the escalation ladder. */
+  /** Where this run sits on the escalation ladder (run-scoped fallback). */
   escalation: EscalationState;
+  /** Per-level escalation: each level has its own ladder progress. */
+  perLevelEscalation: Partial<Record<import("./core/types.ts").RetryLevel, EscalationState>>;
   /** Every rung taken, so the human coming back can see the shape of it. */
-  escalations: { at: string; strategy: string; reason: string; applied: string | null }[];
+  escalations: { at: string; strategy: string; level?: string; reason: string; applied: string | null }[];
 };
 
 /** Escalation history kept in the loop state. Older entries tell no story. */
@@ -125,6 +127,7 @@ export function newLoopState(runId: string, now = new Date()): LoopState {
     stoppedAt: null,
     stopReason: null,
     escalation: emptyEscalationState(),
+    perLevelEscalation: {},
     escalations: [],
   };
 }
@@ -136,10 +139,24 @@ export function loadLoopState(targetDir: string, runId: string, now = new Date()
     return {
       ...stored,
       escalation: { ...emptyEscalationState(), ...(stored.escalation ?? {}) },
+      perLevelEscalation: (stored as Record<string, unknown>).perLevelEscalation
+        ? (stored as unknown as LoopState).perLevelEscalation
+        : {},
       escalations: Array.isArray(stored.escalations) ? stored.escalations : [],
     };
   }
   return newLoopState(runId, now);
+}
+
+export function escalationStateForLevel(state: LoopState, level: string): EscalationState {
+  const key = level as import("./core/types.ts").RetryLevel;
+  return (state.perLevelEscalation[key] ?? emptyEscalationState()) as EscalationState;
+}
+export function setEscalationForLevel(state: LoopState, level: string, next: EscalationState): void {
+  const key = level as import("./core/types.ts").RetryLevel;
+  state.perLevelEscalation[key] = next;
+  // Keep top-level in step with the finest active level so old widget still reads it.
+  state.escalation = next;
 }
 
 export function saveLoopState(targetDir: string, state: LoopState): void {
@@ -378,9 +395,17 @@ export async function decideNext(options: DecideOptions): Promise<{ decision: Lo
     // phase, spending `retry` and `reframe` on an agent that had not yet been
     // given a chance to do anything. A stall means the agent produced nothing
     // when asked; a fresh brief has not asked yet.
+    // Zero lower-level retry counters on a phase pass (task/subtask streaks reset for the new phase).
+    try {
+      const movedCfg = moved.config ?? loadConfig(targetDir).config;
+      zeroLowerOnPass(movedCfg, "phase");
+      saveConfig(targetDir, movedCfg);
+    } catch {}
     state.lastFingerprint = null;
     state.noProgressStreak = 0;
     state.escalation = { ...state.escalation, tried: [] };
+    // Also reset per-level escalation for task/subtask so the next phase starts clean.
+    state.perLevelEscalation = {};
 
     const brief = await buildBrief(targetDir);
     return finish({
@@ -401,6 +426,9 @@ export async function decideNext(options: DecideOptions): Promise<{ decision: Lo
   const fp = await fingerprint(targetDir);
   state.lastFingerprint = fp;
 
+  // Active retry level: finest active level with work (subtask > task > feature > sprint > phase > goal).
+  const retryLevel = detectRetryLevel(list, config.currentPhase, phase);
+
   if (previous === null || previous !== fp) {
     state.noProgressStreak = 0;
     // The tree moved, so whatever the run was stuck on, it is not stuck on it
@@ -409,6 +437,10 @@ export async function decideNext(options: DecideOptions): Promise<{ decision: Lo
     // stalls, but a rung spent on a problem that resolved should not be
     // missing when a different problem appears.
     state.escalation = { ...state.escalation, tried: [] };
+    const lev = retryLevel
+      ? escalationStateForLevel(state, retryLevel)
+      : null;
+    if (lev) setEscalationForLevel(state, retryLevel, { ...lev, tried: [] });
   } else {
     state.noProgressStreak += 1;
   }
@@ -424,8 +456,11 @@ export async function decideNext(options: DecideOptions): Promise<{ decision: Lo
   // Escalating never *prevents* the run from stopping. The strike is still
   // counted; the ladder just gets a turn first, so a run stops because nothing
   // worked rather than because nothing was tried.
+  // Per-level: each retryLevel has its own EscalationState, consult+thinking escalation
+  // climbs with it, and lower levels are zeroed on a pass at a coarser level.
   let escalation = null as Awaited<ReturnType<typeof escalate>> | null;
   if (!options.skipEscalation && state.noProgressStreak >= ESCALATE_AFTER_STALLS) {
+    const levState = escalationStateForLevel(state, retryLevel ?? "task");
     escalation = await escalate({
       targetDir,
       runId,
@@ -433,16 +468,18 @@ export async function decideNext(options: DecideOptions): Promise<{ decision: Lo
       failures: gate ? gate.failures : [],
       fileDelta: previous !== null && previous !== fp,
       fingerprint: fp,
-      state: state.escalation,
+      state: levState,
+      level: retryLevel ?? "task",
       now,
     });
-    state.escalation = escalation.next;
+    setEscalationForLevel(state, retryLevel ?? "task", escalation.next);
     if (escalation.strategy) {
       state.escalations = [
         ...state.escalations,
         {
           at: now.toISOString(),
           strategy: escalation.strategy,
+          level: retryLevel ?? "task",
           reason: escalation.reason,
           applied: escalation.applied,
         },
@@ -483,11 +520,12 @@ export async function decideNext(options: DecideOptions): Promise<{ decision: Lo
     });
   }
 
-  // Charge a phase retry so the configured budget still bounds the run even
-  // when the tree keeps changing but the gate never opens.
+  // Charge retries at the active level as well as the legacy phase counter.
   const fresh = loadConfig(targetDir);
   if (fresh.ok) {
-    incrementPhaseRetry(fresh.config);
+    incrementRetryLevel(fresh.config, retryLevel ?? "phase");
+    // Keep phase counter in step as the global guard so existing budgets still fire.
+    if ((retryLevel ?? "phase") !== "phase") incrementPhaseRetry(fresh.config);
     saveConfig(targetDir, fresh.config);
   }
 
@@ -561,6 +599,22 @@ async function requestGoalReview(
   } catch {
     return null;
   }
+}
+
+/** Finest active level with pending work — decides which retry ladder to climb. */
+export function detectRetryLevel(list: import("./core/types.ts").FeatureList, phase: import("./core/types.ts").Phase | null, _activePhase: import("./core/types.ts").Phase): string {
+  try {
+    const tasks = phase ? list.features.flatMap((f) => (f as { phase?: string }).phase === phase || (f.tasks as { phase?: string }[]).some((t) => t.phase === phase) ? f.tasks : []) : [];
+    // Prefer task-level detection from subtasks
+    const all = list.features.flatMap((f) => f.tasks);
+    const hasSubtaskPending = all.some((t) => (t.subtasks ?? []).some((s) => s.status !== "complete"));
+    const hasTaskPending = all.some((t) => t.status !== "complete");
+    if (hasSubtaskPending) return "subtask";
+    if (hasTaskPending) return "task";
+    const featsPending = (list.features ?? []).some((f) => !(f.tasks ?? []).every((t) => t.status === "complete"));
+    if (featsPending) return "feature";
+    return "phase";
+  } catch { return "task"; }
 }
 
 /** Human-readable one-liner for the status bar / notify. */

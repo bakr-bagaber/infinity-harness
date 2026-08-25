@@ -67,12 +67,21 @@ export function defaultConfig(): HarnessConfig {
       tasks: { enabled: true, maxRetries: null },
       features: { enabled: false, maxRetries: DEFAULT_FEATURE_RETRIES },
       phases: { enabled: false, maxRetries: DEFAULT_PHASE_RETRIES },
+      levels: {
+        goal: { enabled: false, maxRetries: 2 },
+        phase: { enabled: false, maxRetries: DEFAULT_PHASE_RETRIES },
+        sprint: { enabled: false, maxRetries: DEFAULT_FEATURE_RETRIES },
+        feature: { enabled: false, maxRetries: DEFAULT_FEATURE_RETRIES },
+        task: { enabled: true, maxRetries: null },
+        subtask: { enabled: false, maxRetries: 3 },
+      },
     },
     maxRetries: DEFAULT_MAX_RETRIES,
     retryCount: 0,
     taskRetryCount: 0,
     featureRetryCount: 0,
     phaseRetryCount: 0,
+    retryPerLevel: {},
     pipelineIteration: 0,
     gateHistory: [],
   };
@@ -236,46 +245,104 @@ export type EffectiveRetry = {
   tasks: { enabled: boolean; max: number };
   features: { enabled: boolean; max: number };
   phases: { enabled: boolean; max: number };
+  levels: Record<string, { enabled: boolean; max: number }>;
+};
+
+const LEVEL_DEFAULTS: Record<string, number> = {
+  goal: 2,
+  phase: DEFAULT_PHASE_RETRIES,
+  sprint: DEFAULT_FEATURE_RETRIES,
+  feature: DEFAULT_FEATURE_RETRIES,
+  task: DEFAULT_MAX_RETRIES,
+  subtask: 3,
 };
 
 /** Resolve retry budgets, seeding task retries from the legacy `maxRetries`. */
 export function getRetryConfig(config: HarnessConfig): EffectiveRetry {
   const legacy = typeof config.maxRetries === "number" ? config.maxRetries : DEFAULT_MAX_RETRIES;
-  const r = config.retry ?? defaultConfig().retry;
+  const r = (config.retry ?? defaultConfig().retry) as typeof defaultConfig.prototype.retry & { levels?: Record<string, { enabled?: boolean; maxRetries?: number | null }> };
+  const levels: Record<string, { enabled: boolean; max: number }> = {};
+  for (const k of ["goal","phase","sprint","feature","task","subtask"]) {
+    const bucket = (r as Record<string, unknown>).levels ? ((r as Record<string, unknown>).levels as Record<string, { enabled?: boolean; maxRetries?: number | null }>)[k] : undefined;
+    const defEnabled = k === "task";
+    const defMax = LEVEL_DEFAULTS[k] ?? DEFAULT_MAX_RETRIES;
+    const enabled = bucket ? (bucket.enabled ?? defEnabled) : defEnabled;
+    const rawMax = bucket ? (bucket.maxRetries ?? null) : null;
+    // Unset task level inherits legacy maxRetries
+    const max = rawMax === null ? (k === "task" ? legacy : defMax) : rawMax;
+    levels[k] = { enabled, max };
+  }
+  // Also keep legacy per-name budgets for compatibility
   return {
     tasks: { enabled: r.tasks?.enabled ?? true, max: r.tasks?.maxRetries ?? legacy },
     features: { enabled: r.features?.enabled ?? false, max: r.features?.maxRetries ?? DEFAULT_FEATURE_RETRIES },
     phases: { enabled: r.phases?.enabled ?? false, max: r.phases?.maxRetries ?? DEFAULT_PHASE_RETRIES },
+    levels,
   };
 }
 
+/** Generic per-level retry counter helpers (zero on pass, escalate on exhaustion). */
+export function getRetryLevel(config: HarnessConfig, level: string): number {
+  const m = (config.retryPerLevel ?? {}) as Record<string, number>;
+  return typeof m[level] === "number" ? m[level]! : 0;
+}
+export function resetRetryLevel(config: HarnessConfig, level: string): void {
+  if (!config.retryPerLevel) config.retryPerLevel = {};
+  (config.retryPerLevel as Record<string, number>)[level] = 0;
+  // keep legacy counters in step
+  if (level === "task") config.taskRetryCount = 0;
+  if (level === "feature") config.featureRetryCount = 0;
+  if (level === "phase") { config.phaseRetryCount = 0; config.retryCount = 0; }
+}
+export function incrementRetryLevel(config: HarnessConfig, level: string): number {
+  if (!config.retryPerLevel) config.retryPerLevel = {};
+  const m = config.retryPerLevel as Record<string, number>;
+  m[level] = (m[level] ?? 0) + 1;
+  if (level === "task") config.taskRetryCount = m[level]!;
+  if (level === "feature") config.featureRetryCount = m[level]!;
+  if (level === "phase") { config.phaseRetryCount = m[level]!; config.retryCount = m[level]!; }
+  return m[level]!;
+}
+/** Zero all strictly lower levels than `passedLevel` on a pass (e.g. task pass zeroes subtask). */
+export function zeroLowerOnPass(config: HarnessConfig, passedLevel: string): void {
+  const order = ["goal","phase","sprint","feature","task","subtask"];
+  const idx = order.indexOf(passedLevel);
+  if (idx === -1) return;
+  for (let i = idx + 1; i < order.length; i++) {
+    const lower = order[i]!;
+    if (getRetryLevel(config, lower) !== 0) resetRetryLevel(config, lower);
+  }
+}
+
 export function resetTaskRetry(config: HarnessConfig): void {
-  config.taskRetryCount = 0;
+  resetRetryLevel(config, "task");
 }
 export function incrementTaskRetry(config: HarnessConfig): number {
-  config.taskRetryCount = (config.taskRetryCount ?? 0) + 1;
-  return config.taskRetryCount;
+  return incrementRetryLevel(config, "task");
 }
 export function resetFeatureRetry(config: HarnessConfig): void {
-  config.featureRetryCount = 0;
+  resetRetryLevel(config, "feature");
 }
 export function incrementFeatureRetry(config: HarnessConfig): number {
-  config.featureRetryCount = (config.featureRetryCount ?? 0) + 1;
-  return config.featureRetryCount;
+  return incrementRetryLevel(config, "feature");
 }
 export function resetPhaseRetry(config: HarnessConfig): void {
-  config.phaseRetryCount = 0;
-  config.retryCount = 0;
+  resetRetryLevel(config, "phase");
 }
 export function incrementPhaseRetry(config: HarnessConfig): number {
-  config.phaseRetryCount = (config.phaseRetryCount ?? 0) + 1;
-  config.retryCount = (config.retryCount ?? 0) + 1;
-  return config.phaseRetryCount;
+  return incrementRetryLevel(config, "phase");
 }
 
 /** True when any *enabled* retry budget is exhausted — the signal to escalate. */
 export function isRetryExhausted(config: HarnessConfig): { exhausted: boolean; which: string | null } {
   const r = getRetryConfig(config);
+  // Prefer per-level levels when enabled, but retain legacy task/feature/phase order for compatibility.
+  for (const lvl of ["subtask","task","feature","sprint","phase","goal"]) {
+    const b = r.levels[lvl];
+    if (!b) continue;
+    const cnt = getRetryLevel(config as unknown as HarnessConfig, lvl);
+    if (b.enabled && cnt >= b.max) return { exhausted: true, which: lvl };
+  }
   if (r.tasks.enabled && (config.taskRetryCount ?? 0) >= r.tasks.max) return { exhausted: true, which: "task" };
   if (r.features.enabled && (config.featureRetryCount ?? 0) >= r.features.max) return { exhausted: true, which: "feature" };
   if (r.phases.enabled && (config.phaseRetryCount ?? 0) >= r.phases.max) return { exhausted: true, which: "phase" };
