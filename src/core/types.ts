@@ -158,14 +158,19 @@ export type RetryBucket = {
  * session boundary costs nothing but the brief, and the brief is what the
  * agent should be working from anyway.
  */
+export type HandoffGranularity = "off" | "goal" | "phase" | "sprint" | "feature" | "task" | "subtask";
+
 export type SessionPolicy = {
   /**
    * When to hand off to a fresh session.
-   *   off    never — one session for the whole run (the old behaviour)
-   *   phase  when the pipeline advances a phase
-   *   task   when the pipeline advances a phase or moves to a different task
+   *   off/goal  never — one session for the whole run (the old behaviour)
+   *   phase     when the pipeline advances a phase
+   *   sprint    when the active sprint changes (or phase)
+   *   feature   when the active feature changes (or coarser)
+   *   task      when the active task changes (or coarser) — default
+   *   subtask   when the active subtask changes (or coarser)
    */
-  handoff: "off" | "phase" | "task";
+  handoff: HandoffGranularity;
   /**
    * Hand off early once the context is this full, as a fraction of the
    * window. 0 disables it. This is what keeps a long BUILD phase — which may

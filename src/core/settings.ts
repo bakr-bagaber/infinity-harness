@@ -353,8 +353,8 @@ export const SETTINGS: SettingsGroup[] = [
         path: "session.handoff",
         file: "config",
         label: "Fresh session",
-        help: "phase: each phase starts clean · task: cleanest context, best with small models · off: one session for the whole run.",
-        type: { kind: "choice", choices: ["off", "phase", "task"] },
+        help: "goal: one session · phase: per phase (old) · sprint/feature: when plan grouping changes · task: every task (default) · subtask: every subtask. Coarser levels still fire.",
+        type: { kind: "choice", choices: ["off", "goal", "phase", "sprint", "feature", "task", "subtask"] },
       },
       {
         path: "session.contextThreshold",

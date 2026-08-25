@@ -229,19 +229,39 @@ export const HANDOFF_QUESTION: Question = {
   title: "When should the run start a fresh session?",
   options: [
     {
+      value: "goal",
+      label: "per goal — one session for the whole run",
+      help: "The old single-session run. Every task accumulates context until compaction.",
+    },
+    {
       value: "phase",
-      label: "every phase (recommended)",
-      help: "Each phase starts clean, working from the brief. Keeps the context small on long runs.",
+      label: "every phase",
+      help: "Old default. Each phase starts clean from the brief.",
+    },
+    {
+      value: "sprint",
+      label: "every sprint",
+      help: "New session whenever the active sprint changes (or phase).",
+    },
+    {
+      value: "feature",
+      label: "every feature",
+      help: "New session on each feature boundary (and sprint/phase).",
     },
     {
       value: "task",
-      label: "every task",
-      help: "The cleanest context per unit of work. Best with small models; costs one extra brief per task.",
+      label: "every task (recommended)",
+      help: "Each task gets a clean session. Best isolation; one extra brief per task.",
+    },
+    {
+      value: "subtask",
+      label: "every subtask",
+      help: "Finest grain — each subtask gets a fresh session. Most isolation, most churn.",
     },
     {
       value: "off",
-      label: "never — one long session",
-      help: "The old behaviour. The context grows for the whole run and compaction takes over.",
+      label: "never — alias for per goal",
+      help: "Same as per goal — one long session without fresh starts.",
     },
   ],
 };

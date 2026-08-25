@@ -297,15 +297,33 @@ export default function (pi: ExtensionAPI): void {
 
   // -- session handoff ------------------------------------------------------
 
-  /** The task the pipeline is on right now, or null. */
-  const activeTaskKey = (dir: string): string | null => {
+  /** The task/feature/sprint/goal/subtask the pipeline is on right now, or null. */
+  const activePlanKeys = (dir: string): { task: string | null; feature: string | null; sprint: string | null; goal: string | null; subtask: string | null; } => {
     try {
       const { list } = loadFeatureList(dir);
-      return nextActionableTask(list)?.compositeKey ?? null;
+      const task = nextActionableTask(list);
+      const flat = task ? loadFeatureList(dir).list.features?.find((f) => f.id === task.featureId) ?? null : null;
+      // Resolve sprint/goal via list, and active subtask of the focused task.
+      const taskKey = task?.compositeKey ?? null;
+      const featureId = task?.featureId ?? null;
+      const feature = featureId ? (list.features ?? []).find((f) => f.id === featureId) ?? null : null;
+      const sprintId = feature?.sprintId ?? null;
+      const goalId = feature?.goalId ?? (sprintId ? (list.sprints ?? []).find((s) => s.id === sprintId)?.goalId ?? null : null) ?? (list.goals?.[0]?.id ?? null);
+      const sprint = sprintId ? sprintId : null;
+      const goal = goalId ? goalId : null;
+      // First non-complete subtask of the active task.
+      let subtask: string | null = null;
+      const rawTask = feature && task ? feature.tasks.find((t) => t.id === task.id || t.key === task.key) ?? null : null;
+      if (rawTask?.subtasks?.length) {
+        const cur = rawTask.subtasks.find((s) => s.status !== "complete") ?? null;
+        if (cur) subtask = `${taskKey}#${cur.id ?? cur.title}`;
+      }
+      return { task: taskKey, feature: featureId, sprint, goal, subtask };
     } catch {
-      return null;
+      return { task: null, feature: null, sprint: null, goal: null, subtask: null };
     }
   };
+  const activeTaskKey = (dir: string): string | null => activePlanKeys(dir).task;
 
   /** How full this session's context is, 0..1, or null when pi cannot say. */
   const contextRatio = (ctx: ExtensionContext): number | null => {
@@ -355,12 +373,41 @@ export default function (pi: ExtensionAPI): void {
     }
     try {
       const { config } = loadConfig(dir);
+      const toKeys = activePlanKeys(dir);
+      // Map caller's fromTask (a compositeKey) back to its feature/sprint etc for the "from" side.
+      // We derive them from the plan so goal/sprint/feature boundaries are comparable.
+      let fromGoal: string | null = null;
+      let fromSprint: string | null = null;
+      let fromFeature: string | null = null;
+      try {
+        const { list } = loadFeatureList(dir);
+        if (fromTask) {
+          const ft = ((): { featureId: string } | null => {
+            for (const f of list.features ?? []) for (const t of f.tasks ?? []) if (t.key === fromTask || `${f.id}/${t.id}` === fromTask || t.id === fromTask) return { featureId: f.id };
+            return null;
+          })();
+          if (ft) {
+            fromFeature = ft.featureId;
+            const feat = list.features.find((f) => f.id === ft.featureId) ?? null;
+            fromSprint = feat?.sprintId ?? null;
+            fromGoal = feat?.goalId ?? (fromSprint ? (list.sprints ?? []).find((s) => s.id === fromSprint)?.goalId ?? null : null) ?? null;
+          }
+        }
+      } catch {}
       const decision = shouldHandoff({
         config,
         fromPhase,
         toPhase,
         fromTask,
-        toTask: activeTaskKey(dir),
+        toTask: toKeys.task,
+        fromGoal,
+        toGoal: toKeys.goal,
+        fromSprint,
+        toSprint: toKeys.sprint,
+        fromFeature,
+        toFeature: toKeys.feature,
+        fromSubtask: null, // subtask delta is derived from task payload; tracked via fromTask composite + activePlanKeys
+        toSubtask: toKeys.subtask,
         contextRatio: contextRatio(ctx),
       });
       if (!decision.handoff) return false;
