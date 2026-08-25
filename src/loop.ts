@@ -38,6 +38,7 @@ import {
   describeEscalation,
   type EscalationState,
 } from "./escalate.ts";
+import { pickRunnableTasks } from "./scheduler.ts";
 import { loadGoal, recordPipelinePass, viewOf } from "./goal.ts";
 import {
   needsApproval,

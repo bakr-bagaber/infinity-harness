@@ -373,6 +373,27 @@ export const SETTINGS: SettingsGroup[] = [
     ],
   },
   {
+    id: "execution",
+    label: "Execution",
+    help: "How many things run at once, and at which level. Main session only shows progress; workers do the real work.",
+    settings: [
+      {
+        path: "execution.parallelAt",
+        file: "config",
+        label: "Parallel at",
+        help: "off: one at a time · goal: goals in parallel · phase: phases · sprint/feature/task/subtask. Pick one. Finer implies coarser.",
+        type: { kind: "choice", choices: ["off", "goal", "phase", "sprint", "feature", "task", "subtask"] },
+      },
+      {
+        path: "execution.maxWorkers",
+        file: "config",
+        label: "Max workers",
+        help: "How many workers run at once (1-16)._deps must be satisfied; parallelAt limits breadth.",
+        type: { kind: "number", min: 1, max: 16 },
+      },
+    ],
+  },
+  {
     id: "commands",
     label: "Project commands",
     help: "What the gate runs to judge the work. An empty command is reported as advisory, never as a failure.",

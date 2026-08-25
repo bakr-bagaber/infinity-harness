@@ -51,6 +51,7 @@ export function defaultConfig(): HarnessConfig {
     phases: { enabled: [...DEFAULT_ENABLED_PHASES] },
     roles: { strict: false },
     session: { handoff: "task", contextThreshold: 0.6, carryNotes: true },
+    execution: { parallelAt: "task", maxWorkers: 3 },
     approvals: { research: false, define: false, plan: false },
     phaseModes: Object.fromEntries(DEFAULT_ENABLED_PHASES.map((p) => [p, "autopilot"])),
     workflow: { id: "autopilot", name: "autopilot" },

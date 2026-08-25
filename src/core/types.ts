@@ -163,6 +163,13 @@ export type RetryBucket = {
  */
 export type HandoffGranularity = "off" | "goal" | "phase" | "sprint" | "feature" | "task" | "subtask";
 
+export type ExecutionPolicy = {
+  /** Level at which parallel work is allowed. `off` = one task at a time. */
+  parallelAt: HandoffGranularity;
+  /** Max parallel workers (1..16). Guarded by lock and budget. */
+  maxWorkers: number;
+};
+
 export type SessionPolicy = {
   /**
    * When to hand off to a fresh session.
@@ -277,6 +284,7 @@ export type HarnessConfig = {
   phases: { enabled: Phase[] };
   roles: { strict: boolean };
   session: SessionPolicy;
+  execution: ExecutionPolicy;
   /** Legacy: the three-phase approval switch 2.3 shipped. Migrated to `phaseModes`. */
   approvals: ApprovalPolicy;
   /** Mode per phase — the setting `approvals` became. */
