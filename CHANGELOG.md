@@ -4,6 +4,23 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.1] — 2026-08-25
+
+### Fixed
+
+- **Routing actually drives the session.** `harness/model-router.json` previously persisted the tier
+  choices but never called `ctx.setModel`/`ctx.setThinkingLevel`. Now `before_agent_start` and
+  `session_start` resolve `harness/model-router.json` for the next actionable task and switch
+  the pi session model + thinking, surface it as `infinity-model` in the footer and as
+  `Routing: f1/t1 → prov-a/model-a · thinking low` in the brief/system prompt; `/infinity:config`
+  and `/infinity:models` already showed the wiring, now the session honors it. Proved by
+  `tests/routing-live.test.ts` + 15/15 E2E (including `realpi` dialogs) all green.
+- **`infinity_validate` auto-advance scoped to doc phases.** Only `research/define/plan` hops on
+  PASS in autopilot; `build` and later require explicit `infinity_advance` (or the armed
+  `agent_settled` loop) so `build → verify → review` no longer skips a phase in one tool call.
+  Wizard routing queue aligned in `scripts/e2e.mjs` + `tests/intake.test.ts`; full granularity
+  hierarchy covered in `tests/handoff.test.ts`.
+
 ## [2.5.0] — 2026-08-25
 
 ### Added
