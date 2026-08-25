@@ -114,7 +114,7 @@ export function planIntake(answers: IntakeAnswers): IntakePlan {
   const handoff = answers.handoff ?? "phase";
   const session: SessionPolicy = {
     handoff,
-    contextThreshold: handoff === "off" ? 0 : 0.7,
+    contextThreshold: handoff === "off" ? 0 : 0.6,
     carryNotes: true,
   };
 

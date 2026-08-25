@@ -58,7 +58,7 @@ export type HandoffSignals = {
 export type HandoffDecision = { handoff: false } | { handoff: true; reason: HandoffReason; detail: string };
 
 export function defaultSessionPolicy(): SessionPolicy {
-  return { handoff: "phase", contextThreshold: 0.7, carryNotes: true };
+  return { handoff: "phase", contextThreshold: 0.6, carryNotes: true };
 }
 
 function policyOf(config: HarnessConfig): SessionPolicy {
