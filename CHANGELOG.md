@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.2] — 2026-08-25
+
+Publish 2.6.1 left the tarball staged on the registry awaiting an attestation that never arrived; npm
+republish is blocked on a staged version. Bumping to 2.6.2 to clear the staging queue — same code as 2.6.1.
+
 ## [2.6.1] — 2026-08-25
 
 Every active level now blinks together, subtasks show up where they always should have, and the TUI
