@@ -21,6 +21,85 @@ export type PickOpts = {
   exclude?: Set<string>;
 };
 
+/** Snapshot a worker's attempt dir for the widget/dashboard. */
+export type WorkerSnapshot = {
+  featureId: string;
+  taskId: string;
+  compositeKey: string;
+  attemptDir: string;
+  attempt: number;
+  state: "running" | "done" | "failed";
+  outputTail: string;
+  askedAt?: string;
+};
+
+/** Tail a worker attempt's output.log (best-effort, never throws). */
+export function tailWorkerOutput(attemptDir: string, bytes = 3000): string {
+  try {
+    const { readFileSync, existsSync } = require("node:fs");
+    const p = require("node:path").join(attemptDir, "output.log");
+    if (!existsSync(p)) return "";
+    const raw = readFileSync(p, "utf-8") as string;
+    return raw.slice(-bytes);
+  } catch { return ""; }
+}
+
+export function listWorkers(targetDir: string, runId?: string): WorkerSnapshot[] {
+  try {
+    const { readdirSync, existsSync } = require("node:fs");
+    const path = require("node:path");
+    const root = path.resolve(targetDir, "tmp/infinity-harness", runId ?? "");
+    const roots: string[] = [];
+    if (runId) {
+      roots.push(path.resolve(targetDir, "tmp/infinity-harness", runId));
+    } else {
+      // all runs under tmp/infinity-harness
+      const base = path.resolve(targetDir, "tmp/infinity-harness");
+      if (existsSync(base)) for (const e of readdirSync(base,{ withFileTypes: true } as any)) if((e as any).isDirectory()) roots.push(path.join(base,(e as any).name));
+    }
+    const out: WorkerSnapshot[] = [];
+    for (const run of roots) {
+      if (!existsSync(run)) continue;
+      // run/feature/task/attempt-N as created by worker.ts
+      for (const f of readdirSync(run,{withFileTypes:true} as any) as any[]) {
+        if(!f.isDirectory()) continue;
+        const feat = path.join(run, f.name);
+        for (const t of readdirSync(feat,{withFileTypes:true} as any) as any[]) {
+          if(!t.isDirectory()) continue;
+          const taskRoot = path.join(feat, t.name);
+          const attempts = readdirSync(taskRoot,{withFileTypes:true} as any) as any[];
+          for (const a of attempts) {
+            if(!a.isDirectory() || !a.name.startsWith("attempt-")) continue;
+            const attemptDir = path.join(taskRoot, a.name);
+            const n = Number.parseInt(a.name.replace("attempt-",""),10) || 0;
+            const tail = tailWorkerOutput(attemptDir, 800);
+            out.push({
+              featureId: f.name,
+              taskId: t.name,
+              compositeKey: `${f.name}/${t.name}`,
+              attemptDir,
+              attempt: n,
+              state: "running",
+              outputTail: tail,
+            });
+          }
+        }
+      }
+    }
+    return out;
+  } catch { return []; }
+}
+
+export function nextModelForTask(targetDir: string, difficulty?: string, taskId?: string, key?: string): { model?: string; thinking?: string } {
+  try {
+    const { resolveModel, resolveThinking } = require("./modelRouter.ts");
+    return {
+      model: resolveModel({ projectDir: targetDir, task: { difficulty: difficulty as any, id: taskId, key } }),
+      thinking: resolveThinking({ projectDir: targetDir, task: { difficulty: difficulty as any, id: taskId, key } }),
+    };
+  } catch { return {}; }
+}
+
 export function pickRunnableTasks(opts: PickOpts): FlatTask[] {
   const { list } = loadFeatureList(opts.targetDir);
   const phase = (opts.phase ?? null) as Phase | null;

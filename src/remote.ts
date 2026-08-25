@@ -57,6 +57,8 @@ export interface RemoteState {
   goalPass: { current: number; max: number } | null;
   /** What the reader has asked the dashboard to draw. */
   display: DisplayPolicy;
+  execution: unknown;
+  workers: unknown;
 }
 
 export interface RemoteServer {
@@ -116,6 +118,15 @@ export function buildRemoteState(projectDir?: string): RemoteState {
     rework: readJsonSafe<unknown>(reworkPath(dir), null),
     awaitingApproval: config.awaitingApproval ?? null,
     sessions: loadRunState(dir)?.sessions ?? null,
+    execution: (() => { try { const { executionPolicyOf } = require("./scheduler.ts"); return executionPolicyOf(config); } catch { return null; } })(),
+    workers: (() => {
+      try {
+        const { listWorkers } = require("./scheduler.ts");
+        const runId = (() => { try { return (require("./runState.ts") as { runIdFor: (d:string,f:string)=>string }).runIdFor(dir, ""); } catch { return undefined; } })();
+        const ws = listWorkers(dir, runId || undefined) as unknown[];
+        return Array.isArray(ws) ? ws.slice(0, 6) : [];
+      } catch { return []; }
+    })(),
     goalPass:
       typeof config.goalPass === "number" && typeof config.goalMaxPasses === "number"
         ? { current: config.goalPass, max: config.goalMaxPasses }

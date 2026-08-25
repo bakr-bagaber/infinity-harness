@@ -38,7 +38,7 @@ import {
   describeEscalation,
   type EscalationState,
 } from "./escalate.ts";
-import { pickRunnableTasks } from "./scheduler.ts";
+import { executionPolicyOf, pickRunnableTasks } from "./scheduler.ts";
 import { loadGoal, recordPipelinePass, viewOf } from "./goal.ts";
 import {
   needsApproval,
@@ -541,12 +541,44 @@ export async function decideNext(options: DecideOptions): Promise<{ decision: Lo
 
   // Charge retries at the active level as well as the legacy phase counter.
   const fresh = loadConfig(targetDir);
+  let execPolicy: { parallelAt: string; maxWorkers: number } | null = null;
   if (fresh.ok) {
+    execPolicy = executionPolicyOf(fresh.config) as { parallelAt: string; maxWorkers: number };
     incrementRetryLevel(fresh.config, retryLevel ?? "phase");
     // Keep phase counter in step as the global guard so existing budgets still fire.
     if ((retryLevel ?? "phase") !== "phase") incrementPhaseRetry(fresh.config);
     saveConfig(targetDir, fresh.config);
   }
+
+  // Auto-spawn isolated workers for eligible tasks at the current phase —
+  // the main session stays as orchestrator/visualisation only. Workers are
+  // created empty (no shell command) so realpi/e2e without a worker runtime
+  // still advances via gate; the brief still drives the main session until a
+  // real runner picks the attempt up. This makes the main session safe to
+  // observe but not edit the plan.
+  try {
+    if (execPolicy && execPolicy.parallelAt !== "off" && fresh?.ok) {
+      const eligible = pickRunnableTasks({
+        targetDir,
+        phase: fresh.config.currentPhase as import("./core/types.ts").Phase | null,
+        parallelAt: execPolicy.parallelAt as import("./core/types.ts").HandoffGranularity,
+        maxWorkers: execPolicy.maxWorkers,
+      });
+      if (eligible.length > 0) {
+        const { spawnWorkers } = await import("./scheduler.ts");
+        const curBrief = await buildBrief(targetDir);
+        const briefFor = (t: import("./core/featureList.ts").FlatTask): string =>
+          `Task ${t.compositeKey} in ${fresh.config.currentPhase}: ${t.description}` +
+          `\nAcceptance: ${(t.criteria ?? (curBrief.criteria ?? [])).join("; ")}`;
+        // Fire-and-forget so the brief still returns promptly; harness does not
+        // depend on the child process (covered by e2e). Errors are best-effort.
+        spawnWorkers(targetDir, eligible, {
+          runId,
+          promptFor: briefFor,
+        }).catch(() => {});
+      }
+    }
+  } catch {}
 
   const brief = await buildBrief(targetDir);
   const failures = gate
