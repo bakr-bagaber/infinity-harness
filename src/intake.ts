@@ -111,7 +111,7 @@ export function planIntake(answers: IntakeAnswers): IntakePlan {
   const phases = normalizePhases(workflow.phases);
   const phaseModes = normalizeModes(workflow.modes, phases);
 
-  const handoff = answers.handoff ?? "phase";
+  const handoff = answers.handoff ?? "task";
   const session: SessionPolicy = {
     handoff,
     contextThreshold: handoff === "off" ? 0 : 0.6,
