@@ -1313,7 +1313,7 @@ export default function (pi: ExtensionAPI): void {
       }
 
       const wizard = ctx.hasUI
-        ? await runIntakeWizard({ prompt: prompterFor(ctx), brief: goalFromArgs || null })
+        ? await runIntakeWizard({ prompt: prompterFor(ctx), brief: goalFromArgs || null, models: () => availableModels(ctx) })
         : ({ cancelled: false, plan: unattendedIntake(goalFromArgs || null) } as const);
 
       if (wizard.cancelled) {

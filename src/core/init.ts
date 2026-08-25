@@ -162,6 +162,9 @@ export type InitOptions = {
   session?: Partial<HarnessConfig["session"]>;
   /** What the human said they want built. Recorded, and read by the first brief. */
   brief?: string | null;
+  /** Model routing for difficulty tiers and consulting. */
+  router?: Partial<import("../../src/modelRouter.ts").RouterConfig>;
+
 };
 
 export type InitResult = {
@@ -237,6 +240,23 @@ export function initHarness(targetDir: string, options: InitOptions = {}): InitR
       brief: options.brief && options.brief.trim() ? options.brief.trim() : null,
       at: new Date().toISOString(),
     };
+  }
+  if (options.router) {
+    try {
+      const routerPath = P.modelRouterPath(targetDir);
+      mkdirSync(dirname(routerPath), { recursive: true });
+      let existing: Record<string, unknown> = {};
+      try { if (existsSync(routerPath)) existing = JSON.parse(readFileSync(routerPath, "utf-8")); } catch { /* ignore corrupt */ }
+      const incoming = options.router as Record<string, unknown>;
+      const merged: Record<string, unknown> = { ...existing, ...incoming };
+      if ((incoming as { byDifficulty?: unknown }).byDifficulty && typeof (incoming as { byDifficulty?: unknown }).byDifficulty === "object") {
+        merged.byDifficulty = { ...((existing.byDifficulty as Record<string,string>) ?? {}), ...(incoming.byDifficulty as Record<string,string>) };
+      }
+      if ((incoming as { thinkingByDifficulty?: unknown }).thinkingByDifficulty && typeof (incoming as { thinkingByDifficulty?: unknown }).thinkingByDifficulty === "object") {
+        merged.thinkingByDifficulty = { ...((existing.thinkingByDifficulty as Record<string,string>) ?? {}), ...(incoming.thinkingByDifficulty as Record<string,string>) };
+      }
+      writeFileSync(routerPath, JSON.stringify(merged, null, 2), "utf-8");
+    } catch { /* best-effort */ }
   }
 
   const write = (path: string, body: string) => {

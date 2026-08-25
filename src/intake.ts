@@ -53,6 +53,16 @@ export type IntakeAnswers = {
   handoff?: SessionPolicy["handoff"];
   /** What the surfaces should draw. Defaults to the `focus` template. */
   display?: DisplayPolicy;
+  /** Model routing for difficulty tiers and consulting. */
+  router?: {
+    enabled: boolean;
+    byDifficulty: Record<string, string>;
+    thinkingByDifficulty?: Partial<Record<string, string>>;
+    master?: string;
+    thinkingMaster?: string;
+    default?: string;
+    thinkingDefault?: string;
+  };
 };
 
 export type IntakePlan = {
@@ -66,6 +76,7 @@ export type IntakePlan = {
   approvals: ApprovalPolicy;
   session: SessionPolicy;
   display: DisplayPolicy;
+  router?: IntakeAnswers["router"];
   /** What the human should be told about what they just chose. */
   summary: string;
   /** Things that will bite later if left as they are. */
@@ -152,6 +163,7 @@ export function planIntake(answers: IntakeAnswers): IntakePlan {
     },
     session,
     display,
+    router: answers.router,
     summary: summarize(workflow, phases, phaseModes, session, display, brief),
     warnings,
   };
