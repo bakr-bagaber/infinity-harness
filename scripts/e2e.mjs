@@ -3313,6 +3313,7 @@ async function scenarioColdStart() {
       /^copilot/,
       "reconcile Stripe payouts against the ledger",
       /every phase/,
+      /no \u2014 use pi/,  // routing: off for this harness
       /^focus/,
       /start with these settings/,
     ]);
@@ -3358,6 +3359,7 @@ async function scenarioColdStart() {
       /^spec and ship/,
       "a nightly reconciliation job",
       /every phase/,
+      /no — use pi/,  // routing: off for this harness
       /^overview/,
       /start with these settings/,
     ]);
@@ -3401,6 +3403,7 @@ async function scenarioColdStart() {
         "Client work",
         "a client project",
         /every phase/,
+        /no \u2014 use pi/,  // routing: off for this harness
         /^everything/,
         /start with these settings/,
       ]);
@@ -3429,6 +3432,7 @@ async function scenarioColdStart() {
         /Client work \(yours\)/,
         "the next one",
         /every phase/,
+        /no — use pi/,
         /^focus/,
         /start with these settings/,
       ]);
@@ -3452,6 +3456,7 @@ async function scenarioColdStart() {
       /^autopilot/,
       "a URL shortener",
       /every phase/,
+      /no \u2014 use pi/,  // routing: off for this harness
       /^focus/,
       /start with these settings/,
     ]);
@@ -3476,6 +3481,7 @@ async function scenarioColdStart() {
       /^autopilot/,
       "",
       /every phase/,
+      /no \u2014 use pi/,  // routing: off for this harness
       /^focus/,
       /start with these settings/,
     ]);
@@ -3620,6 +3626,7 @@ async function scenarioColdStart() {
       /^copilot/,
       "reconcile Stripe payouts against the ledger",
       /every phase/,
+      /no \u2014 use pi/,  // routing: off for this harness
       /^focus/,
       /start with these settings/,
     ]);
@@ -4013,6 +4020,7 @@ async function scenarioRealPi() {
       );
       driver.answer((r) => /What are you building/.test(r.title ?? ""), "a nightly reconciliation job");
       driver.answer((r) => /fresh session/.test(r.title ?? ""), (r) => r.options[0]);
+      driver.answer((r) => /Route work by difficulty/.test(r.title ?? ""), (r) => r.options.find((o) => /no \u2014 use pi/i.test(o)) ?? r.options[0]);
       driver.answer((r) => /How much of the plan/.test(r.title ?? ""), (r) =>
         r.options.find((o) => /^everything/.test(o)),
       );
@@ -4076,6 +4084,7 @@ async function scenarioRealPi() {
       driver.answer((r) => /Call it what/.test(r.title ?? ""), "Ship review");
       driver.answer((r) => /What are you building/.test(r.title ?? ""), "an internal tool");
       driver.answer((r) => /fresh session/.test(r.title ?? ""), (r) => r.options[0]);
+      driver.answer((r) => /Route work by difficulty/.test(r.title ?? ""), (r) => r.options.find((o) => /no \u2014 use pi/i.test(o)) ?? r.options[0]);
       driver.answer((r) => /How much of the plan/.test(r.title ?? ""), (r) => r.options[0]);
       driver.answer((r) => /Ready\?/.test(r.title ?? ""), (r) => r.options[0]);
 

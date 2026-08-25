@@ -182,3 +182,24 @@ const signals = (over: Partial<Parameters<typeof shouldHandoff>[0]> = {}) => ({
   }
   console.log("✓ the kickoff carries the brief, the reason, and the note");
 }
+
+// -- full granularity (goal/phase/sprint/feature/task/subtask) ----------------
+{
+  const sprint = shouldHandoff(signals({ config: config({ handoff: "sprint" }), fromSprint: "s-1", toSprint: "s-2" }));
+  assert.equal(sprint.handoff, true);
+  assert.equal(sprint.handoff && (sprint as { reason: string }).reason, "sprint");
+  assert.equal(shouldHandoff(signals({ config: config({ handoff: "phase" }), fromSprint: "s-1", toSprint: "s-2" })).handoff, false, "phase must not fire on sprint");
+
+  const feat = shouldHandoff(signals({ config: config({ handoff: "feature" }), fromFeature: "f-1", toFeature: "f-2" }));
+  assert.equal(feat.handoff, true);
+  assert.equal(feat.handoff && (feat as { reason: string }).reason, "feature");
+
+  const sub = shouldHandoff(signals({ config: config({ handoff: "subtask" }), fromSubtask: "t#s-1", toSubtask: "t#s-2" }));
+  assert.equal(sub.handoff, true);
+  assert.equal(sub.handoff && (sub as { reason: string }).reason, "subtask");
+  assert.equal(shouldHandoff(signals({ config: config({ handoff: "task" }), fromSubtask: "t#s-1", toSubtask: "t#s-2" })).handoff, false, "task must not fire on subtask");
+
+  // goal is an alias for off — never fires as a handoff reason in shouldHandoff
+  assert.equal(shouldHandoff(signals({ config: config({ handoff: "goal" }), fromGoal: "g1", toGoal: "g2" })).handoff, false);
+  console.log("✓ granularity hierarchy: sprint/feature/task/subtask fire only when configured fine enough");
+}

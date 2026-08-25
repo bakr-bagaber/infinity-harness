@@ -1199,33 +1199,40 @@ export default function (pi: ExtensionAPI): void {
       const lines = gate.checks
         .map((c) => `${c.advisory ? "·" : c.pass ? "+" : "x"} ${c.name}: ${c.detail}`)
         .join("\n");
-      // On a passing gate in autopilot, the tool itself advances the phase
-      // so a run without the continuous loop armed still moves forward when
-      // the agent calls infinity_validate — that's what the brief says will
-      // happen ("PASS → the harness advances") and what stopped research
-      // from ever reaching DEFINE until someone typed "continue".
+      // Research (and any other phase whose mode is autopilot) used to stall
+      // forever until someone typed "continue" because the brief said
+      // PASS→advance but no component actually advanced without the continuous
+      // loop armed. Fix that, but do NOT auto-advance BUILD verify-style
+      // phases that require real work (tests, coverage, clean tree) to have
+      // genuinely passed on the *next* phase's gate as well — otherwise a
+      // single infinity_validate hops build→verify→review.
+      // Only auto-advance doc/process phases whose gate is purely content (
+      // research, define, plan). BUILD and later require explicit validation.
       if (gate.overall && !params?.feature && !params?.task) {
-        try {
-          const { needsApproval } = await import("../../src/approval.ts");
-          const fresh = loadConfig(dir).config;
-          if (!needsApproval(fresh, fresh.currentPhase)) {
-            const { advancePhase } = await import("../../src/core/phases.ts");
-            const moved = await advancePhase(dir);
-            if (moved.ok && moved.to) {
-              refreshWidget(ctx as ExtensionContext);
-              const brief = await briefText(dir);
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: `Gate PASS on ${gate.phase} → advanced ${moved.from} → ${moved.to}\n${lines}\n\n${brief}`,
-                  },
-                ],
-                details: { ...gate, advanced: moved } as unknown as typeof gate,
-              };
+        const autoPhases: ReadonlySet<string> = new Set(["research", "define", "plan"]);
+        if (autoPhases.has(String(gate.phase))) {
+          try {
+            const { needsApproval } = await import("../../src/approval.ts");
+            const fresh = loadConfig(dir).config;
+            if (!needsApproval(fresh, fresh.currentPhase)) {
+              const { advancePhase } = await import("../../src/core/phases.ts");
+              const moved = await advancePhase(dir);
+              if (moved.ok && moved.to) {
+                refreshWidget(ctx as ExtensionContext);
+                const brief = await briefText(dir);
+                return {
+                  content: [
+                    {
+                      type: "text",
+                      text: `Gate PASS on ${gate.phase} → advanced ${moved.from} → ${moved.to}\n${lines}\n\n${brief}`,
+                    },
+                  ],
+                  details: { ...gate, advanced: moved } as unknown as typeof gate,
+                };
+              }
             }
-          }
-        } catch {}
+          } catch {}
+        }
       }
       return {
         content: [
