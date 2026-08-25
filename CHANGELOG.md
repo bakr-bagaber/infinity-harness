@@ -4,6 +4,39 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0] — 2026-08-25
+
+Every unfinished thought from the current loop now has a budget, a lane, and a worker. One generic
+pipeline — no per-phase special cases.
+
+### Added
+
+- **Every phase owns tasks.** `task.phase?` + `feature.phase?` (`effectivePhase = task.phase ??
+  feature.phase ?? "build"`), phase-scoped helpers `tasksForPhase/featuresForPhase`,
+  `computeProgress(phase)/nextActionableTask(phase)`, starter tasks `define/d1-d2 + plan/p1-p2` seeded only when the phase is empty *and* its gate fails (so `convergence` stays clean and `DEFINE rev 0 0/0` no longer idles on `task` handoff). Old plans without `phase` still \= `build`.
+
+- **Parallel on every level.** New `src/scheduler.ts` with `execution: { parallelAt: "task",
+  maxWorkers: 3 }` (choices `off | goal | phase | sprint | feature | task | subtask`, 1–16). Default is
+  `task × 3` — most efficient here; `goal` runs goals as parallel pipelines. Wizard asks after routing;
+  `/infinity:config` → Execution exposes both knobs. Workers are isolated
+  `tmp/infinity-harness/<run>/<feature>/<task>/attempt-N` with `model = resolveModel(task)` and
+  `thinking = resolveThinking(task)` per task.
+
+- **Per-level retry with per-level ladder.** `retry.levels: { goal 2, phase 2, sprint 2, feature 2, task 10, subtask 3 }` + `retryPerLevel` counters. `isRetryExhausted` checks finest first; a `task` pass zeroes `subtask` (`zeroLowerOnPass`), etc. Every level has its own `LoopState.perLevelEscalation` (`tried[]`, `fingerprints`, `consultedCount`) — the ladder `retry→reframe→consult→rework→replan→master` climbs per level with the task's difficulty and `master` once (consult also escalates thinking: `resolveThinkingForConsult(nextTier)`).
+
+- **Main is dashboard only.** `loop.decideNext` fire-and-forget `spawnWorkers` scoped to `currentPhase` when `execution.parallelAt !== "off"` — the main session never edits the plan, it polls `fingerprint.json/output.log` and leaves `infinity_plan` to the workers. Dashboard `remote.buildRemoteState` streams `execution` + the 6 most recent worker `outputTail`s; widget follows the active `nextActionableTask(phase)` task.
+
+- **Handoff/brief built for multiple phases.** `activePlanKeys` and `brief.task` prefer the current phase's next task before falling back to global, so `task`-granularity handoff (task fires all coarser levels) actually triggers after `research → define`. `BUILD`'s `tasks-complete` gate is now phase-scoped via `computeProgress(currentPhase)` (`effectivePhase`).
+
+### Fixed
+
+- `replan.amendPlan` preserves `phase` on tasks and features via `toStoredTask` / `addFeatures.phase`; a mid-run `define` amendment no longer falls back to `build`.
+- `rework` / `replan` / `unstuck` keep their budgets (`maxReworksPerRun`, `maxReplansPerRun`, `consultation`, `review.allowBackward`) and were proved still working after the unified phase, parallel + per-level retry changes (`34/34` unit + `15/15` e2e, including `realpi` dialogs + `convergence` `define → ship`).
+
+### Verified
+
+- `tsc --noEmit` clean, `34` unit test files, `e2e 15/15` (including `realpi` five sessions + `convergence`, `package 42 modules reachable`). `harness/docs/plans/2.6-unified-phase-parallel-workers.md` keeps the user comments that drove this release.
+
 ## [2.5.1] — 2026-08-25
 
 ### Fixed
