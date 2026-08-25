@@ -279,13 +279,14 @@ export function applyTaskList(current: FeatureList, input: ApplyInput): ApplyRes
         : (existing?.subtasks ?? []).map((s) => ({ ...s }));
 
     // Merge onto the stored task so unknown fields survive. `index`,
-    // `compositeKey`, `featureId` and `featureName` are view-only additions
+    // `compositeKey`, `featureId`, `featureName`, `effectivePhase` are view-only additions
     // from flattenTasks and must not be persisted.
     const base: Record<string, unknown> = existing ? { ...existing } : {};
     delete base.index;
     delete base.compositeKey;
     delete base.featureId;
     delete base.featureName;
+    delete base.effectivePhase;
 
     const task: Task = {
       ...(base as Partial<Task>),
@@ -460,6 +461,7 @@ function stripView(t: FlatTask): Task {
   delete copy.compositeKey;
   delete copy.featureId;
   delete copy.featureName;
+  delete copy.effectivePhase;
   return copy as Task;
 }
 

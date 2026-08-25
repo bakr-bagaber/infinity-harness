@@ -124,8 +124,11 @@ function normalizeList(raw: FeatureList): FeatureList {
     features: Array.isArray(raw.features) ? raw.features : [],
   };
   for (const f of list.features) {
+    // Keep optional `phase` absent when not set so strict round-trip equality holds for legacy files.
+    if ((f as { phase?: unknown }).phase !== undefined && typeof (f as { phase?: unknown }).phase !== "string") delete (f as { phase?: unknown }).phase;
     if (!Array.isArray(f.tasks)) f.tasks = [];
     for (const t of f.tasks) {
+      if ((t as { phase?: unknown }).phase !== undefined && typeof (t as { phase?: unknown }).phase !== "string") delete (t as { phase?: unknown }).phase;
       if (!Array.isArray(t.dependsOn)) t.dependsOn = [];
       if (!Array.isArray(t.subtasks)) t.subtasks = [];
       try {
@@ -151,6 +154,8 @@ export type FlatTask = Task & {
   compositeKey: string;
   featureId: string;
   featureName: string;
+  /** Effective phase of this task: `task.phase ?? feature.phase ?? "build"`. */
+  effectivePhase: import("./types.ts").Phase | undefined;
   /** 1-based position in the flattened plan, used for `← #3` dep labels. */
   index: number;
 };
@@ -160,13 +165,16 @@ export function flattenTasks(list: FeatureList): FlatTask[] {
   const out: FlatTask[] = [];
   let i = 0;
   for (const f of list.features ?? []) {
+    const featurePhase = (f as { phase?: string }).phase as import("./types.ts").Phase | undefined;
     for (const t of f.tasks ?? []) {
       i += 1;
+      const eff = (t as { phase?: string }).phase as string | undefined ?? featurePhase ?? "build";
       out.push({
         ...t,
         compositeKey: t.key ?? `${f.id}/${t.id}`,
         featureId: f.id,
         featureName: f.name,
+        effectivePhase: eff as FlatTask["effectivePhase"],
         index: i,
       });
     }
@@ -208,10 +216,40 @@ export type Progress = {
   percent: number;
 };
 
-export function computeProgress(list: FeatureList): Progress {
-  const tasks = flattenTasks(list);
+/** Phase-filtered view: include only tasks whose effectivePhase matches. Pass nothing for global. */
+export function tasksForPhase(list: FeatureList, phase?: string | null): FlatTask[] {
+  const all = flattenTasks(list);
+  if (!phase) return all;
+  return all.filter((t) => t.effectivePhase === phase);
+}
+
+export function featuresForPhase(list: FeatureList, phase?: string | null): import("./types.ts").Feature[] {
+  if (!phase) return list.features ?? [];
+  return (list.features ?? []).filter((f) => (f as { phase?: string }).phase === phase);
+}
+
+export function computeProgress(list: FeatureList, phase?: string | null): Progress {
+  if (!phase) {
+    const tasks = flattenTasks(list);
+    const tasksDone = tasks.filter((t) => isDone(t.status)).length;
+    const features = list.features ?? [];
+    const featuresDone = features.filter(
+      (f) => (f.tasks ?? []).length > 0 && (f.tasks ?? []).every((t) => isDone(t.status)),
+    ).length;
+    return {
+      tasksDone,
+      tasksTotal: tasks.length,
+      featuresDone,
+      featuresTotal: features.length,
+      blocked: tasks.filter((t) => t.status === "blocked").length,
+      inProgress: tasks.filter((t) => t.status === "in_progress").length,
+      rework: tasks.filter((t) => t.status === "rework").length,
+      percent: tasks.length === 0 ? 0 : Math.round((tasksDone / tasks.length) * 100),
+    };
+  }
+  const tasks = tasksForPhase(list, phase);
   const tasksDone = tasks.filter((t) => isDone(t.status)).length;
-  const features = list.features ?? [];
+  const features = featuresForPhase(list, phase);
   const featuresDone = features.filter(
     (f) => (f.tasks ?? []).length > 0 && (f.tasks ?? []).every((t) => isDone(t.status)),
   ).length;
@@ -228,12 +266,11 @@ export function computeProgress(list: FeatureList): Progress {
 }
 
 /**
- * The next task the pipeline should work on: the first in_progress task,
- * else the first pending task whose dependencies are all complete.
+ * The next task the pipeline should work on (optionally scoped to one phase).
  * Returns null when everything is done or everything left is blocked.
  */
-export function nextActionableTask(list: FeatureList): FlatTask | null {
-  const tasks = flattenTasks(list);
+export function nextActionableTask(list: FeatureList, phase?: string | null): FlatTask | null {
+  const tasks = phase ? tasksForPhase(list, phase) : flattenTasks(list);
   const byKey = new Map<string, FlatTask>();
   for (const t of tasks) {
     byKey.set(t.compositeKey, t);

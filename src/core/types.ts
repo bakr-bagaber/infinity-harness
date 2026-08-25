@@ -88,6 +88,8 @@ export type Task = {
   key?: string;
   description: string;
   status: TaskStatus;
+  /** Which pipeline phase this task belongs to. Absent means `build` for backwards compat. */
+  phase?: Phase;
   dependsOn?: string[];
   subtasks?: Subtask[];
   difficulty?: Difficulty;
@@ -102,6 +104,7 @@ export type Feature = {
   name: string;
   description?: string;
   passes?: boolean;
+  phase?: Phase;
   sprintId?: string;
   goalId?: string;
   criteria?: string[];
