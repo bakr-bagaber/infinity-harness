@@ -51,6 +51,7 @@ export type ReplanTaskInput = {
   difficulty?: string;
   modelHint?: string;
   acceptanceCriteria?: string[];
+  phase?: string;
 };
 
 export interface AmendPlanOpts {
@@ -66,6 +67,7 @@ export interface AmendPlanOpts {
     passes?: boolean;
     tasks?: ReplanTaskInput[];
     difficulty?: string;
+    phase?: string;
   }>;
   addTasks?: Array<{ featureId: string; task: ReplanTaskInput }>;
 }
@@ -171,7 +173,7 @@ function readMaxReplans(projectDir: string): number {
 
 /** Shape a submitted task into the stored form. One place, so the two add paths agree. */
 function toStoredTask(t: ReplanTaskInput): Task {
-  return {
+  const out: Task = {
     id: t.id,
     key: t.key,
     description: t.description,
@@ -181,7 +183,9 @@ function toStoredTask(t: ReplanTaskInput): Task {
     difficulty: t.difficulty as Task["difficulty"],
     modelHint: t.modelHint,
     acceptanceCriteria: t.acceptanceCriteria ?? [],
-  };
+  } as Task;
+  if (t.phase) (out as unknown as { phase: string }).phase = t.phase;
+  return out;
 }
 
 export async function amendPlan(opts: AmendPlanOpts): Promise<AmendPlanResult> {
@@ -227,8 +231,9 @@ export async function amendPlan(opts: AmendPlanOpts): Promise<AmendPlanResult> {
         sprintId: f.sprintId,
         goalId: f.goalId,
         difficulty: f.difficulty,
+        ...(f.phase ? { phase: f.phase } : {}),
         tasks: (f.tasks ?? []).map(toStoredTask),
-      };
+      } as Feature;
       list.features.push(feature);
       addedFeatures++;
     }

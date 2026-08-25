@@ -191,12 +191,15 @@ export async function escalate(options: EscalateOptions): Promise<Escalation> {
     case "consult": {
       const model = choice.nextModel ?? null;
       const lvl = options.level ?? "task";
-      // Thinking escalates together with consult: next tier thinking if any.
-      let thinkingHint = "";
+      let thinkingHint: string | null = null;
       try {
-        const { resolveThinkingForConsult } = await import("./modelRouter.ts");
-        const nextDiff = (choice as { nextModel?: string } | undefined) ? null : null;
-        void nextDiff;
+        const { consultNextWithThinking, DIFFICULTY_LADDER } = await import("./modelRouter.ts");
+        const cur = (task?.difficulty ?? null) as string | null;
+        const idx = (DIFFICULTY_LADDER as readonly string[]).indexOf(cur ?? "");
+        const nextDiff = idx >= 0 && idx < (DIFFICULTY_LADDER.length as number) - 1 ? (DIFFICULTY_LADDER as readonly string[])[idx + 1] as string : null;
+        const picked = consultNextWithThinking(cur as string | null, { projectDir: targetDir, consultedCount: state.consultedCount });
+        void picked; void nextDiff;
+        thinkingHint = null; // keep instruction lean; spawned worker resolves thinking from router
       } catch {}
       return {
         strategy: "consult",
