@@ -21,5 +21,5 @@ build/
 .DS_Store
 
 # Worker isolation attempt history (F3)
-tmp/pi-harness/
+tmp/infinity-harness/
 tmp/
