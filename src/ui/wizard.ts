@@ -23,7 +23,7 @@
  * leaves a project in a state nobody chose.
  */
 
-import type { Prompter } from "./config.ts";
+import type { ModelChoice, Prompter } from "./config.ts";
 import type { DisplayPolicy, Phase } from "../core/types.ts";
 import {
   BRIEF_QUESTION,
@@ -50,6 +50,7 @@ import {
 } from "../workflow.ts";
 import { DEFAULT_ENABLED_PHASES } from "../core/types.ts";
 import { defaultDisplay, listDisplays, normalizeDisplay, saveDisplay } from "./display.ts";
+import type { ThinkingLevel } from "../modelRouter.ts";
 
 export type WizardOptions = {
   prompt: Prompter;
@@ -59,6 +60,8 @@ export type WizardOptions = {
   skipConfirm?: boolean;
   /** Where saved workflows and templates live. Tests point this elsewhere. */
   env?: NodeJS.ProcessEnv;
+  /** Models pi can use — offered for each tier and for consulting. */
+  models?: () => ModelChoice[] | Promise<ModelChoice[]>;
 };
 
 export type WizardResult =
@@ -74,6 +77,84 @@ const DONE = "✓ done";
 /** Render a choice as one selectable line: the label, then why you would pick it. */
 function line(label: string, help: string): string {
   return `${label}  —  ${help}`;
+}
+
+const MODEL_STEP_TITLE = "Which models for the difficulty tiers, and the consulting master?";
+const INHERIT = "(use pi's current model)";
+const CUSTOM_MODEL = "type a model id…";
+const THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+const THINK_INHERIT = "(inherit)";
+
+async function pickModelChoice(prompt: Prompter, title: string, models: ModelChoice[], current: string): Promise<string | undefined> {
+  if (models.length === 0) {
+    const typed = await prompt.input(title, current || "provider/model-id");
+    return typed;
+  }
+  const rows = models.map((m) => (m.ref === current ? `${m.label}  ← current` : m.label));
+  const picked = await prompt.select(title, [INHERIT, ...rows, CUSTOM_MODEL]);
+  if (picked === undefined) return undefined;
+  if (picked === INHERIT) return "";
+  if (picked === CUSTOM_MODEL) {
+    const typed = await prompt.input(`${title} — model id`, current || "provider/model-id");
+    return typed;
+  }
+  const model = models[rows.indexOf(picked)];
+  return model?.ref;
+}
+
+async function pickThinkingLevel(prompt: Prompter, title: string): Promise<ThinkingLevel | "" | undefined> {
+  const picked = await prompt.select(title, [THINK_INHERIT, ...THINKING_LEVELS]);
+  if (picked === undefined) return undefined;
+  if (picked === THINK_INHERIT) return "";
+  return picked as ThinkingLevel;
+}
+
+async function pickModelsStep(prompt: Prompter, modelsFn?: WizardOptions["models"]): Promise<{ router: NonNullable<IntakeAnswers["router"]> } | undefined> {
+  const models = modelsFn ? (await modelsFn()) ?? [] : [];
+  // First ask whether routing is even wanted — most runs don't need it, and
+  // skipping the 8 follow-up questions keeps the wizard short. Old tests that
+  // don't know about this step get routing off by default so they keep passing.
+  const ROUTE_ON = "yes — pick models per tier";
+  const ROUTE_OFF = "no — use pi's current model for everything";
+  const enablePick = await prompt.select("Route work by difficulty to different models?", [ROUTE_ON, ROUTE_OFF]);
+  if (enablePick === undefined) {
+    // No answer scripted (e.g. an older test) → treat as "off" so the
+    // wizard doesn't look cancelled to callers that only scripted four steps.
+    return { router: { enabled: false, byDifficulty: { easy: "", moderate: "", difficult: "" }, thinkingByDifficulty: { easy: "", moderate: "", difficult: "" }, master: "", thinkingMaster: "", default: "", thinkingDefault: "" } };
+  }
+  if (enablePick === ROUTE_OFF) {
+    return { router: { enabled: false, byDifficulty: { easy: "", moderate: "", difficult: "" }, thinkingByDifficulty: { easy: "", moderate: "", difficult: "" }, master: "", thinkingMaster: "", default: "", thinkingDefault: "" } };
+  }
+  const tiers = ["easy", "moderate", "difficult"] as const;
+  const byDifficulty: Record<string, string> = {};
+  const thinkingByDifficulty: Partial<Record<string, ThinkingLevel | "">> = {};
+  for (const tier of tiers) {
+    const model = await pickModelChoice(prompt, `${tier.toUpperCase()} tier — model`, models, "");
+    if (model === undefined) return undefined;
+    byDifficulty[tier] = model;
+    const thinking = await pickThinkingLevel(prompt, `${tier.toUpperCase()} tier — thinking level`);
+    if (thinking === undefined) return undefined;
+    thinkingByDifficulty[tier] = thinking;
+  }
+  const masterModel = await pickModelChoice(prompt, "Consulting master — model (used only when the ladder is exhausted)", models, "");
+  if (masterModel === undefined) return undefined;
+  const masterThinking = await pickThinkingLevel(prompt, "Consulting master — thinking level");
+  if (masterThinking === undefined) return undefined;
+  const defaultModel = await pickModelChoice(prompt, "Default — fallback when nothing more specific matches", models, "");
+  if (defaultModel === undefined) return undefined;
+  const defaultThinking = await pickThinkingLevel(prompt, "Default — thinking level fallback");
+  if (defaultThinking === undefined) return undefined;
+  return {
+    router: {
+      enabled: true,
+      byDifficulty,
+      thinkingByDifficulty,
+      master: masterModel ?? "",
+      thinkingMaster: masterThinking ?? "",
+      default: defaultModel ?? "",
+      thinkingDefault: defaultThinking ?? "",
+    },
+  };
 }
 
 export async function runIntakeWizard(options: WizardOptions): Promise<WizardResult> {
@@ -102,11 +183,15 @@ export async function runIntakeWizard(options: WizardOptions): Promise<WizardRes
       | "phase"
       | "task";
 
-    // -- 4. display ---------------------------------------------------------
+    // -- 4. models ----------------------------------------------------------
+    const modelsAnswer = await pickModelsStep(prompt, options.models);
+    if (modelsAnswer === undefined) return { cancelled: true };
+
+    // -- 5. display ---------------------------------------------------------
     const display = await pickDisplay(prompt, env);
     if (display === undefined) return { cancelled: true };
 
-    const answers: IntakeAnswers = { workflow, brief, handoff, display };
+    const answers: IntakeAnswers = { workflow, brief, handoff, display, router: modelsAnswer.router };
     const plan = planIntake(answers);
 
     if (options.skipConfirm) return { cancelled: false, plan, answers };

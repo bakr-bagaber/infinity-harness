@@ -297,15 +297,33 @@ export default function (pi: ExtensionAPI): void {
 
   // -- session handoff ------------------------------------------------------
 
-  /** The task the pipeline is on right now, or null. */
-  const activeTaskKey = (dir: string): string | null => {
+  /** The task/feature/sprint/goal/subtask the pipeline is on right now, or null. */
+  const activePlanKeys = (dir: string): { task: string | null; feature: string | null; sprint: string | null; goal: string | null; subtask: string | null; } => {
     try {
       const { list } = loadFeatureList(dir);
-      return nextActionableTask(list)?.compositeKey ?? null;
+      const task = nextActionableTask(list);
+      const flat = task ? loadFeatureList(dir).list.features?.find((f) => f.id === task.featureId) ?? null : null;
+      // Resolve sprint/goal via list, and active subtask of the focused task.
+      const taskKey = task?.compositeKey ?? null;
+      const featureId = task?.featureId ?? null;
+      const feature = featureId ? (list.features ?? []).find((f) => f.id === featureId) ?? null : null;
+      const sprintId = feature?.sprintId ?? null;
+      const goalId = feature?.goalId ?? (sprintId ? (list.sprints ?? []).find((s) => s.id === sprintId)?.goalId ?? null : null) ?? (list.goals?.[0]?.id ?? null);
+      const sprint = sprintId ? sprintId : null;
+      const goal = goalId ? goalId : null;
+      // First non-complete subtask of the active task.
+      let subtask: string | null = null;
+      const rawTask = feature && task ? feature.tasks.find((t) => t.id === task.id || t.key === task.key) ?? null : null;
+      if (rawTask?.subtasks?.length) {
+        const cur = rawTask.subtasks.find((s) => s.status !== "complete") ?? null;
+        if (cur) subtask = `${taskKey}#${cur.id ?? cur.title}`;
+      }
+      return { task: taskKey, feature: featureId, sprint, goal, subtask };
     } catch {
-      return null;
+      return { task: null, feature: null, sprint: null, goal: null, subtask: null };
     }
   };
+  const activeTaskKey = (dir: string): string | null => activePlanKeys(dir).task;
 
   /** How full this session's context is, 0..1, or null when pi cannot say. */
   const contextRatio = (ctx: ExtensionContext): number | null => {
@@ -355,12 +373,41 @@ export default function (pi: ExtensionAPI): void {
     }
     try {
       const { config } = loadConfig(dir);
+      const toKeys = activePlanKeys(dir);
+      // Map caller's fromTask (a compositeKey) back to its feature/sprint etc for the "from" side.
+      // We derive them from the plan so goal/sprint/feature boundaries are comparable.
+      let fromGoal: string | null = null;
+      let fromSprint: string | null = null;
+      let fromFeature: string | null = null;
+      try {
+        const { list } = loadFeatureList(dir);
+        if (fromTask) {
+          const ft = ((): { featureId: string } | null => {
+            for (const f of list.features ?? []) for (const t of f.tasks ?? []) if (t.key === fromTask || `${f.id}/${t.id}` === fromTask || t.id === fromTask) return { featureId: f.id };
+            return null;
+          })();
+          if (ft) {
+            fromFeature = ft.featureId;
+            const feat = list.features.find((f) => f.id === ft.featureId) ?? null;
+            fromSprint = feat?.sprintId ?? null;
+            fromGoal = feat?.goalId ?? (fromSprint ? (list.sprints ?? []).find((s) => s.id === fromSprint)?.goalId ?? null : null) ?? null;
+          }
+        }
+      } catch {}
       const decision = shouldHandoff({
         config,
         fromPhase,
         toPhase,
         fromTask,
-        toTask: activeTaskKey(dir),
+        toTask: toKeys.task,
+        fromGoal,
+        toGoal: toKeys.goal,
+        fromSprint,
+        toSprint: toKeys.sprint,
+        fromFeature,
+        toFeature: toKeys.feature,
+        fromSubtask: null, // subtask delta is derived from task payload; tracked via fromTask composite + activePlanKeys
+        toSubtask: toKeys.subtask,
         contextRatio: contextRatio(ctx),
       });
       if (!decision.handoff) return false;
@@ -496,6 +543,7 @@ export default function (pi: ExtensionAPI): void {
 
     view = defaultView();
     refreshWidget(ctx);
+    installTerminalShortcuts(ctx);
     const { config } = loadConfig(dir);
     lastBriefPhase = config.currentPhase;
 
@@ -1042,6 +1090,34 @@ export default function (pi: ExtensionAPI): void {
       const lines = gate.checks
         .map((c) => `${c.advisory ? "·" : c.pass ? "+" : "x"} ${c.name}: ${c.detail}`)
         .join("\n");
+      // On a passing gate in autopilot, the tool itself advances the phase
+      // so a run without the continuous loop armed still moves forward when
+      // the agent calls infinity_validate — that's what the brief says will
+      // happen ("PASS → the harness advances") and what stopped research
+      // from ever reaching DEFINE until someone typed "continue".
+      if (gate.overall && !params?.feature && !params?.task) {
+        try {
+          const { needsApproval } = await import("../../src/approval.ts");
+          const fresh = loadConfig(dir).config;
+          if (!needsApproval(fresh, fresh.currentPhase)) {
+            const { advancePhase } = await import("../../src/core/phases.ts");
+            const moved = await advancePhase(dir);
+            if (moved.ok && moved.to) {
+              refreshWidget(ctx as ExtensionContext);
+              const brief = await briefText(dir);
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Gate PASS on ${gate.phase} → advanced ${moved.from} → ${moved.to}\n${lines}\n\n${brief}`,
+                  },
+                ],
+                details: { ...gate, advanced: moved } as unknown as typeof gate,
+              };
+            }
+          }
+        } catch {}
+      }
       return {
         content: [
           {
@@ -1313,7 +1389,7 @@ export default function (pi: ExtensionAPI): void {
       }
 
       const wizard = ctx.hasUI
-        ? await runIntakeWizard({ prompt: prompterFor(ctx), brief: goalFromArgs || null })
+        ? await runIntakeWizard({ prompt: prompterFor(ctx), brief: goalFromArgs || null, models: () => availableModels(ctx) })
         : ({ cancelled: false, plan: unattendedIntake(goalFromArgs || null) } as const);
 
       if (wizard.cancelled) {
@@ -1331,6 +1407,17 @@ export default function (pi: ExtensionAPI): void {
         display: plan.display,
         session: plan.session,
         brief: plan.brief,
+        router: plan.router
+          ? ({
+              enabled: !!plan.router.enabled,
+              byDifficulty: plan.router.byDifficulty as unknown as Record<string, string>,
+              thinkingByDifficulty: plan.router.thinkingByDifficulty as unknown as Record<string, string>,
+              master: plan.router.master ?? "",
+              thinkingMaster: plan.router.thinkingMaster as unknown as string,
+              default: plan.router.default ?? "",
+              thinkingDefault: plan.router.thinkingDefault as unknown as string,
+            } as Partial<import("../../src/modelRouter.ts").RouterConfig>)
+          : undefined,
         force,
       });
       if (!result.ok) {
@@ -2352,24 +2439,58 @@ export default function (pi: ExtensionAPI): void {
   // `alt+` and not `ctrl+`: pi already binds ctrl+j (newline), ctrl+k (delete
   // to line end) and ctrl+o (expand tool output). Shadowing an editor key to
   // scroll a widget would be a worse bug than the one being fixed.
+  //
+  // Shortcuts are editor-focused via registerShortcut, but also handled as a
+  // raw terminal fallback so they work when an overlay or selector has focus
+  // or when the terminal sends the legacy ESC+j sequence that the editor
+  // otherwise swallows as text.
 
-  pi.registerShortcut("alt+j", {
-    description: "infinity-harness: scroll the plan down",
-    handler: async (ctx: ExtensionContext) => moveView(ctx, SCROLL_STEP),
-  });
+  const scrollDown = async (ctx: ExtensionContext): Promise<void> => moveView(ctx, SCROLL_STEP);
+  const scrollUp = async (ctx: ExtensionContext): Promise<void> => moveView(ctx, -SCROLL_STEP);
+  const toggleExpand = async (ctx: ExtensionContext): Promise<void> => {
+    view = { ...view, expanded: !view.expanded };
+    refreshWidget(ctx);
+  };
 
-  pi.registerShortcut("alt+k", {
-    description: "infinity-harness: scroll the plan up",
-    handler: async (ctx: ExtensionContext) => moveView(ctx, -SCROLL_STEP),
-  });
+  pi.registerShortcut("alt+j", { description: "infinity-harness: scroll the plan down", handler: scrollDown });
+  pi.registerShortcut("alt+k", { description: "infinity-harness: scroll the plan up", handler: scrollUp });
+  pi.registerShortcut("alt+o", { description: "infinity-harness: expand or collapse the plan widget", handler: toggleExpand });
+  // Uppercase handling covered by the raw terminal fallback below which
+  // lowercases data before matching; KeyId type only allows lowercase.
 
-  pi.registerShortcut("alt+o", {
-    description: "infinity-harness: expand or collapse the plan widget",
-    handler: async (ctx: ExtensionContext) => {
-      view = { ...view, expanded: !view.expanded };
-      refreshWidget(ctx);
-    },
-  });
+  // Fallback raw input handler — runs even when the editor is not the
+  // focused component (e.g. a selector is open). Must be installed per-
+  // session because onTerminalInput is a UI session thing, not a global.
+  let removeTerminalShortcut: (() => void) | null = null;
+  const installTerminalShortcuts = (ctx: ExtensionContext): void => {
+    try {
+      removeTerminalShortcut?.();
+    } catch {}
+    try {
+      // matchesKey lives in pi-tui but re-exported by pi; use the extension
+      // input raw matcher via string compare for ESC-prefixed alt.
+      removeTerminalShortcut = ctx.ui.onTerminalInput((data: string) => {
+        // Legacy alt+letter is ESC + lower letter. Kitty may send CSI-u; both
+        // are handled by normalising to lookahead then matching via the same
+        // strings registerShortcut uses.
+        const lower = data.toLowerCase();
+        // Fast path: alt+j/k/o as ESC + letter (\x1bj) or higher-plane.
+        if (data === "\x1bj" || data === "\x1bJ" || lower === "\x1bj") {
+          void scrollDown(ctx);
+          return { consume: true };
+        }
+        if (data === "\x1bk" || data === "\x1bK" || lower === "\x1bk") {
+          void scrollUp(ctx);
+          return { consume: true };
+        }
+        if (data === "\x1bo" || data === "\x1bO" || lower === "\x1bo") {
+          void toggleExpand(ctx);
+          return { consume: true };
+        }
+        return undefined;
+      });
+    } catch {}
+  };
 
   pi.registerCommand("infinity:scroll", {
     description: "Move the plan widget — up, down, top, bottom, expand, follow",

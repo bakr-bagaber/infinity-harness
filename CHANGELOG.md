@@ -4,6 +4,36 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] — 2026-08-25
+
+### Added
+
+- **Wizard picks models and thinking per tier + consulting master.** `/infinity:init` now asks which
+  models and thinking levels to use for easy/moderate/difficult tiers and for the consulting master
+  (with `off/minimal/low/medium/high/xhigh/max` plus `inherit`). Persisted in
+  `harness/model-router.json` via `thinkingByDifficulty`/`thinkingMaster`/`thinkingDefault`; exposed
+  via `/infinity:config` → Models.
+
+- **Customizable handoff granularity.** `goal → phase → sprint → feature → task → subtask`.
+  Wizard and `/infinity:config` both offer `goal` (single-session alias for `off`), `phase`
+  (old default), `sprint`, `feature`, **default `task`**, `subtask`, and `off`. A finer choice
+  implies coarser boundaries (picking `task` also hands off on feature/sprint/phase). Fixed:
+  `task`-scoped handoff previously never fired because only `phase` was compared.
+
+- **Dashboard blinks the active branch.** Phase dot `pulse`, current feature/sprint/goal cards and the
+  active task row now pulse while being developed; `prefers-reduced-motion` disables them.
+
+### Fixed
+
+- **Research autopilot stalled after pass.** `infinity_validate` now auto-advances on PASS when
+  the phase's mode is `autopilot` (mirrors `decideNext`), so `research → define` no longer requires
+  manually typing `continue`.
+- **`alt+j/k/o` never fired.** Editor shortcut only runs when the editor has focus; the TUI
+  selector/overlay swallows input. Added `KeyId` shortcuts plus a raw `onTerminalInput`
+  fallback (`\x1bj/k/o`) installed on `session_start`.
+- **Handoff threshold `0.7 → 0.6`.** Long BUILD phases now hand off earlier, under the context
+  window before compaction.
+
 ## [2.4.0] — 2026-08-24
 
 Two settings that were one switch each, and one switch turned out to be the wrong shape for both

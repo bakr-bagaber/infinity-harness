@@ -11,6 +11,14 @@ import { writeJsonAtomic, stripBom } from "./core/fsx.ts";
 export const ROUTER_FILE = "harness/model-router.json";
 export const ROUTER_VERSION = 1;
 
+export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
+export const THINKING_LEVELS: readonly ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+export function isThinkingLevel(v: unknown): v is ThinkingLevel {
+  return typeof v === "string" && (THINKING_LEVELS as readonly string[]).includes(v);
+}
+
 export interface RouterConfig {
   version: number;
   enabled: boolean;
@@ -24,6 +32,10 @@ export interface RouterConfig {
   byTask?: Record<string, string>;
   consultation?: { enabled: boolean; maxPerTask: number; oneStepOnly: boolean; requireExhaustion: boolean };
   budgets?: { maxReworksPerRun: number; maxReplansPerRun: number; maxReviewBounces: number };
+  /** Thinking level per tier, and for master/default. Empty means inherit pi's current level. */
+  thinkingByDifficulty?: Partial<Record<string, ThinkingLevel | "">>;
+  thinkingMaster?: ThinkingLevel | "";
+  thinkingDefault?: ThinkingLevel | "";
 }
 
 /**
@@ -52,6 +64,9 @@ export const DEFAULT_ROUTER: RouterConfig = {
   byTask: {},
   consultation: { enabled: true, maxPerTask: 1, oneStepOnly: true, requireExhaustion: true },
   budgets: { maxReworksPerRun: 3, maxReplansPerRun: 2, maxReviewBounces: 2 },
+  thinkingByDifficulty: { easy: "" as ThinkingLevel | "", moderate: "" as ThinkingLevel | "", difficult: "" as ThinkingLevel | "" } as Partial<Record<string, ThinkingLevel | "">>,
+  thinkingMaster: "" as ThinkingLevel | "",
+  thinkingDefault: "" as ThinkingLevel | "",
 };
 
 export const DIFFICULTY_LADDER: Array<"easy" | "moderate" | "difficult"> = ["easy", "moderate", "difficult"];
@@ -68,9 +83,13 @@ export function saveRouterConfig(projectDir: string, cfg: RouterConfig): void {
   writeJsonAtomic(routerPath(projectDir), cfg);
 }
 
+function normalizeThinking(v: unknown): ThinkingLevel | "" {
+  return typeof v === "string" && (THINKING_LEVELS as readonly string[]).includes(v) ? (v as ThinkingLevel) : "";
+}
+
 export function loadRouterConfig(projectDir?: string): RouterConfig {
   const p = routerPath(projectDir);
-  if (!existsSync(p)) return { ...DEFAULT_ROUTER, byDifficulty: { ...DEFAULT_ROUTER.byDifficulty! }, byPhase: {}, byRole: {}, byFeature: {}, bySprint: {}, byTask: {}, consultation: { ...DEFAULT_ROUTER.consultation! }, budgets: { ...DEFAULT_ROUTER.budgets! } };
+  if (!existsSync(p)) return { ...DEFAULT_ROUTER, byDifficulty: { ...DEFAULT_ROUTER.byDifficulty! }, byPhase: {}, byRole: {}, byFeature: {}, bySprint: {}, byTask: {}, consultation: { ...DEFAULT_ROUTER.consultation! }, budgets: { ...DEFAULT_ROUTER.budgets! }, thinkingByDifficulty: { ...(DEFAULT_ROUTER.thinkingByDifficulty as Record<string, ThinkingLevel | "">) }, thinkingMaster: DEFAULT_ROUTER.thinkingMaster, thinkingDefault: DEFAULT_ROUTER.thinkingDefault };
   try {
     const raw = JSON.parse(stripBom(readFileSync(p, "utf-8")));
     // merge with defaults to ensure fields
@@ -87,8 +106,18 @@ export function loadRouterConfig(projectDir?: string): RouterConfig {
       byTask: raw.byTask ?? {},
       consultation: raw.consultation ?? { ...DEFAULT_ROUTER.consultation! },
       budgets: raw.budgets ?? { ...DEFAULT_ROUTER.budgets! },
+      thinkingByDifficulty: (() => {
+        const cur = raw.thinkingByDifficulty;
+        if (!cur || typeof cur !== "object") return { ...(DEFAULT_ROUTER.thinkingByDifficulty as Record<string, ThinkingLevel | "">) };
+        const out: Record<string, ThinkingLevel | ""> = {};
+        for (const k of DIFFICULTY_LADDER) out[k] = normalizeThinking((cur as Record<string, unknown>)[k]);
+        return out;
+      })(),
+      thinkingMaster: normalizeThinking(raw.thinkingMaster),
+      thinkingDefault: normalizeThinking(raw.thinkingDefault),
     };
     if (!cfg.byDifficulty) cfg.byDifficulty = { ...DEFAULT_ROUTER.byDifficulty! };
+    if (!cfg.thinkingByDifficulty) cfg.thinkingByDifficulty = { ...(DEFAULT_ROUTER.thinkingByDifficulty as Record<string, ThinkingLevel | "">) };
     return cfg;
   } catch {
     return { ...DEFAULT_ROUTER };
@@ -170,14 +199,38 @@ export function consultNext(
   return null;
 }
 
+export function resolveThinking(opts: ResolveOpts = {}): ThinkingLevel | "" {
+  const cfg = loadRouterConfig(opts.projectDir);
+  // Thinking is orthogonal to routing-enabled; when disabled, fall through to default/inherit.
+  const difficulty = opts.difficulty ?? opts.task?.difficulty ?? opts.feature?.difficulty ?? opts.sprint?.difficulty;
+  if (difficulty && cfg.thinkingByDifficulty && (cfg.thinkingByDifficulty as Record<string, ThinkingLevel | "">)[difficulty]) {
+    const v = (cfg.thinkingByDifficulty as Record<string, ThinkingLevel | "">)[difficulty];
+    if (v) return v;
+  }
+  // Master thinking only via consultation path; here just check difficulty default fallback
+  if (cfg.thinkingDefault) return cfg.thinkingDefault;
+  return "";
+}
+
+export function resolveThinkingForConsult(nextDifficulty: string | null, projectDir?: string): ThinkingLevel | "" {
+  const cfg = loadRouterConfig(projectDir);
+  if (!nextDifficulty) return cfg.thinkingMaster ?? "";
+  const v = cfg.thinkingByDifficulty?.[nextDifficulty as string] as ThinkingLevel | "" | undefined;
+  if (v) return v;
+  return "";
+}
+
 /** For widget/remote read-only exposure */
-export function routerSummary(projectDir?: string): { enabled: boolean; default: string; byDifficulty: Record<string, string>; master: string; budgets: RouterConfig["budgets"]; consultation: RouterConfig["consultation"] } {
+export function routerSummary(projectDir?: string): { enabled: boolean; default: string; byDifficulty: Record<string, string>; thinkingByDifficulty: Record<string, ThinkingLevel | "">; master: string; thinkingMaster: ThinkingLevel | ""; thinkingDefault: ThinkingLevel | ""; budgets: RouterConfig["budgets"]; consultation: RouterConfig["consultation"] } {
   const cfg = loadRouterConfig(projectDir);
   return {
     enabled: cfg.enabled,
     default: cfg.default,
     byDifficulty: { ...(cfg.byDifficulty ?? {}) } as Record<string, string>,
+    thinkingByDifficulty: { ...(cfg.thinkingByDifficulty ?? {}) } as Record<string, ThinkingLevel | "">,
     master: cfg.master ?? DEFAULT_ROUTER.master!,
+    thinkingMaster: (cfg.thinkingMaster ?? "") as ThinkingLevel | "",
+    thinkingDefault: (cfg.thinkingDefault ?? "") as ThinkingLevel | "",
     budgets: cfg.budgets,
     consultation: cfg.consultation,
   };

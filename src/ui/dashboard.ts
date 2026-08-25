@@ -549,10 +549,12 @@ function renderFeature(
   sprintName: string | null,
   goalName: string | null,
   display: DisplayPolicy,
+  isCurrent = false,
 ): string {
   const counts = countByStatus(tasks);
   const total = tasks.length;
   const complete = total > 0 && counts.complete === total;
+  const current = isCurrent && !complete;
 
   const chips = [
     sprintName ? `<span class="chip chip-quiet">${esc(sprintName)}</span>` : "",
@@ -578,7 +580,7 @@ function renderFeature(
           .join("")}</ul>`
       : "";
 
-  return `<section class="card feature${complete ? " is-complete" : ""}">
+  return `<section class="card feature${complete ? " is-complete" : ""}${current ? " is-current" : ""}">
   <div class="feature-head">
     <div class="feature-id">
       <h2 class="feature-name">${esc(feature.name ?? feature.id ?? "")}</h2>
@@ -609,14 +611,16 @@ function renderGoalGroup(
   indexByKey: ReadonlyMap<string, number>,
   show: { showGoal: boolean; showSprints: boolean },
   display: DisplayPolicy,
+  activeFeatureId?: string | null,
 ): string {
+  const activeGoal = activeFeatureId ? group.sprints.some((sg) => sg.features.some((f) => f.id === activeFeatureId)) : false;
   const sprints = group.sprints
-    .map((sg) => renderSprintGroup(sg, tasksByFeature, indexByKey, show.showSprints, display))
+    .map((sg) => renderSprintGroup(sg, tasksByFeature, indexByKey, show.showSprints, display, activeFeatureId))
     .join("");
 
   if (!show.showGoal || !group.goal) return sprints;
 
-  return `<details class="tier tier-goal" open>
+  return `<details class="tier tier-goal${activeGoal ? " is-current" : ""}" open>
   <summary class="tier-head">
     <span class="tier-kind">goal</span>
     <span class="tier-name">${esc(group.goal.title ?? group.goal.id ?? "")}</span>
@@ -633,10 +637,12 @@ function renderSprintGroup(
   indexByKey: ReadonlyMap<string, number>,
   showSprints: boolean,
   display: DisplayPolicy,
+  activeFeatureId?: string | null,
 ): string {
+  const activeSprint = activeFeatureId ? group.features.some((f) => f.id === activeFeatureId) : false;
   const features = display.levels.feature
     ? group.features
-        .map((f) => renderFeature(f, tasksByFeature.get(f.id) ?? [], indexByKey, null, null, display))
+        .map((f) => renderFeature(f, tasksByFeature.get(f.id) ?? [], indexByKey, null, null, display, f.id === activeFeatureId))
         .join("")
     : // Hiding the feature card must not hide its tasks: they move up into the
       // sprint, which is what "hide features" has to mean on a page whose whole
@@ -645,7 +651,7 @@ function renderSprintGroup(
 
   if (!showSprints || !group.sprint) return features;
 
-  return `<details class="tier tier-sprint" open>
+  return `<details class="tier tier-sprint${activeSprint ? " is-current" : ""}" open>
   <summary class="tier-head">
     <span class="tier-kind">sprint</span>
     <span class="tier-name">${esc(group.sprint.name ?? group.sprint.id ?? "")}</span>
@@ -965,11 +971,17 @@ table.tasks tr:last-child td{border-bottom:0}
 .task-line{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px}
 .task-desc{overflow-wrap:anywhere}
 .row-complete .task-desc{color:var(--muted)}
-.row.is-active{background:rgba(var(--rgb-active),.07)}
+.row.is-active{background:rgba(var(--rgb-active),.07);animation:taskBlink 1.2s ease-in-out infinite}
 .row.is-active .task-desc{font-weight:600}
 .row.is-active .cell-n{box-shadow:inset 2px 0 0 var(--c-active)}
 .row-rework.is-active{background:rgba(var(--rgb-rework),.08)}
 .row-rework.is-active .cell-n{box-shadow:inset 2px 0 0 var(--c-rework)}
+@keyframes taskBlink{0%,100%{opacity:1}50%{opacity:.72}}
+/* While-developed blinking for the whole current branch */
+.tier.is-current,.feature.is-current{animation:cardPulse 1.4s ease-in-out infinite}
+.tier.is-current .tier-name,.feature.is-current .feature-name{animation:textPulse 1.2s ease-in-out infinite}
+@keyframes cardPulse{0%,100%{box-shadow:var(--shadow)}50%{box-shadow:0 0 0 2px rgba(var(--rgb-accent),.22),var(--shadow)}}
+@keyframes textPulse{0%,100%{opacity:1}50%{opacity:.65}}
 .row-blocked{background:rgba(var(--rgb-blocked),.07)}
 .row-blocked .cell-n{box-shadow:inset 2px 0 0 var(--c-blocked)}
 .deps{color:var(--faint);white-space:nowrap}
@@ -1188,6 +1200,9 @@ export function renderDashboard(state: DashboardState): string {
   // everything.
   const display = normalizeDisplay(state.display ?? defaultDisplay());
   const groups = groupPlan(list);
+  // Which feature/sprint/goal is currently being worked (for blinking).
+  const activeTask = tasks.find((t) => t.status === "in_progress" || t.status === "rework") ?? tasks.find((t) => t.status === "pending") ?? null;
+  const activeFeatureId = activeTask?.featureId ?? null;
   const body = features.length
     ? groups
         .map((group) =>
@@ -1200,6 +1215,7 @@ export function renderDashboard(state: DashboardState): string {
               showSprints: display.levels.sprint && sprints.length > 0,
             },
             display,
+            activeFeatureId,
           ),
         )
         .join("")

@@ -28,7 +28,8 @@ export type SettingType =
   | { kind: "choice"; choices: readonly string[] }
   | { kind: "multi"; choices: readonly string[] }
   /** Resolved at runtime from the models pi has configured. */
-  | { kind: "model" };
+  | { kind: "model" }
+  | { kind: "thinking" };
 
 export type Setting = {
   /** Dotted path within the file. */
@@ -76,11 +77,25 @@ export const SETTINGS: SettingsGroup[] = [
         type: { kind: "model" },
       },
       {
+        path: "thinkingByDifficulty.easy",
+        file: "router",
+        label: "Easy thinking",
+        help: "Thinking level for easy tasks. Empty inherits pi's current level.",
+        type: { kind: "thinking" },
+      },
+      {
         path: "byDifficulty.moderate",
         file: "router",
         label: "Moderate tier",
         help: DIFFICULTY_HELP,
         type: { kind: "model" },
+      },
+      {
+        path: "thinkingByDifficulty.moderate",
+        file: "router",
+        label: "Moderate thinking",
+        help: "Thinking level for moderate tasks. Empty inherits pi's current level.",
+        type: { kind: "thinking" },
       },
       {
         path: "byDifficulty.difficult",
@@ -90,6 +105,13 @@ export const SETTINGS: SettingsGroup[] = [
         type: { kind: "model" },
       },
       {
+        path: "thinkingByDifficulty.difficult",
+        file: "router",
+        label: "Difficult thinking",
+        help: "Thinking level for difficult tasks. Empty inherits pi's current level.",
+        type: { kind: "thinking" },
+      },
+      {
         path: "master",
         file: "router",
         label: "Master (consultation only)",
@@ -97,11 +119,25 @@ export const SETTINGS: SettingsGroup[] = [
         type: { kind: "model" },
       },
       {
+        path: "thinkingMaster",
+        file: "router",
+        label: "Master thinking",
+        help: "Thinking level for the master consultation model.",
+        type: { kind: "thinking" },
+      },
+      {
         path: "default",
         file: "router",
         label: "Default",
         help: "Used when nothing more specific matches. Empty means pi's current model.",
         type: { kind: "model" },
+      },
+      {
+        path: "thinkingDefault",
+        file: "router",
+        label: "Default thinking",
+        help: "Fallback thinking level when no tier-specific level is set.",
+        type: { kind: "thinking" },
       },
       {
         path: "consultation.enabled",
@@ -317,8 +353,8 @@ export const SETTINGS: SettingsGroup[] = [
         path: "session.handoff",
         file: "config",
         label: "Fresh session",
-        help: "phase: each phase starts clean · task: cleanest context, best with small models · off: one session for the whole run.",
-        type: { kind: "choice", choices: ["off", "phase", "task"] },
+        help: "goal: one session · phase: per phase (old) · sprint/feature: when plan grouping changes · task: every task (default) · subtask: every subtask. Coarser levels still fire.",
+        type: { kind: "choice", choices: ["off", "goal", "phase", "sprint", "feature", "task", "subtask"] },
       },
       {
         path: "session.contextThreshold",
@@ -538,6 +574,8 @@ export function formatValue(setting: Setting, value: unknown): string {
       return value ? "on" : "off";
     case "model":
       return typeof value === "string" && value.trim() ? value : "(pi's current model)";
+    case "thinking":
+      return typeof value === "string" && value.trim() ? value : "(inherit)";
     case "text":
       return typeof value === "string" && value.trim() ? value : "(not set)";
     case "multi":
@@ -583,6 +621,8 @@ export function parseDuration(input: string): number | null {
 
 export type ValidationResult = { ok: true; value: unknown } | { ok: false; error: string };
 
+export const THINKING_CHOICES = ["(inherit)", "off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
 /** Coerce and bounds-check a raw answer for `setting`. */
 export function coerce(setting: Setting, raw: string): ValidationResult {
   const t = setting.type;
@@ -595,6 +635,13 @@ export function coerce(setting: Setting, raw: string): ValidationResult {
       if (t.min !== undefined && n < t.min) return { ok: false, error: `must be at least ${t.min}` };
       if (t.max !== undefined && n > t.max) return { ok: false, error: `must be at most ${t.max}` };
       return { ok: true, value: n };
+    }
+    case "thinking": {
+      const v = raw.trim();
+      if (!v || v === "(inherit)") return { ok: true, value: "" };
+      const allowed = new Set(THINKING_CHOICES.slice(1) as readonly string[]);
+      if (!allowed.has(v)) return { ok: false, error: `must be one of: ${THINKING_CHOICES.join(", ")}` };
+      return { ok: true, value: v };
     }
     case "text":
     case "model": {

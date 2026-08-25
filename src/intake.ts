@@ -53,6 +53,16 @@ export type IntakeAnswers = {
   handoff?: SessionPolicy["handoff"];
   /** What the surfaces should draw. Defaults to the `focus` template. */
   display?: DisplayPolicy;
+  /** Model routing for difficulty tiers and consulting. */
+  router?: {
+    enabled: boolean;
+    byDifficulty: Record<string, string>;
+    thinkingByDifficulty?: Partial<Record<string, string>>;
+    master?: string;
+    thinkingMaster?: string;
+    default?: string;
+    thinkingDefault?: string;
+  };
 };
 
 export type IntakePlan = {
@@ -66,6 +76,7 @@ export type IntakePlan = {
   approvals: ApprovalPolicy;
   session: SessionPolicy;
   display: DisplayPolicy;
+  router?: IntakeAnswers["router"];
   /** What the human should be told about what they just chose. */
   summary: string;
   /** Things that will bite later if left as they are. */
@@ -100,10 +111,10 @@ export function planIntake(answers: IntakeAnswers): IntakePlan {
   const phases = normalizePhases(workflow.phases);
   const phaseModes = normalizeModes(workflow.modes, phases);
 
-  const handoff = answers.handoff ?? "phase";
+  const handoff = answers.handoff ?? "task";
   const session: SessionPolicy = {
     handoff,
-    contextThreshold: handoff === "off" ? 0 : 0.7,
+    contextThreshold: handoff === "off" ? 0 : 0.6,
     carryNotes: true,
   };
 
@@ -152,6 +163,7 @@ export function planIntake(answers: IntakeAnswers): IntakePlan {
     },
     session,
     display,
+    router: answers.router,
     summary: summarize(workflow, phases, phaseModes, session, display, brief),
     warnings,
   };
@@ -217,19 +229,39 @@ export const HANDOFF_QUESTION: Question = {
   title: "When should the run start a fresh session?",
   options: [
     {
+      value: "goal",
+      label: "per goal — one session for the whole run",
+      help: "The old single-session run. Every task accumulates context until compaction.",
+    },
+    {
       value: "phase",
-      label: "every phase (recommended)",
-      help: "Each phase starts clean, working from the brief. Keeps the context small on long runs.",
+      label: "every phase",
+      help: "Old default. Each phase starts clean from the brief.",
+    },
+    {
+      value: "sprint",
+      label: "every sprint",
+      help: "New session whenever the active sprint changes (or phase).",
+    },
+    {
+      value: "feature",
+      label: "every feature",
+      help: "New session on each feature boundary (and sprint/phase).",
     },
     {
       value: "task",
-      label: "every task",
-      help: "The cleanest context per unit of work. Best with small models; costs one extra brief per task.",
+      label: "every task (recommended)",
+      help: "Each task gets a clean session. Best isolation; one extra brief per task.",
+    },
+    {
+      value: "subtask",
+      label: "every subtask",
+      help: "Finest grain — each subtask gets a fresh session. Most isolation, most churn.",
     },
     {
       value: "off",
-      label: "never — one long session",
-      help: "The old behaviour. The context grows for the whole run and compaction takes over.",
+      label: "never — alias for per goal",
+      help: "Same as per goal — one long session without fresh starts.",
     },
   ],
 };

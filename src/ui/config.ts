@@ -166,6 +166,13 @@ async function editSetting(setting: Setting, options: ConfigMenuOptions): Promis
       raw = picked;
       break;
     }
+    case "thinking": {
+      const choices = ["(inherit)", "off", "minimal", "low", "medium", "high", "xhigh", "max"];
+      const picked = await prompt.select(`${setting.label} — ${setting.help}`, [...choices, BACK]);
+      if (picked === undefined || picked === BACK) return false;
+      raw = picked;
+      break;
+    }
     case "model": {
       raw = await pickModel(setting, options, typeof current === "string" ? current : "");
       if (raw === undefined) return false;

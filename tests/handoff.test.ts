@@ -57,11 +57,16 @@ const signals = (over: Partial<Parameters<typeof shouldHandoff>[0]> = {}) => ({
   assert.equal(phase.handoff && phase.reason, "phase");
   assert.match(phase.handoff ? phase.detail : "", /BUILD → VERIFY/);
 
-  // The default policy is per-phase, so a new task inside a phase is not one.
+  // Per-phase should ignore a task change; task (now default) should not.
   assert.equal(
-    shouldHandoff(signals({ toTask: "feature-001/task-002" })).handoff,
+    shouldHandoff(signals({ config: config({ handoff: "phase" }), toTask: "feature-001/task-002" })).handoff,
     false,
     "per-phase policy ignores a task change",
+  );
+  assert.equal(
+    shouldHandoff(signals({ toTask: "feature-001/task-002" })).handoff,
+    true,
+    "default is per-task now, so a task change does handoff",
   );
 
   const perTask = shouldHandoff(
