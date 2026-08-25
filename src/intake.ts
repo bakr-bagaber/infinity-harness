@@ -51,6 +51,8 @@ export type IntakeAnswers = {
   brief: string;
   /** Session handoff policy. Defaults to a fresh session per phase. */
   handoff?: SessionPolicy["handoff"];
+  parallelAt?: import("./core/types.ts").HandoffGranularity;
+  maxWorkers?: number;
   /** What the surfaces should draw. Defaults to the `focus` template. */
   display?: DisplayPolicy;
   /** Model routing for difficulty tiers and consulting. */
@@ -75,6 +77,7 @@ export type IntakePlan = {
   /** Kept in step with `phaseModes` so a 2.3 config read by a 2.3 tool still works. */
   approvals: ApprovalPolicy;
   session: SessionPolicy;
+  execution: import("./core/types.ts").ExecutionPolicy;
   display: DisplayPolicy;
   router?: IntakeAnswers["router"];
   /** What the human should be told about what they just chose. */
@@ -117,6 +120,8 @@ export function planIntake(answers: IntakeAnswers): IntakePlan {
     contextThreshold: handoff === "off" ? 0 : 0.6,
     carryNotes: true,
   };
+  const parallelAt = answers.parallelAt ?? "task";
+  const maxWorkers = Math.max(1, Math.min(16, Number.isFinite(answers.maxWorkers as number) ? Math.floor(answers.maxWorkers as number) : 3));
 
   const display = normalizeDisplay(answers.display ?? defaultDisplay());
   const brief = answers.brief?.trim() ? answers.brief.trim() : null;
@@ -162,6 +167,7 @@ export function planIntake(answers: IntakeAnswers): IntakePlan {
       plan: phaseModes.plan === "copilot",
     },
     session,
+    execution: { parallelAt, maxWorkers },
     display,
     router: answers.router,
     summary: summarize(workflow, phases, phaseModes, session, display, brief),

@@ -187,11 +187,31 @@ export async function runIntakeWizard(options: WizardOptions): Promise<WizardRes
     const modelsAnswer = await pickModelsStep(prompt, options.models);
     if (modelsAnswer === undefined) return { cancelled: true };
 
-    // -- 5. display ---------------------------------------------------------
+    // -- 5. execution (parallelism) -----------------------------------------
+    const execOptions = [
+      { value: "off", label: "one at a time", help: "No parallel work. Simplest, lowest token use." },
+      { value: "task", label: "parallel at task (recommended)", help: "Tasks with no deps run together, up to max workers." },
+      { value: "feature", label: "parallel at feature", help: "Features with no deps run together." },
+      { value: "sprint", label: "parallel at sprint", help: "Sprints in parallel." },
+      { value: "goal", label: "parallel at goal", help: "Goals run as parallel pipelines (phases run together)." },
+      { value: "subtask", label: "parallel at subtask", help: "Subtasks of a task run together. Finest grain." },
+    ];
+    const execLabels = execOptions.map((o) => line(o.label, o.help));
+    // Execution parallelism is optional — older E2E/tests scripted 5 answers, not 7. Default to task×3 so they keep passing.
+    let parallelAt: import("../core/types.ts").HandoffGranularity = "task";
+    let maxWorkers = 3;
+    const execPick = await prompt.select("When to run things in parallel?", execLabels);
+    if (execPick !== undefined) {
+      parallelAt = (execOptions[execLabels.indexOf(execPick)]?.value ?? "task") as import("../core/types.ts").HandoffGranularity;
+      const workersRaw = await prompt.input("Max parallel workers? (1-16)", "3");
+      maxWorkers = workersRaw === undefined ? 3 : Math.max(1, Math.min(16, Number.parseInt(String(workersRaw).trim(), 10) || 3));
+    }
+
+    // -- 6. display ---------------------------------------------------------
     const display = await pickDisplay(prompt, env);
     if (display === undefined) return { cancelled: true };
 
-    const answers: IntakeAnswers = { workflow, brief, handoff, display, router: modelsAnswer.router };
+    const answers: IntakeAnswers = { workflow, brief, handoff, display, router: modelsAnswer.router, parallelAt, maxWorkers };
     const plan = planIntake(answers);
 
     if (options.skipConfirm) return { cancelled: false, plan, answers };

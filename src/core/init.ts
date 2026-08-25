@@ -160,6 +160,7 @@ export type InitOptions = {
   display?: HarnessConfig["display"];
   /** Session-handoff policy. Defaults to a fresh session per phase. */
   session?: Partial<HarnessConfig["session"]>;
+  execution?: Partial<HarnessConfig["execution"]>;
   /** What the human said they want built. Recorded, and read by the first brief. */
   brief?: string | null;
   /** Model routing for difficulty tiers and consulting. */
@@ -220,6 +221,7 @@ export function initHarness(targetDir: string, options: InitOptions = {}): InitR
   config.commands = { ...stack.commands, ...stripUndefined(options.commands ?? {}) };
   config.approvals = { ...config.approvals, ...stripUndefined(options.approvals ?? {}) };
   config.session = { ...config.session, ...stripUndefined(options.session ?? {}) };
+  config.execution = { ...config.execution, ...stripUndefined(options.execution ?? {}) };
   // Every enabled phase gets a mode, so a phase list and a mode map cannot
   // disagree about which phases exist. A caller that still passes the 2.3
   // `approvals` shape and no modes gets what it asked for rather than silently

@@ -1522,6 +1522,7 @@ export default function (pi: ExtensionAPI): void {
         workflow: plan.workflow,
         display: plan.display,
         session: plan.session,
+        execution: { parallelAt: (plan as { execution?: { parallelAt?: import("../../src/core/types.ts").HandoffGranularity } }).execution?.parallelAt ?? "task", maxWorkers: (plan as { execution?: { maxWorkers?: number } }).execution?.maxWorkers ?? 3 },
         brief: plan.brief,
         router: plan.router
           ? ({

@@ -3314,6 +3314,8 @@ async function scenarioColdStart() {
       "reconcile Stripe payouts against the ledger",
       /every phase/,
       /no \u2014 use pi/,  // routing: off for this harness
+      /parallel at task/,  // execution: parallel task
+      "3",  // max workers
       /^focus/,
       /start with these settings/,
     ]);
@@ -3360,6 +3362,8 @@ async function scenarioColdStart() {
       "a nightly reconciliation job",
       /every phase/,
       /no — use pi/,  // routing: off for this harness
+      /parallel at task/,
+      "3",
       /^overview/,
       /start with these settings/,
     ]);
@@ -3404,6 +3408,8 @@ async function scenarioColdStart() {
         "a client project",
         /every phase/,
         /no \u2014 use pi/,  // routing: off for this harness
+        /parallel at task/,  // execution: parallel task
+        "3",  // max workers
         /^everything/,
         /start with these settings/,
       ]);
@@ -3433,6 +3439,8 @@ async function scenarioColdStart() {
         "the next one",
         /every phase/,
         /no — use pi/,
+        /parallel at task/,
+        "3",
         /^focus/,
         /start with these settings/,
       ]);
@@ -3457,6 +3465,8 @@ async function scenarioColdStart() {
       "a URL shortener",
       /every phase/,
       /no \u2014 use pi/,  // routing: off for this harness
+      /parallel at task/,  // execution: parallel task
+      "3",  // max workers
       /^focus/,
       /start with these settings/,
     ]);
@@ -3482,6 +3492,8 @@ async function scenarioColdStart() {
       "",
       /every phase/,
       /no \u2014 use pi/,  // routing: off for this harness
+      /parallel at task/,  // execution: parallel task
+      "3",  // max workers
       /^focus/,
       /start with these settings/,
     ]);
@@ -3627,6 +3639,8 @@ async function scenarioColdStart() {
       "reconcile Stripe payouts against the ledger",
       /every phase/,
       /no \u2014 use pi/,  // routing: off for this harness
+      /parallel at task/,  // execution: parallel task
+      "3",  // max workers
       /^focus/,
       /start with these settings/,
     ]);
