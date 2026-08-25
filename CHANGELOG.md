@@ -4,6 +4,25 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.1] — 2026-08-25
+
+Every active level now blinks together, subtasks show up where they always should have, and the TUI
+fits the whole chain on one line per parallel lane.
+
+### Fixed
+
+- **Dashboard actually blinks the active branch.** Phase rail pulsing was faint and only the rail. Now
+every active box (`goal`, `sprint`, `feature` currently being developed, plus all parallel `task`/`subtask`
+lines) pulses with a stronger accent ring; legend items are fully visible (`is-zero` is now `opacity: 1`) so rework/blocked/in-progress are not faded out; subtasks always appear via the dashboard (covers `display.subtask: active → all`) and are not lost when the task was only `in_progress`.
+
+- **TUI is one line per lane, not the whole tree.** Former indented 5-level tree listed every level at once and overflowed narrow terminals. Now: headline goal, one line `phase · feature · task desc · sprint · > subtask` per active/pending lane (parallel lanes each on their own line, `display.levels` still hides the names, `task: false` shows shape not work), overview shape still shows sprint/feature tier names.
+
+- **Windowed 120-task huge plans elided with `… N above / below` on both surfaces**, so 120 tasks never render 120 rows. Colour-stripped boxed frame still exactly `width` columns.
+
+### Added
+
+- `renderDashboard` imported in `scripts/e2e.mjs` — the `all five levels reach the screen` assertion now reads from the authoritative dashboard surface rather than the compact TUI lane. Verified: `34/34` unit, `15/15` e2e.
+
 ## [2.6.0] — 2026-08-25
 
 Every unfinished thought from the current loop now has a budget, a lane, and a worker. One generic

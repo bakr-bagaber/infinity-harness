@@ -500,15 +500,19 @@ function depLabel(task: FlatTask, indexByKey: ReadonlyMap<string, number>): stri
  * of the widget rather than the place you go for the full picture.
  */
 function renderSubtasks(task: FlatTask, mode: DisplayPolicy["levels"]["subtask"], active: boolean): string {
-  if (mode === "none" || (mode === "active" && !active)) return "";
+  // Dashboard always shows subtasks when any exist — it's the full-detail view.
+  // The display.subtask switch is honoured as "none" = hide, otherwise show (both "active" and "all" show).
+  if (mode === "none") return "";
   const subs = Array.isArray(task.subtasks) ? task.subtasks : [];
   if (subs.length === 0) return "";
   const items = subs
     .map((s) => {
+      const st = safeSubtaskStatus(s?.status);
       const glyph =
-        s.status === "complete" ? GLYPHS.subDone : s.status === "in_progress" ? GLYPHS.subActive : GLYPHS.subPending;
-      const cls = s.status === "complete" ? "complete" : s.status === "in_progress" ? "active" : "pending";
-      return `<li class="sub sub-${cls}"><span class="sub-glyph" aria-hidden="true">${esc(glyph)}</span>${esc(s.title ?? "")}</li>`;
+        st === "complete" ? GLYPHS.subDone : st === "in_progress" ? GLYPHS.subActive : GLYPHS.subPending;
+      const cls = st === "complete" ? "complete" : st === "in_progress" ? "active" : "pending";
+      const isActive = st === "in_progress";
+      return `<li class="sub sub-${cls}${isActive ? " is-active" : ""}"><span class="sub-glyph" aria-hidden="true">${esc(glyph)}</span>${esc(s.title ?? "")}</li>`;
     })
     .join("");
   return `<ul class="subs">${items}</ul>`;
@@ -554,7 +558,9 @@ function renderFeature(
   const counts = countByStatus(tasks);
   const total = tasks.length;
   const complete = total > 0 && counts.complete === total;
-  const current = isCurrent && !complete;
+  // active anywhere in this branch: any in_progress/rework or unblocked pending.
+  const hasActiveTask = tasks.some((t) => t.status === "in_progress" || t.status === "rework");
+  const current = (isCurrent || hasActiveTask) && !complete;
 
   const chips = [
     sprintName ? `<span class="chip chip-quiet">${esc(sprintName)}</span>` : "",
@@ -613,7 +619,10 @@ function renderGoalGroup(
   display: DisplayPolicy,
   activeFeatureId?: string | null,
 ): string {
-  const activeGoal = activeFeatureId ? group.sprints.some((sg) => sg.features.some((f) => f.id === activeFeatureId)) : false;
+  // active if any task anywhere in this goal is active.
+  const activeGoal = group.sprints.some((sg) =>
+    sg.features.some((f) => (tasksByFeature.get(f.id) ?? []).some((t) => t.status === "in_progress" || t.status === "rework"))
+  );
   const sprints = group.sprints
     .map((sg) => renderSprintGroup(sg, tasksByFeature, indexByKey, show.showSprints, display, activeFeatureId))
     .join("");
@@ -639,7 +648,7 @@ function renderSprintGroup(
   display: DisplayPolicy,
   activeFeatureId?: string | null,
 ): string {
-  const activeSprint = activeFeatureId ? group.features.some((f) => f.id === activeFeatureId) : false;
+  const activeSprint = group.features.some((f) => (tasksByFeature.get(f.id) ?? []).some((t) => t.status === "in_progress" || t.status === "rework"));
   const features = display.levels.feature
     ? group.features
         .map((f) => renderFeature(f, tasksByFeature.get(f.id) ?? [], indexByKey, null, null, display, f.id === activeFeatureId))
@@ -888,8 +897,8 @@ body{
 .seg-blocked{background:var(--c-blocked)}
 
 .legend{display:flex;flex-wrap:wrap;gap:6px 18px;list-style:none;margin:0;padding:0;font-size:12px}
-.legend-item{display:flex;align-items:center;gap:6px;color:var(--muted)}
-.legend-item.is-zero{opacity:.42}
+.legend-item{display:flex;align-items:center;gap:6px;color:var(--muted);opacity:1}
+.legend-item.is-zero{opacity:1}
 .legend-dot{width:8px;height:8px;border-radius:2px;flex:none}
 .legend-n{font-weight:650;color:var(--text);font-variant-numeric:tabular-nums}
 .legend-complete .legend-dot{background:var(--c-complete)}
@@ -977,11 +986,12 @@ table.tasks tr:last-child td{border-bottom:0}
 .row-rework.is-active{background:rgba(var(--rgb-rework),.08)}
 .row-rework.is-active .cell-n{box-shadow:inset 2px 0 0 var(--c-rework)}
 @keyframes taskBlink{0%,100%{opacity:1}50%{opacity:.72}}
-/* While-developed blinking for the whole current branch */
-.tier.is-current,.feature.is-current{animation:cardPulse 1.4s ease-in-out infinite}
-.tier.is-current .tier-name,.feature.is-current .feature-name{animation:textPulse 1.2s ease-in-out infinite}
-@keyframes cardPulse{0%,100%{box-shadow:var(--shadow)}50%{box-shadow:0 0 0 2px rgba(var(--rgb-accent),.22),var(--shadow)}}
-@keyframes textPulse{0%,100%{opacity:1}50%{opacity:.65}}
+/* While-developed: the whole active branch pulses — every active box, not just one feature. */
+.tier.is-current,.feature.is-current{animation:cardPulse 0.9s ease-in-out infinite; border-color:var(--c-accent)!important; box-shadow:0 0 0 2px rgba(var(--rgb-accent),.35), var(--shadow)}
+.tier.is-current .tier-name,.feature.is-current .feature-name{color:var(--t-accent)}
+.row.is-active{animation:taskBlink 0.9s ease-in-out infinite; outline:2px solid var(--c-active); outline-offset:-2px}
+@keyframes cardPulse{0%,100%{box-shadow:0 0 0 2px rgba(var(--rgb-accent),.35),var(--shadow); border-color:var(--c-accent)}50%{box-shadow:0 0 0 5px rgba(var(--rgb-accent),.14),var(--shadow); border-color:rgba(var(--rgb-accent),.55)}}
+@keyframes textPulse{0%,100%{opacity:1}50%{opacity:.78}}
 .row-blocked{background:rgba(var(--rgb-blocked),.07)}
 .row-blocked .cell-n{box-shadow:inset 2px 0 0 var(--c-blocked)}
 .deps{color:var(--faint);white-space:nowrap}

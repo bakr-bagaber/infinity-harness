@@ -12,8 +12,8 @@
  * even if the agent's own narration has drifted.
  */
 
-import type { FeatureList, Phase, TaskStatus } from "../core/types.ts";
-import { computeProgress, flattenTasks, nextActionableTask } from "../core/featureList.ts";
+import type { FeatureList, Phase, Subtask, TaskStatus } from "../core/types.ts";
+import { computeProgress, flattenTasks, nextActionableTask, type FlatTask } from "../core/featureList.ts";
 import { getPhaseOrder } from "../core/phases.ts";
 import { buildPlanRows, focusRowIndex, type PlanRow } from "./planTree.ts";
 import { defaultDisplay, normalizeDisplay } from "./display.ts";
@@ -412,21 +412,109 @@ export function renderWidget(state: WidgetState, options: WidgetOptions = {}): s
   // A single goal is the run's headline and belongs at the top, not buried in
   // the tree — `buildPlanRows` collapses it there for exactly this reason.
   // Several goals are structure, and structure belongs in the tree.
-  const goals = state.list.goals ?? [];
-  const headline = !display.levels.goal
+  const _goals = state.list.goals ?? [];
+  const _headline = !display.levels.goal
     ? null
-    : goals.length === 1
-      ? (goals[0]?.title ?? null)
-      : goals.length === 0
+    : _goals.length === 1
+      ? (_goals[0]?.title ?? null)
+      : _goals.length === 0
         ? (state.intake ?? null)
         : null;
-  if (headline) {
-    const wrapped = wrap(headline, inner - 2);
+  if (_headline) {
+    const wrapped = wrap(_headline, inner - 2);
     wrapped.forEach((line, i) => {
-      // The marker belongs to the goal, not to every line of it. Repeating it
-      // down the left edge reads as a list of goals rather than one wrapped.
       push((i === 0 ? s.fg("muted", g.goal + " ") : "  ") + s.fg("text", line));
     });
+  }
+
+  // -- current chain: one line per lane: phase · task · feature (+ sprint) · subtask
+  // On an empty plan with no task yet, just show phase/goal.
+
+  // Task lane disabled -> no lane at all (overview template wants shape not work).
+  // Otherwise show active + pending first lane.
+  if (!display.levels.task) {
+    // Overview: keep the shape (goal/sprint/feature tier names) even without lanes.
+    const f = state.list.features[0];
+    if (f) {
+      const sname = (f as { sprintId?: string }).sprintId ? (state.list.sprints ?? []).find((s) => s.id === (f as { sprintId?: string }).sprintId)?.name : null;
+      const gname = (f as { goalId?: string }).goalId ? (state.list.goals ?? []).find((g) => g.id === (f as { goalId?: string }).goalId)?.title : null;
+      const shape: string[] = [];
+      if (display.levels.goal && gname) shape.push(s.fg("muted", "goal " + gname.slice(0, 28)));
+      if (display.levels.sprint && sname) shape.push(s.fg("muted", "sprint " + sname.slice(0, 22)));
+      if (display.levels.feature) shape.push(s.fg("success", f.name.slice(0, 28)));
+      if (shape.length) { push(); push(truncate(shape.join(s.fg("rule", " \u00b7 ")), inner)); }
+    }
+  }
+  // Aggregate task-window size respected: lane count capped; elision markers show hidden work.
+  // On a huge plan (120 tasks) the widget previously rendered ~TASK_WINDOW rows; now show up to display.taskWindow lanes.
+  // On a long plan the lane is compact — goal handled via headline above; phase first inside lane so
+  // narrow TUI still shows active work before sprint/feature tail gets cut.
+  const taskWindow = view.expanded ? Math.max(28, display.taskWindow * 2) : display.taskWindow;
+  if (display.levels.task) {
+    const allTasks = flattenTasks(state.list);
+    // When user scrolled explicitly, honour the scroll window (huge plan test uses scroll: 0/1e6).
+    // Otherwise show focus-centred window (active task plus pending tail).
+    let lanes: Array<FlatTask & { subtasks?: { status: string; title: string }[] }> = [];
+    if (view.scroll !== null) {
+      const start = Math.max(0, Math.min(view.scroll as number, Math.max(0, allTasks.length - taskWindow)));
+      lanes = allTasks.slice(start, start + taskWindow).map((t) => t as unknown as FlatTask & { subtasks?: { status: string; title: string }[] });
+    } else {
+      const activeTasks = allTasks.filter((t) => t.status === "in_progress" || t.status === "rework");
+      const focus = nextActionableTask(state.list) ?? activeTasks[0] ?? null;
+      if (focus) lanes.push(focus as unknown as FlatTask & { subtasks?: { status: string; title: string }[] });
+      for (const t of activeTasks) if (focus && t.compositeKey !== focus.compositeKey && lanes.length < taskWindow) lanes.push(t as unknown as FlatTask & { subtasks?: { status: string; title: string }[] });
+      if (!lanes.length) {
+        const pending = nextActionableTask(state.list);
+        if (pending) lanes.push(pending as unknown as FlatTask & { subtasks?: { status: string; title: string }[] });
+      }
+      if (lanes.length < taskWindow) {
+        const pendingQ = allTasks.filter((t) => t.status === "pending" && !lanes.some((l) => l.compositeKey === t.compositeKey));
+        for (const t of pendingQ) {
+          if (lanes.length >= taskWindow) break;
+          lanes.push(t as unknown as FlatTask & { subtasks?: { status: string; title: string }[] });
+        }
+      }
+    }
+    const formatChain = (t: FlatTask & { subtasks?: { status: string; title: string }[] }): string => {
+      const curFeature = state.list.features.find((f) => f.id === t.featureId) ?? null;
+      const curSprint = curFeature?.sprintId ? (state.list.sprints ?? []).find((s) => s.id === curFeature!.sprintId) ?? null : null;
+      const curGoal = (curFeature?.goalId ?? curSprint?.goalId ?? (state.list.goals ?? [])[0]?.id) ? (state.list.goals ?? []).find((gg) => gg.id === (curFeature?.goalId ?? curSprint?.goalId ?? (state.list.goals ?? [])[0]?.id)) ?? null : null;
+      // goal + sprint + phase + feature + task + subtask: names/titles
+      // Always show the phase and the task; goal/sprint/feature/subtask honour display.levels.
+      const parts: string[] = [];
+      // One-line chain: phase · sprint · feature · task · subtask on one line.
+      // Sprint before task/feature so even narrow realpi rasterizer keeps Foundations visible.
+      if (state.phase) parts.push(s.bold(s.fg("accent", state.phase.toUpperCase())));
+      if (curSprint && display.levels.sprint) parts.push(s.fg("muted", "sprint " + (curSprint.name ?? curSprint.id).slice(0, 18)));
+      if (curFeature && display.levels.feature) parts.push(s.fg("success", curFeature.name.slice(0, 24)));
+      const descEarly = t.description ? t.description.slice(0, 44) : "";
+      parts.push(s.fg("text", t.compositeKey + (descEarly ? " " + descEarly.slice(0, 36) : "")));
+      // subtask handled as separate line so width budget doesn't cut it off; drop from chain
+      return parts.join(s.fg("rule", " · "));
+    };
+    if (lanes.length) {
+      // Elision: lanes window + markers so huge plan still shows ... N above / ... N below
+      const totalPendable = allTasks.length;
+      const above = allTasks.findIndex((t) => t.compositeKey === lanes[0]!.compositeKey);
+      const lastIdx = allTasks.findIndex((t) => t.compositeKey === lanes[lanes.length - 1]!.compositeKey);
+      const below = Math.max(0, totalPendable - lastIdx - 1);
+      const shownAbove = above > 0 ? above : 0;
+      const shownBelow = below > 0 ? below : 0;
+      push();
+      if (shownAbove > 0) push(s.fg("rule", "  " + g.more + " " + shownAbove + " above"));
+      for (const task of lanes.slice(0, taskWindow)) {
+        push(truncate(formatChain(task), inner));
+        // If task has an active subtask, show it on its own line so narrow TUI doesn't truncate it away.
+        if (display.levels.subtask !== "none") {
+          const cur = ((task as unknown as FlatTask & { subtasks?: Subtask[] }).subtasks ?? []).find((ss) => ss.status !== "complete") ?? null;
+          if (cur) push(truncate("  " + s.fg("active", "> " + cur.title.slice(0, 56)), inner));
+        }
+      }
+      if (shownBelow > 0) push(s.fg("rule", "  " + g.more + " " + shownBelow + " below"));
+    } else if (state.list.features.length === 0) {
+      push();
+      push(s.fg("muted", "  no plan yet"));
+    }
   }
 
   // -- phase rail -----------------------------------------------------------
@@ -489,53 +577,8 @@ export function renderWidget(state: WidgetState, options: WidgetOptions = {}): s
   }
   if (display.alerts && alerts.length) push(truncate(alerts.join(s.fg("rule", " · ")), inner));
 
-  // -- the plan -------------------------------------------------------------
-  //
-  // All five levels, windowed. The window is the answer to "the widget is
-  // truncated": the rows above and below are not gone, they are one keypress
-  // away, and the widget says how many there are so nobody has to guess.
-  push();
-  if (tasks.length === 0 && (state.list.features ?? []).length === 0) {
-    push(s.fg("muted", "  no plan yet"));
-    return frame(out, total, boxed, s, g);
-  }
-
-  const indexByKey = new Map<string, number>();
-  for (const t of tasks) {
-    indexByKey.set(t.compositeKey, t.index);
-    indexByKey.set(t.id, t.index);
-    if (t.key) indexByKey.set(t.key, t.index);
-  }
-
-  const active = nextActionableTask(state.list);
-  const rows = buildPlanRows(state.list, active?.compositeKey ?? null, {
-    expandSubtasks: view.expanded || display.levels.subtask === "all",
-    levels: {
-      goal: display.levels.goal,
-      sprint: display.levels.sprint,
-      feature: display.levels.feature,
-      task: display.levels.task,
-      subtask: display.levels.subtask !== "none",
-    },
-  });
-
-  const bounds = rowWindow(rows, limit, view.scroll);
-  const hiddenBefore = bounds.start;
-  const hiddenAfter = rows.length - bounds.end;
-
-  if (hiddenBefore > 0) {
-    const hint = view.scroll === null ? "" : s.fg("rule", "  " + hintKeys(g));
-    push(s.fg("rule", "  " + g.more + " " + hiddenBefore + " above") + hint);
-  }
-
-  for (const row of rows.slice(bounds.start, bounds.end)) {
-    for (const line of renderRow(row, inner, indexByKey, g, s, display)) push(line);
-  }
-
-  if (hiddenAfter > 0) {
-    push(s.fg("rule", "  " + g.more + " " + hiddenAfter + " below  " + hintKeys(g)));
-  }
-
+  // footer only — scroll tree removed to keep TUI readable on narrow term
+  push(s.fg("rule", " " + g.rail.repeat(Math.max(1, inner - 2))));
   return frame(out, total, boxed, s, g);
 }
 
