@@ -329,6 +329,10 @@ function byName(checks: readonly CheckResult[], name: string): CheckResult {
 // ── phase → check mapping ──────────────────────────────────────────────────
 {
   assert.deepEqual(getPhaseCheckNames("init"), ["gitrepo", "configexists"]);
+  // Seeded tasks are visible as progress (dashboard + TUI lane) and block via phase-scoped tasks-complete
+  // in the loop, not as a hard gate — so research remains researchdoc/doc, define stays featurecriteria+skillsload
+  // and the synthetic converge walk is not frozen by pending seeded tasks.
+  assert.match(getPhaseCheckNames("research").join(","), /researchdoc/);
   assert.deepEqual(getPhaseCheckNames("define"), ["featurecriteria", "skillsload"]);
   assert.ok(getPhaseCheckNames("review").includes("skillsload"), "review re-checks the skills too");
   assert.deepEqual(getPhaseCheckNames("build"), ["lint", "tests", "coverage", "noplaceholders", "taskscomplete"]);
@@ -350,7 +354,9 @@ function byName(checks: readonly CheckResult[], name: string): CheckResult {
     assert.match(byName(gate.checks, "feature-criteria").detail, /without criteria: feature-001/);
 
     const planGate = await runChecks(dir, "plan", { record: false });
-    assert.deepEqual(planGate.failures, ["feature-criteria", "tasks-planned"], "PLAN must produce tasks");
+    assert.equal(planGate.overall, false, "PLAN must produce tasks");
+    assert.ok(planGate.failures.includes("tasks-planned"));
+    assert.ok(planGate.failures.includes("feature-criteria"));
     console.log("✓ phase → check mapping");
   } finally {
     rmSync(dir, { recursive: true, force: true });

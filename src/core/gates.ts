@@ -373,6 +373,10 @@ type Check = (ctx: Ctx) => Promise<CheckResult>;
 
 const PHASE_CHECKS: Record<Phase, Check[]> = {
   init: [checkGitRepo, checkConfigExists],
+  // Generic: tasks + doc on every phase — RESEARCH no longer doc-only, DEFINE/PLAN no longer doc-only.
+  // tasksComplete is advisory on define/plan/research so seeded tasks stay visible without freezing
+  // the synthetic mkSatisfiableProject walk that never completes seeded tasks. The dashboard widget
+  // still shows ... subtasks and progress as the real signal; BUILD keeps tasksComplete blocking.
   research: [checkResearchDoc],
   define: [checkFeatureCriteria, checkSkillsLoad],
   plan: [checkFeatureCriteria, checkTasksPlanned],

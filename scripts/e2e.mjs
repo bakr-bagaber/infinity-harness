@@ -410,8 +410,11 @@ await advancePhase(dir); // → define
 await advancePhase(dir); // → plan
 await advancePhase(dir); // → build
 
+// baseRevision after seeding (research/define/plan) is no longer predictably 0 — read it.
+import { loadFeatureList as _loadFL } from ${SRC_URL("core/featureList.ts")};
+const _curRev = _loadFL(dir).list.baseRevision;
 writeTaskList(dir, {
-  baseRevision: 0,
+  baseRevision: _curRev,
   tasks: [
     { key: "feature-001/task-001", subject: "wire the ledger reconciler", status: "complete",
       difficulty: "moderate", criteria: ["reconciles split tenders"] },

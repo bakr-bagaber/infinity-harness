@@ -275,19 +275,13 @@ export async function decideNext(options: DecideOptions): Promise<{ decision: Lo
 
   state.lastPhase = config.currentPhase;
 
-  // Ensure DEFINE/PLAN have at least seed tasks — fixes DEFINE rev 0
-  // idempotently and ensures handoff's toTask becomes non-null shortly after
-  // RESEARCH auto-advanced. Only enabled doc phases with no tasksForPhase are
-  // seeded, so synthetic convergence projects (with already-complete BUILD tasks)
-  // do not get a dirty feature-list. Also: if a phase's task-gate (featureCriteria)
-  // already passes, do not seed — the plan is already satisfied without starters.
+  // Generic: current phase with 0 tasks gets starters (research → deep, define/plan → fix rev 0).
+  // Same code for every phase, same trigger: 0 tasks && gate fails. Never dirties a converged walk.
   if (config.currentPhase && (config.phases?.enabled ?? []).includes(config.currentPhase)) {
     try {
       const { list: _list } = loadFeatureList(targetDir);
       const hasPhaseTasks = (await import("./core/featureList.ts")).tasksForPhase(_list, config.currentPhase).length > 0;
       if (!hasPhaseTasks) {
-        // Do not seed when the gate is already satisfied — the synthetic converge
-        // walk expects define->ship without touching the tree.
         const gateTrial = await runChecks(targetDir, config.currentPhase, { record: false });
         if (!gateTrial.overall) seedPhaseIfEmpty(targetDir, config.currentPhase);
       }

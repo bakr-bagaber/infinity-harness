@@ -129,18 +129,65 @@ export async function transitionPhase(targetDir: string, toPhase: Phase): Promis
 
 /** Starter tasks seeded when a phase has no tasks at all (idempotent, fixes DEFINE rev 0).
  *
- * Only phases that are *gated on doc artefacts* get starters. BUILD/VERIFY etc
- * already have tasks from PLAN; seeding them would pollute BUILD's tasksComplete.
+ * Generic: every phase that is enabled and enters with 0 tasks gets starters —
+ * same code path, same trigger, no special case for research. BUILD/VERIFY
+ * already have tasks from PLAN so they are not seeded; RESEARCH was shallow
+ * because it had no tasks — now it does.
  */
-export const STARTER_TASKS: Record<string, Array<{ id: string; description: string; difficulty: "easy" | "moderate" | "difficult" }>> = {
-  // Research has its doc gate but no task gate; a doc checklist, not tasks — no seed.
+export type StarterTask = {
+  id: string;
+  description: string;
+  difficulty: "easy" | "moderate" | "difficult";
+  subtasks?: string[];
+};
+export const STARTER_TASKS: Record<string, StarterTask[]> = {
+  research: [
+    {
+      id: "research/r1",
+      description: "Collect prior art — 3 sources, what exists, where it stops",
+      difficulty: "moderate",
+      subtasks: ["source 1 + summary", "source 2 + summary", "source 3 + summary"],
+    },
+    {
+      id: "research/r2",
+      description: "Name constraints (given vs inferred) and lay out 2+ options with costs",
+      difficulty: "moderate",
+      subtasks: ["constraints given vs inferred", "option A cost/benefit", "option B cost/benefit"],
+    },
+    {
+      id: "research/r3",
+      description: "Recommend one option, falsification condition, and open questions for DEFINE",
+      difficulty: "moderate",
+      subtasks: ["recommendation + falsification", "open questions list"],
+    },
+  ],
   define: [
-    { id: "define/d1", description: "Interview scope and write bounded PRD + acceptance criteria", difficulty: "moderate" },
-    { id: "define/d2", description: "Record sprint contract and branch (not main)", difficulty: "easy" },
+    {
+      id: "define/d1",
+      description: "Interview scope and write bounded PRD + acceptance criteria",
+      difficulty: "moderate",
+      subtasks: ["scope interview", "PRD draft", "acceptance criteria per feature"],
+    },
+    {
+      id: "define/d2",
+      description: "Record sprint contract and branch (not main)",
+      difficulty: "easy",
+      subtasks: ["sprint contract", "feature branch"],
+    },
   ],
   plan: [
-    { id: "plan/p1", description: "Break each feature into ordered, dependency-aware tasks", difficulty: "moderate" },
-    { id: "plan/p2", description: "Commit plan (feature-list) and validate", difficulty: "easy" },
+    {
+      id: "plan/p1",
+      description: "Break each feature into ordered, dependency-aware tasks",
+      difficulty: "moderate",
+      subtasks: ["vertical slices", "dependency graph", "difficulty + subtasks"],
+    },
+    {
+      id: "plan/p2",
+      description: "Commit plan (feature-list) and validate",
+      difficulty: "easy",
+      subtasks: ["feature-list.json commit", "validate gate"],
+    },
   ],
 };
 
@@ -175,7 +222,12 @@ export function seedPhaseIfEmpty(dir: string, phase: import("./types.ts").Phase)
         status: "pending" as const,
         phase,
         difficulty: t.difficulty,
+        subtasks: (t.subtasks ?? []).map((title: string) => ({ title, status: "pending" as const })),
       } as any);
+    }
+    // Newly created phase-features default to criteria so DEFINE gate doesn't fail on 'phase-define missing criteria'.
+    if (Array.isArray(feature.criteria) && feature.criteria.length === 0) {
+      feature.criteria = [`${phase} ready for review`];
     }
     list.baseRevision = (list.baseRevision ?? 0) + 1;
     saveFeatureList(dir, list);
