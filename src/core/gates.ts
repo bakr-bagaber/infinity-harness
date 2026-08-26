@@ -328,7 +328,8 @@ async function checkNoEmptyDirs({ targetDir }: Ctx): Promise<CheckResult> {
 /** Every feature must declare acceptance criteria before BUILD starts. */
 async function checkFeatureCriteria({ targetDir }: Ctx): Promise<CheckResult> {
   const { list } = loadFeatureList(targetDir);
-  const features = list.features ?? [];
+  // Seeded starter features (phase-*) are scaffolding, not real features — ignore for criteria gate.
+  const features = (list.features ?? []).filter((f) => !(f as { phase?: string }).phase);
   if (features.length === 0) return fail("feature-criteria", "no features planned yet");
   const missing = features.filter((f) => !(f.criteria ?? []).length).map((f) => f.id);
   return missing.length === 0

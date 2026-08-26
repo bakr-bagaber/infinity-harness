@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.4] — 2026-08-25
+
+`feature-criteria` now ignores seeded `phase-*` scaffolding so `DEFINE` does not pass on the
+research seed alone. Same `phase` field, same `seedPhaseIfEmpty`, same worker path — just the gate.
+
 ## [2.6.3] — 2026-08-25
 
 Research was shallow because it had no tasks — one search, doc, PASS. Now it follows the same
