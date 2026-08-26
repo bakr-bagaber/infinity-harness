@@ -4,6 +4,14 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.3] — 2026-08-25
+
+Research was shallow because it had no tasks — one search, doc, PASS. Now it follows the same
+mechanism as every other phase: three starter tasks `research/r1-3` with subtasks, same `seedPhaseIfEmpty`
+trigger on loop entry (0 tasks \& gate fails), same phase-scoped progress and same worker pickup
+(`scheduler` scoped to `research`). No special code for research. Synthetic `convergence` walk stays clean
+by only seeding when gate fails, so empty `DEFINE` test projects don't dirty.
+
 ## [2.6.2] — 2026-08-25
 
 Publish 2.6.1 left the tarball staged on the registry awaiting an attestation that never arrived; npm
