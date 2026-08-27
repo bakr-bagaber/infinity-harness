@@ -231,8 +231,15 @@ async function checkChangelog({ targetDir }: Ctx): Promise<CheckResult> {
  * bar deliberately — the gate judges that work happened, the human judges
  * whether it was any good.
  */
-async function checkResearchDoc({ targetDir }: Ctx): Promise<CheckResult> {
-  return docCheck("research-doc", P.researchPath(targetDir), 400, "harness/docs/RESEARCH.md");
+async function checkResearchDoc({ targetDir, config }: Ctx): Promise<CheckResult> {
+  // Depth-dependent threshold — Literature needs a real review, Standard is the old 400 baseline.
+  const depth = (config as { researchDepth?: string }).researchDepth as string | undefined;
+  const minChars = depth === "comprehensive" ? 5000 : depth === "deep" ? 1800 : 800;
+  // Note: depth="deep" is the default, 800 ≈ old 400 doubled but Standard is a true lite mode.
+  // Comprehensive still passes if Standard doc exists — depth is about work produced, not gate strictness,
+  // but the line below makes the harness actually demand the depth the wizard promised.
+  const effectiveMin = depth ? minChars : 400;
+  return docCheck("research-doc", P.researchPath(targetDir), effectiveMin, "harness/docs/RESEARCH.md");
 }
 
 async function checkArchitectureDoc({ targetDir }: Ctx): Promise<CheckResult> {

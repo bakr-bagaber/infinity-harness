@@ -3407,6 +3407,7 @@ async function scenarioColdStart() {
         "Client work",
         "a client project",
         /every phase/,
+        /Very Deep/, // research depth: the OPTIONS contain "Very Deep — ..."
         /no \u2014 use pi/,  // routing: off for this harness
         /parallel at task/,  // execution: parallel task
         "3",  // max workers
@@ -3438,6 +3439,7 @@ async function scenarioColdStart() {
         /Client work \(yours\)/,
         "the next one",
         /every phase/,
+        /Very Deep/,
         /no — use pi/,
         /parallel at task/,
         "3",
@@ -4034,6 +4036,7 @@ async function scenarioRealPi() {
       );
       driver.answer((r) => /What are you building/.test(r.title ?? ""), "a nightly reconciliation job");
       driver.answer((r) => /fresh session/.test(r.title ?? ""), (r) => r.options[0]);
+      driver.answer((r) => /How deep should research go/.test(r.title ?? ""), (r) => r.options.find((o) => /Very Deep/.test(o)) ?? r.options[0]);
       driver.answer((r) => /Route work by difficulty/.test(r.title ?? ""), (r) => r.options.find((o) => /no \u2014 use pi/i.test(o)) ?? r.options[0]);
       driver.answer((r) => /How much of the plan/.test(r.title ?? ""), (r) =>
         r.options.find((o) => /^everything/.test(o)),
@@ -4098,6 +4101,7 @@ async function scenarioRealPi() {
       driver.answer((r) => /Call it what/.test(r.title ?? ""), "Ship review");
       driver.answer((r) => /What are you building/.test(r.title ?? ""), "an internal tool");
       driver.answer((r) => /fresh session/.test(r.title ?? ""), (r) => r.options[0]);
+      driver.answer((r) => /How deep should research go/.test(r.title ?? ""), (r) => r.options.find((o) => /Very Deep/.test(o)) ?? r.options[0]);
       driver.answer((r) => /Route work by difficulty/.test(r.title ?? ""), (r) => r.options.find((o) => /no \u2014 use pi/i.test(o)) ?? r.options[0]);
       driver.answer((r) => /How much of the plan/.test(r.title ?? ""), (r) => r.options[0]);
       driver.answer((r) => /Ready\?/.test(r.title ?? ""), (r) => r.options[0]);
@@ -4328,7 +4332,7 @@ async function scenarioRealPi() {
       put(
         dir,
         "harness/docs/RESEARCH.md",
-        `# Research\n\n${"FX must be fixed at settlement time, not at import time.\n".repeat(20)}`,
+        `# Research\n\n${"FX must be fixed at settlement time, not at import time.\n".repeat(40)}`,
       );
       put(dir, "harness/sprint-contract.md", "# Sprint contract\n\nIn: import. Out: reporting.\n");
       gitCommitAll(dir, "chore: the work");

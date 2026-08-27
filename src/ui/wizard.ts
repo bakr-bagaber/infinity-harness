@@ -183,6 +183,23 @@ export async function runIntakeWizard(options: WizardOptions): Promise<WizardRes
       | "phase"
       | "task";
 
+    // -- 3b. research depth (only when research is in the pipeline) ----------
+    let researchDepth: import("../intake.ts").ResearchDepth | undefined;
+    if (workflow.phases.includes("research" as import("../core/types.ts").Phase)) {
+      const RESEARCH_DEPTH_QUESTION = {
+        title: "How deep should research go?",
+        options: [
+          { value: "standard", label: "Deep — 3 tasks, 5+ primary sources + comparison table", help: ">=5 sources with URLs, constraints table, 3 options + falsification (~800 chars gate). Lite mode." },
+          { value: "deep", label: "Very Deep — 5 tasks, competitive matrix + cost/risk model", help: ">=7 sources, gap analysis, competitive matrix, risk register (~1800 chars). Recommended." },
+          { value: "comprehensive", label: "Literature Review — 10 tasks, 15+ sources annotated", help: ">=15 sources annotated bibliography, benchmarks, synthesis + gap analysis (~5000 chars)." },
+        ],
+      };
+      const depthLabels = RESEARCH_DEPTH_QUESTION.options.map((o) => line(o.label, o.help));
+      const depthPick = await prompt.select(RESEARCH_DEPTH_QUESTION.title, depthLabels);
+      if (depthPick === undefined) return { cancelled: true };
+      researchDepth = (RESEARCH_DEPTH_QUESTION.options[depthLabels.indexOf(depthPick)]?.value ?? "deep") as import("../intake.ts").ResearchDepth;
+    }
+
     // -- 4. models ----------------------------------------------------------
     const modelsAnswer = await pickModelsStep(prompt, options.models);
     if (modelsAnswer === undefined) return { cancelled: true };
@@ -211,7 +228,7 @@ export async function runIntakeWizard(options: WizardOptions): Promise<WizardRes
     const display = await pickDisplay(prompt, env);
     if (display === undefined) return { cancelled: true };
 
-    const answers: IntakeAnswers = { workflow, brief, handoff, display, router: modelsAnswer.router, parallelAt, maxWorkers };
+    const answers: IntakeAnswers = { workflow, researchDepth, brief, handoff, display, router: modelsAnswer.router, parallelAt, maxWorkers };
     const plan = planIntake(answers);
 
     if (options.skipConfirm) return { cancelled: false, plan, answers };

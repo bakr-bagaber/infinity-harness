@@ -51,6 +51,8 @@ export type DashboardState = {
   baseRevision: number;
   timestamp: string;
   retries?: { task: number; max: number };
+  dashboardUrl?: string | null;
+  handoffModelNote?: string | null;
   /** Model-router config. Opaque here — rendered as a badge, never interpreted. */
   router?: unknown;
   /** Rework record. Opaque here — rendered as a badge, never interpreted. */
@@ -987,10 +989,12 @@ table.tasks tr:last-child td{border-bottom:0}
 .row-rework.is-active .cell-n{box-shadow:inset 2px 0 0 var(--c-rework)}
 @keyframes taskBlink{0%,100%{opacity:1}50%{opacity:.72}}
 /* While-developed: the whole active branch pulses — every active box, not just one feature. */
-.tier.is-current,.feature.is-current{animation:cardPulse 0.9s ease-in-out infinite; border-color:var(--c-accent)!important; box-shadow:0 0 0 2px rgba(var(--rgb-accent),.35), var(--shadow)}
-.tier.is-current .tier-name,.feature.is-current .feature-name{color:var(--t-accent)}
-.row.is-active{animation:taskBlink 0.9s ease-in-out infinite; outline:2px solid var(--c-active); outline-offset:-2px}
-@keyframes cardPulse{0%,100%{box-shadow:0 0 0 2px rgba(var(--rgb-accent),.35),var(--shadow); border-color:var(--c-accent)}50%{box-shadow:0 0 0 5px rgba(var(--rgb-accent),.14),var(--shadow); border-color:rgba(var(--rgb-accent),.55)}}
+.dash-url{margin:8px 0 0;font-size:13px} .dash-url a{color:var(--t-accent);text-decoration:none;border-bottom:1px dashed rgba(var(--rgb-accent),.45)} .dash-url a:hover{border-bottom-style:solid}
+.handoff-note{margin:4px 0 0;color:var(--muted);font-size:12px}
+.tier.is-current,.feature.is-current{animation:cardPulse 1.2s ease-in-out infinite; border-color:var(--c-accent)!important; box-shadow:0 0 0 3px rgba(var(--rgb-accent),.45), 0 0 12px rgba(var(--rgb-accent),.25), var(--shadow)}
+.tier.is-current .tier-name,.feature.is-current .feature-name{color:var(--t-accent);font-weight:650}
+.row.is-active{animation:taskBlink 0.9s ease-in-out infinite; outline:2px solid var(--c-active); outline-offset:-2px; box-shadow:0 0 8px rgba(var(--rgb-active),.35)}
+@keyframes cardPulse{0%,100%{box-shadow:0 0 0 3px rgba(var(--rgb-accent),.45),0 0 12px rgba(var(--rgb-accent),.25),var(--shadow); border-color:var(--c-accent)}50%{box-shadow:0 0 0 7px rgba(var(--rgb-accent),.22),0 0 16px rgba(var(--rgb-accent),.32),var(--shadow); border-color:rgba(var(--rgb-accent),.70)}}
 @keyframes textPulse{0%,100%{opacity:1}50%{opacity:.78}}
 .row-blocked{background:rgba(var(--rgb-blocked),.07)}
 .row-blocked .cell-n{box-shadow:inset 2px 0 0 var(--c-blocked)}
@@ -1237,6 +1241,8 @@ export function renderDashboard(state: DashboardState): string {
   if (progress.tasksTotal > 0) titleBits.push(`${progress.percent}%`);
   const title = `${titleBits.join(" · ")} · infinity-harness`;
 
+  const dashboardUrlHtml = state.dashboardUrl ? `<div class="dash-url">Dashboard: <a href="${esc(state.dashboardUrl)}">${esc(state.dashboardUrl)}</a></div>` : "";
+  const handoffNoteHtml = state.handoffModelNote ? `<div class="handoff-note">${esc(state.handoffModelNote)}</div>` : "";
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -1253,6 +1259,7 @@ export function renderDashboard(state: DashboardState): string {
 <div id="app">
 <div class="page">
 ${renderMasthead(state.phase, paused, progress.percent, state.baseRevision, badges)}
+${dashboardUrlHtml}${handoffNoteHtml}
 ${display.levels.goal ? renderGoals(goals) : ""}
 ${display.rail ? renderRail(state.phase, state.enabledPhases, paused) : ""}
 ${

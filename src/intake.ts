@@ -44,9 +44,13 @@ export type Mode = "copilot" | "autopilot";
 export const INTAKE_STEPS = ["workflow", "brief", "handoff", "display"] as const;
 export type IntakeStep = (typeof INTAKE_STEPS)[number];
 
+export type ResearchDepth = import("./core/types.ts").ResearchDepth;
+
 export type IntakeAnswers = {
   /** The chosen workflow: a built-in, one they saved, or one they just built. */
   workflow: Workflow;
+  /** Research depth — only when research is in the pipeline. */
+  researchDepth?: ResearchDepth;
   /** What the human wants built, in their words. Empty is allowed but warned about. */
   brief: string;
   /** Session handoff policy. Defaults to a fresh session per phase. */
@@ -71,6 +75,7 @@ export type IntakePlan = {
   /** Derived: "copilot" when the run stops for the human anywhere, else "autopilot". */
   mode: Mode;
   workflow: { id: string; name: string };
+  researchDepth?: ResearchDepth;
   brief: string | null;
   phases: Phase[];
   phaseModes: PhaseModes;
@@ -155,9 +160,11 @@ export function planIntake(answers: IntakeAnswers): IntakePlan {
     );
   }
 
+  const _researchDepth: ResearchDepth | undefined = (phases.includes("research" as Phase) ? ((answers.researchDepth as ResearchDepth) ?? "deep") : undefined) as ResearchDepth | undefined;
   return {
     mode,
     workflow: { id: workflow.id, name: workflow.name },
+    researchDepth: _researchDepth,
     brief,
     phases,
     phaseModes,
@@ -170,7 +177,7 @@ export function planIntake(answers: IntakeAnswers): IntakePlan {
     execution: { parallelAt, maxWorkers },
     display,
     router: answers.router,
-    summary: summarize(workflow, phases, phaseModes, session, display, brief),
+    summary: summarize(workflow, phases, phaseModes, session, display, brief, _researchDepth),
     warnings,
   };
 }
@@ -182,6 +189,7 @@ function summarize(
   session: SessionPolicy,
   display: DisplayPolicy,
   brief: string | null,
+  researchDepth?: ResearchDepth | undefined,
 ): string {
   const signed = phases.filter((p) => modes[p] === "copilot");
   const L: string[] = [];
@@ -200,6 +208,7 @@ function summarize(
     }`,
   );
   L.push(`Display   ${display.preset}`);
+  if (researchDepth) L.push(`Research  ${researchDepth}`);
   L.push(`Goal      ${brief ?? "(none yet — you will be asked first thing)"}`);
   return L.join("\n");
 }
@@ -237,37 +246,37 @@ export const HANDOFF_QUESTION: Question = {
     {
       value: "goal",
       label: "per goal — one session for the whole run",
-      help: "The old single-session run. Every task accumulates context until compaction.",
+      help: "The old single-session run. Model per run (off/goal) — whole run shares its hardest model. For true per-task models use task/subtask.",
     },
     {
       value: "phase",
       label: "every phase",
-      help: "Old default. Each phase starts clean from the brief.",
+      help: "Model per phase — tasks & subtasks in a phase share the hardest model in that phase. Old default. Each phase starts clean from the brief.",
     },
     {
       value: "sprint",
       label: "every sprint",
-      help: "New session whenever the active sprint changes (or phase).",
+      help: "Model per sprint — tasks & subtasks in a sprint share the hardest model in that sprint. New session whenever the sprint changes (or phase).",
     },
     {
       value: "feature",
       label: "every feature",
-      help: "New session on each feature boundary (and sprint/phase).",
+      help: "Model per feature — tasks & subtasks in a feature share the hardest model in that feature. New session on each feature boundary (and sprint/phase).",
     },
     {
       value: "task",
       label: "every task (recommended)",
-      help: "Each task gets a clean session. Best isolation; one extra brief per task.",
+      help: "Model per task — subtasks share their parent task's model. Each task gets a clean session. Best isolation; one extra brief per task.",
     },
     {
       value: "subtask",
       label: "every subtask",
-      help: "Finest grain — each subtask gets a fresh session. Most isolation, most churn.",
+      help: "Model per subtask — each subtask may use its own model (needs subtask difficulty). Finest grain. Most isolation, most churn.",
     },
     {
       value: "off",
       label: "never — alias for per goal",
-      help: "Same as per goal — one long session without fresh starts.",
+      help: "Model per run — same as per goal, one long session.",
     },
   ],
 };

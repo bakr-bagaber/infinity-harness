@@ -55,7 +55,7 @@ function skill(name: string, description: string, extra = "kind: process"): stri
     0,
     `harness/skills would make pi complain:\n${formatAudit(audit, repoRoot)}`,
   );
-  assert.equal(audit.skills.length, 28, "every shipped skill is accounted for");
+  assert.equal(audit.skills.length, 29, "every shipped skill is accounted for");
   console.log(`✓ all ${audit.skills.length} shipped skills load cleanly in pi`);
 }
 

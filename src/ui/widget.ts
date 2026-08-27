@@ -46,6 +46,10 @@ export type WidgetState = {
   enabledPhases?: readonly string[] | null;
   paused?: boolean;
   gate?: { overall: boolean; failures: string[] } | null;
+  /** Dashboard URL to show near the top, clickable. Meaningful host:port, not just numbers. */
+  dashboardUrl?: string | null;
+  /** Model routing note: e.g. "Model per task — subtasks share parent". Shown once. */
+  handoffModelNote?: string | null;
   /** Shown in the header rule, e.g. "rev 42". */
   revision?: number;
   retries?: { task: number; max: number };
@@ -406,6 +410,17 @@ export function renderWidget(state: WidgetState, options: WidgetOptions = {}): s
   const headRight = phaseTag + revTag;
   const gapW = inner - width(headLeft) - width(headRight);
   push(headLeft + (gapW > 1 ? s.fg("rule", " " + g.rail.repeat(gapW - 2) + " ") : " ") + headRight);
+  // Dashboard URL near top, clickable (OSC 8) with meaningful host:port, not just numbers.
+  if (state.dashboardUrl) {
+    const url = state.dashboardUrl;
+    const label = s.fg("accent", url);
+    // OSC 8 hyperlink: terminals that support it make it clickable; others show the URL.
+    const link = `\u001b]8;;${url}\u0007${label}\u001b]8;;\u0007`;
+    push(truncate(s.fg("muted", "Dashboard: ") + link, inner));
+  }
+  if (state.handoffModelNote) {
+    push(truncate(s.fg("muted", state.handoffModelNote), inner));
+  }
 
   // -- goal -----------------------------------------------------------------
   //

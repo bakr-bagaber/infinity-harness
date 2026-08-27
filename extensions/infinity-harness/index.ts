@@ -168,10 +168,24 @@ export default function (pi: ExtensionAPI): void {
 
   // -- widget ---------------------------------------------------------------
 
+  const handoffNoteFor = (h: import("../../src/core/types.ts").HandoffGranularity): string | null => {
+    const map: Record<string, string> = {
+      off: "Model per run (off/goal) — the whole run shares its hardest model; finer per-task routing requires task/subtask handoff",
+      goal: "Model per run (off/goal) — the whole run shares its hardest model; finer per-task routing requires task/subtask handoff",
+      phase: "Model per phase — tasks & subtasks in a phase share the hardest model in that phase",
+      sprint: "Model per sprint — tasks & subtasks in a sprint share the hardest model in that sprint",
+      feature: "Model per feature — tasks & subtasks in a feature share the hardest model in that feature",
+      task: "Model per task — subtasks share their parent task's model",
+      subtask: "Model per subtask — each subtask may use its own model (needs subtask difficulty)",
+    };
+    return map[h] ?? null;
+  };
+
   const widgetStateFor = (dir: string): WidgetState | null => {
     try {
       const { list } = loadFeatureList(dir);
       const { config } = loadConfig(dir);
+      const handoffModelNote: string | null = handoffNoteFor((config.session?.handoff as import("../../src/core/types.ts").HandoffGranularity) ?? "task");
       const spent = escalationSummary(dir);
       const loop = readJsonSafe<{ escalations?: { strategy: string }[] } | null>(
         loopStatePath(dir),
@@ -184,6 +198,8 @@ export default function (pi: ExtensionAPI): void {
       return {
         list,
         view,
+        dashboardUrl: remoteServer?.url ?? null,
+        handoffModelNote,
         sessions: run?.sessions ?? null,
         intake: typeof config.intake?.brief === "string" ? config.intake.brief : null,
         awaitingApproval: config.awaitingApproval ?? null,
@@ -301,10 +317,15 @@ export default function (pi: ExtensionAPI): void {
   const applyRouting = async (ctx: ExtensionContext, dir: string, source: string): Promise<void> => {
     try {
       const { resolveModel, resolveThinking } = await import("../../src/modelRouter.ts");
+      const { effectiveDifficultyForTask } = await import("../../src/scheduler.ts");
       const { nextActionableTask, findFeature } = await import("../../src/core/featureList.ts");
       const { loadFeatureList: loadList } = await import("../../src/core/featureList.ts");
       const list = loadList(dir).list;
       const task = nextActionableTask(list);
+      const cfg = loadConfig(dir).config;
+      const handoff = (cfg.session?.handoff ?? "task") as import("../../src/core/types.ts").HandoffGranularity;
+      // Effective difficulty honors handoff bucket: phase/feature/sprint tasks share hardest in that bucket.
+      const effDiff = task && list ? (effectiveDifficultyForTask(task as import("../../src/core/featureList.ts").FlatTask, handoff, list) ?? (task as { difficulty?: string }).difficulty) : (task as { difficulty?: string } | null)?.difficulty;
       // Resolve against task/parent feature/sprint difficulty; fall through to default when no actionable.
       const feature = task ? findFeature(list, task.featureId) ?? undefined : undefined;
       const sprint = feature?.sprintId ? (list.sprints ?? []).find((s) => s.id === feature.sprintId) ?? undefined : undefined;
@@ -312,7 +333,7 @@ export default function (pi: ExtensionAPI): void {
       type T = NonNullable<ReturnType<typeof nextActionableTask>>;
       const routedModel = resolveModel({
         projectDir: dir,
-        task: (task as T | null | undefined)?.difficulty || feature?.difficulty ? ({ difficulty: (task as T | undefined)?.difficulty, modelHint: (task as T | undefined)?.modelHint, id: task?.id, key: (task as T | undefined)?.compositeKey ?? (task as T | undefined)?.key } as never) : undefined,
+        task: effDiff || (feature as { difficulty?: string } | undefined)?.difficulty ? ({ difficulty: effDiff as string | undefined, modelHint: (task as T | undefined)?.modelHint, id: task?.id, key: (task as T | undefined)?.compositeKey ?? (task as T | undefined)?.key } as never) : undefined,
         feature: feature as never,
         sprint: sprint as never,
         phase: loadConfig(dir).config.currentPhase ?? undefined,
@@ -320,7 +341,7 @@ export default function (pi: ExtensionAPI): void {
       });
       const routedThinking = resolveThinking({
         projectDir: dir,
-        task: (task as T | null | undefined) ? ({ difficulty: (task as T | undefined)?.difficulty, id: task?.id, key: (task as T | undefined)?.compositeKey ?? (task as T | undefined)?.key } as never) : undefined,
+        task: effDiff ? ({ difficulty: effDiff as string } as never) : (task as T | null | undefined) ? ({ difficulty: (task as T | undefined)?.difficulty, id: task?.id, key: (task as T | undefined)?.compositeKey ?? (task as T | undefined)?.key } as never) : undefined,
         feature: feature as never,
         sprint: sprint as never,
       });
@@ -378,15 +399,19 @@ export default function (pi: ExtensionAPI): void {
     try {
       const { nextActionableTask, findFeature } = await import("../../src/core/featureList.ts");
       const { resolveModel, resolveThinking } = await import("../../src/modelRouter.ts");
+      const { effectiveDifficultyForTask } = await import("../../src/scheduler.ts");
       const { list } = loadFeatureList(dir);
       const task = nextActionableTask(list);
       if (!task) return null;
+      const cfg = loadConfig(dir).config;
+      const handoff = (cfg.session?.handoff ?? "task") as import("../../src/core/types.ts").HandoffGranularity;
+      const effDiff = effectiveDifficultyForTask(task as import("../../src/core/featureList.ts").FlatTask, handoff, list) ?? (task as { difficulty?: string }).difficulty;
       const feature = findFeature(list, task.featureId) ?? undefined;
       const sprint = feature?.sprintId ? (list.sprints ?? []).find((s) => s.id === feature.sprintId) ?? undefined : undefined;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const m = resolveModel({ projectDir: dir, task: ({ difficulty: (task as any).difficulty, modelHint: (task as any).modelHint, id: task.id, key: (task as any).compositeKey ?? (task as any).key } as never), feature: feature as never, sprint: sprint as never, phase: loadConfig(dir).config.currentPhase ?? undefined });
+      const m = resolveModel({ projectDir: dir, task: ({ difficulty: effDiff as string | undefined, modelHint: (task as any).modelHint, id: task.id, key: (task as any).compositeKey ?? (task as any).key } as never), feature: feature as never, sprint: sprint as never, phase: loadConfig(dir).config.currentPhase ?? undefined });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const th = resolveThinking({ projectDir: dir, task: ({ difficulty: (task as any).difficulty } as never), feature: feature as never, sprint: sprint as never });
+      const th = resolveThinking({ projectDir: dir, task: ({ difficulty: effDiff as string | undefined } as never), feature: feature as never, sprint: sprint as never });
       if (!m || !m.trim()) return null;
       return `Routing: ${task.compositeKey} → ${m}${th ? ` · thinking ${th}` : ""}`;
     } catch { return null; }

@@ -148,6 +148,7 @@ function sandbox(): { env: NodeJS.ProcessEnv; clean: () => void } {
     [/which phases, and which of them stop for you/, pick(/^research first/)],
     [/What are you building/, "a CLI that reconciles Stripe payouts"],
     [/fresh session/, pick(/every phase/)],
+    [/How deep should research go/, pick(/Very Deep/)],
     [/How much of the plan/, pick(/^everything/)],
     [/Ready/, pick(/start with these settings/)],
   ]);
@@ -166,6 +167,8 @@ function sandbox(): { env: NodeJS.ProcessEnv; clean: () => void } {
   assert.match(titles, /What are you building/, "the goal is asked for whatever the workflow");
   assert.match(titles, /How much of the plan/);
   assert.ok(h.notices.some((n) => /Workflow {2}research first/.test(n)), "the summary is shown before committing");
+  assert.equal(result.plan.researchDepth, "deep", "very deep was stored when research is in pipeline");
+  assert.match(result.plan.summary, /Research  deep/);
   box.clean();
   console.log("✓ the wizard asks four questions and returns what they add up to");
 }
@@ -220,6 +223,7 @@ function sandbox(): { env: NodeJS.ProcessEnv; clean: () => void } {
     [/which phases, and which of them stop for you/, pick(/Client work \(yours\)/)],
     [/What are you building/, "the next one"],
     [/fresh session/, (o) => o[0]],
+    [/How deep should research go/, pick(/Deep/)],
     [/How much of the plan/, (o) => o[0]],
     [/Ready/, pick(/start with these settings/)],
   ]);

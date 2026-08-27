@@ -140,27 +140,37 @@ export type StarterTask = {
   difficulty: "easy" | "moderate" | "difficult";
   subtasks?: string[];
 };
-export const STARTER_TASKS: Record<string, StarterTask[]> = {
-  research: [
-    {
-      id: "research/r1",
-      description: "Collect prior art — 3 sources, what exists, where it stops",
-      difficulty: "moderate",
-      subtasks: ["source 1 + summary", "source 2 + summary", "source 3 + summary"],
-    },
-    {
-      id: "research/r2",
-      description: "Name constraints (given vs inferred) and lay out 2+ options with costs",
-      difficulty: "moderate",
-      subtasks: ["constraints given vs inferred", "option A cost/benefit", "option B cost/benefit"],
-    },
-    {
-      id: "research/r3",
-      description: "Recommend one option, falsification condition, and open questions for DEFINE",
-      difficulty: "moderate",
-      subtasks: ["recommendation + falsification", "open questions list"],
-    },
+/** Depth: Standard(3 tasks/9 subtasks) < Deep(5/15) < Comprehensive(10/30+). Default deep. */
+export type ResearchDepth = "standard" | "deep" | "comprehensive";
+export const STARTER_TASKS_BY_DEPTH: Record<ResearchDepth, StarterTask[]> = {
+  standard: [
+    { id: "research/r1", description: "Collect prior art — 3 primary sources with URLs, what exists, where it stops", difficulty: "moderate", subtasks: ["source 1 + URL + summary", "source 2 + URL + summary", "source 3 + URL + summary"] },
+    { id: "research/r2", description: "Name constraints (given vs inferred) and lay out 2+ options with costs", difficulty: "moderate", subtasks: ["constraints given vs inferred table", "option A cost/benefit", "option B cost/benefit"] },
+    { id: "research/r3", description: "Recommend one option, falsification condition, and open questions for DEFINE", difficulty: "moderate", subtasks: ["recommendation + falsification", "open questions list (≥5)"] },
   ],
+  deep: [
+    { id: "research/r1", description: "Prior art: ≥5 primary sources with URLs (docs/specs/repos), what each gets right and where it stops", difficulty: "moderate", subtasks: ["sources 1-3 + URLs + summaries", "sources 4-5 + URLs + gap analysis", "comparison table: feature × prior art"] },
+    { id: "research/r2", description: "Constraints & domain model: given vs inferred, glossary terms, actors & data", difficulty: "moderate", subtasks: ["constraints given vs inferred (table)", "domain glossary + actors", "data & platform constraints"] },
+    { id: "research/r3", description: "Options: ≥3 genuine alternatives with architecture, cost, risk and trade-offs", difficulty: "difficult", subtasks: ["option A: arch + cost + risk", "option B: arch + cost + risk", "option C / hybrid + trade-off matrix"] },
+    { id: "research/r4", description: "Recommendation with falsification: what must be true, what would prove it wrong", difficulty: "moderate", subtasks: ["recommendation + rationale", "falsification condition + experiment"] },
+    { id: "research/r5", description: "Open questions for DEFINE: ranked questions only a human can answer", difficulty: "easy", subtasks: ["open questions (≥8) ranked", "DEFINE interview agenda"] },
+  ],
+  comprehensive: [
+    { id: "research/r1", description: "Literature sweep: ≥15 primary sources — papers, RFCs, repos, postmortems — annotated", difficulty: "difficult", subtasks: ["sources 1-5 annotated", "sources 6-10 annotated", "sources 11-15 annotated", "citation map + gaps in literature"] },
+    { id: "research/r2", description: "Domain & constraints synthesis: glossary, actors, data, regulatory & platform limits", difficulty: "difficult", subtasks: ["constraints given vs inferred (full table)", "domain glossary + bounded contexts", "actors, data flows & invariants"] },
+    { id: "research/r3", description: "Benchmark prior work: reproduce or reason about 3+ approaches on a toy case", difficulty: "difficult", subtasks: ["approach A benchmark", "approach B benchmark", "approach C benchmark + comparison matrix"] },
+    { id: "research/r4", description: "Architecture options: ≥3 with diagrams, cost model, risk register, team & time", difficulty: "difficult", subtasks: ["option A: diagram + cost + risk", "option B: diagram + cost + risk", "option C: diagram + cost + risk", "trade-off matrix + decision criteria"] },
+    { id: "research/r5", description: "Recommendation as a decision record + what falsifies it", difficulty: "moderate", subtasks: ["ADR: recommendation + alternatives rejected", "falsification condition + experiment design"] },
+    { id: "research/r6", description: "Risk & unknowns register: known unknowns, unknown unknowns, mitigations", difficulty: "moderate", subtasks: ["risk register", "mitigations + owners", "open unknowns vs knowns"] },
+    { id: "research/r7", description: "DEFINE handoff: ranked open questions (≥12) + interview agenda + glossary delta", difficulty: "easy", subtasks: ["open questions (≥12) ranked", "DEFINE interview agenda", "glossary delta for DOMAIN.md"] },
+  ],
+};
+// Back-compat: default deep
+const DEFAULT_RESEARCH_DEPTH: ResearchDepth = "deep";
+export const STARTER_TASKS: Record<string, StarterTask[]> = {
+  get research(): StarterTask[] { return STARTER_TASKS_BY_DEPTH[DEFAULT_RESEARCH_DEPTH]; },
+  set research(v: StarterTask[]) { (STARTER_TASKS_BY_DEPTH as Record<string, StarterTask[]>)[DEFAULT_RESEARCH_DEPTH] = v; },
+
   define: [
     {
       id: "define/d1",
@@ -197,8 +207,18 @@ export function isPhaseDone(dir: string, phase: import("./types.ts").Phase): boo
   return tasks.length > 0 && tasks.every((t) => t.status === "complete");
 }
 
+function startersForPhase(dir: string, phase: string): StarterTask[] {
+  if (phase !== "research") return STARTER_TASKS[phase] ?? [];
+  try {
+    const { config } = loadConfig(dir);
+    const depth = (config as { researchDepth?: ResearchDepth }).researchDepth;
+    if (depth && STARTER_TASKS_BY_DEPTH[depth]) return STARTER_TASKS_BY_DEPTH[depth];
+  } catch {}
+  return STARTER_TASKS_BY_DEPTH[DEFAULT_RESEARCH_DEPTH] ?? [];
+}
+
 export function seedPhaseIfEmpty(dir: string, phase: import("./types.ts").Phase): { seeded: boolean; error: string | null } {
-  const seeded = STARTER_TASKS[phase] ?? [];
+  const seeded = startersForPhase(dir, phase);
   if (seeded.length === 0) return { seeded: false, error: null };
   try {
     const { list } = loadFeatureList(dir);

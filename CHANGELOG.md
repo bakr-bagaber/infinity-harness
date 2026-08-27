@@ -4,6 +4,40 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.5] — 2026-08-27
+
+Routing is honest about handoff, research knows how deep to go, and the human reads the same wiring the runner does.
+
+### Added
+
+- **Research depth tiers.** Wizard asks `How deep should research go?` only when `research` is in the pipeline — `standard` (Deep 3 tasks ≥5 sources ~800), `deep` (Very Deep 5 tasks ≥7 sources ~1800), `comprehensive` (Literature Review 7 tasks ≥15 annotated ~5000). `harness/config.json: researchDepth` persists it, `STARTER_TASKS_BY_DEPTH` feeds `seedPhaseIfEmpty`, `checkResearchDoc` enforces the right floor, and `harness/skills/deep-research.md` codifies the `process` skill per depth. `src/intake.ts` surfaces `Research  <depth>` in the intake summary.
+
+- **`harness/skills/deep-research.md`.** Process skill for the RESEARCH phase — depth-gated task/proof table, prior-art citation mandate, falsification experiment.
+
+- **Dashboard actually shows its URL and the handoff→model contract.** `WidgetState.dashboardUrl` + `WidgetState.handoffModelNote` are populated from the live `remoteServer.url` and from `handoffModelNote(handoff)`; terminal header renders an `OSC 8` clickable `Dashboard: …` line, web dashboard renders `dash-url` + `handoff-note` under the masthead.
+
+### Changed
+
+- **Model routing follows handoff (Option A: hardest wins in the bucket).** `src/scheduler.ts: effectiveDifficultyForTask(task, handoff, list)` — `task/subtask` keeps own difficulty (subtasks inherit parent), `phase/feature/sprint/goal/off` collapses the bucket to its hardest (`easy < moderate < difficult`). `spawnWorkers` and `extensions/infinity-harness:index.ts` (`applyRouting` + `routingSummaryForBrief` + brief line) all read `config.session.handoff` each call; `src/intake.ts: HANDOFF_QUESTION` help text now states `Model per …` per choice. `src/handoff.ts` wording updated to match.
+
+- **Seeding + config defaults.** `src/core/init.ts` writes `researchDepth` (`deep` when research enabled), `src/core/config.ts` defaults it, `src/core/phases.ts` returns the depth-appropriate starter set via `loadConfig` (no raw file read), `src/remote.ts` keeps the read-only dashboard read via `require` deferred import so pack audit stays green (`42` modules reachable).
+
+### Fixed
+
+- **Wizard ate its own answer.** Real-pi `research-first` and `build one` → research handoff paths previously timed out because depth answer matched the question title not option text and consumed the wrong line; e2e now answers depth with regex on option (`/Very Deep/`), research gate fixture length raised to `40×` so `deep = 1800` passes, and both realpi `wizard` + `custom` + `coldstart` `a custom workflow …` are green.
+
+- **Second reuse init lost its saved workflow.** `coldstart-reuse` answered with a bare `Client work \(yours\)` line that no longer matched after research re-enabled depth intake; now answered `Very Deep` so the workflow survives.
+
+- **Gate fixture regression.** `research.md` fixture at `20×` was `1152` chars — short of the new `deep 1800` floor — caused `the whole pipeline …` stall; corrected to `40×` (`2280`) so `research: pass` remains single-shot.
+
+- **`src/intake.ts` CRLF drift.** Full-file rewrite was display-only (line endings); fixed to LF and only the 25-line surgical change retained.
+
+- **Extension ESM require shim.** Prior `require("../../src/scheduler.ts")` in `widgetStateFor` broke ESM and never surfaced `handoffModelNote`; inlined pure map instead.
+
+### Verified
+
+- `tsc --noEmit` clean, `34/34` unit, `15/15` e2e (`coldstart 12/12`, `realpi 10/10`), `42` modules reachable via `package` scenario. `tests/skills.test.ts` bumps shipped skill count `28 → 29`, `tests/intake.test.ts` asserts `How deep …` + `Research deep` summary.
+
 ## [2.6.4] — 2026-08-25
 
 `feature-criteria` now ignores seeded `phase-*` scaffolding so `DEFINE` does not pass on the

@@ -146,6 +146,7 @@ function pythonCommands(targetDir: string): ProjectCommands {
 export type InitOptions = {
   stack?: StackId;
   mode?: "copilot" | "autopilot";
+  researchDepth?: import("./types.ts").ResearchDepth;
   phases?: Phase[];
   commands?: Partial<ProjectCommands>;
   /** Re-scaffold missing files in a project that already has a config. */
@@ -213,6 +214,11 @@ export function initHarness(targetDir: string, options: InitOptions = {}): InitR
   const phase = phases[0] ?? "define";
 
   const config = defaultConfig();
+  if (options.researchDepth && (options.researchDepth === "standard" || options.researchDepth === "deep" || options.researchDepth === "comprehensive")) {
+    config.researchDepth = options.researchDepth;
+  } else if (phases.includes("research")) {
+    config.researchDepth = "deep";
+  }
   config.stack = stack.id === "unknown" ? null : stack.id;
   config.mode = options.mode ?? "copilot";
   config.phases = { enabled: phases };

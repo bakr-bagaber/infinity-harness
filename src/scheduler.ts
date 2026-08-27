@@ -7,10 +7,107 @@
  */
 
 import type { HarnessConfig, HandoffGranularity, Phase } from "./core/types.ts";
-import { loadFeatureList, tasksForPhase, type FlatTask } from "./core/featureList.ts";
+import { loadFeatureList, tasksForPhase, type FlatTask, flattenTasks } from "./core/featureList.ts";
 import { loadRouterConfig } from "./modelRouter.ts";
 import { spawnIsolatedWorker, type SpawnWorkerResult } from "./worker.ts";
 import { runIdFor } from "./runState.ts";
+import { loadConfig } from "./core/config.ts";
+
+/** Difficulty ranking — higher wins when collapsing a bucket to its hardest. */
+const DIFFICULTY_RANK: Record<string, number> = { easy: 1, moderate: 2, difficult: 3 };
+
+function hardestDifficulty(tasks: Array<{ difficulty?: string }>): string | undefined {
+  let best: string | undefined;
+  let bestRank = -1;
+  for (const t of tasks) {
+    const d = (t as { difficulty?: string }).difficulty;
+    if (!d) continue;
+    const r = DIFFICULTY_RANK[d] ?? -1;
+    if (r > bestRank) { bestRank = r; best = d; }
+  }
+  return best;
+}
+
+function goalIdForTask(task: FlatTask, list: import("./core/types.ts").FeatureList): string | null {
+  const feat = list.features.find((f) => f.id === task.featureId) as { goalId?: string; sprintId?: string } | undefined;
+  if (!feat) return (list.goals?.[0]?.id ?? null) as string | null;
+  if (feat.goalId) return feat.goalId;
+  if (feat.sprintId) {
+    const spr = (list.sprints ?? []).find((s) => s.id === feat.sprintId) as { goalId?: string } | undefined;
+    if (spr?.goalId) return spr.goalId;
+  }
+  return (list.goals?.[0]?.id ?? null) as string | null;
+}
+
+/**
+ * Effective difficulty for a task given the session handoff granularity.
+ *
+ * Design choice (Option A): the handoff bucket is the model bucket.
+ * Everything finer than the handoff shares the hardest model in that bucket:
+ *   - handoff phase  → all tasks in that phase share one model (hardest in phase)
+ *   - handoff feature → tasks in feature share hardest in feature
+ *   - handoff task   → subtasks share their parent task's model
+ * Shown in wizard + dashboard so the user knows the trade-off.
+ */
+export function effectiveDifficultyForTask(
+  task: FlatTask,
+  handoff: HandoffGranularity,
+  list: import("./core/types.ts").FeatureList,
+): string | undefined {
+  const own = (task as { difficulty?: string }).difficulty;
+  if (handoff === "task" || handoff === "subtask" || handoff === "off") {
+    // task/subtask: subtasks are not separate tasks, so they inherit the task
+    // off: one session for whole run — hardest in whole plan (most conservative)
+    if (handoff === "off") {
+      const globalHardest = hardestDifficulty(flattenTasks(list) as unknown as Array<{ difficulty?: string }>);
+      return globalHardest ?? own;
+    }
+    return own;
+  }
+  let bucket: FlatTask[] = [];
+  const all = flattenTasks(list);
+  if (handoff === "phase") {
+    const phase = (task as { effectivePhase?: string }).effectivePhase ?? "build";
+    bucket = all.filter((t) => (t as { effectivePhase?: string }).effectivePhase === phase);
+  } else if (handoff === "feature") {
+    bucket = all.filter((t) => t.featureId === task.featureId);
+  } else if (handoff === "sprint") {
+    const feat = list.features.find((f) => f.id === task.featureId) as { sprintId?: string } | undefined;
+    const sid = feat?.sprintId;
+    if (!sid) return own;
+    bucket = all.filter((t) => {
+      const f = list.features.find((ff) => ff.id === t.featureId) as { sprintId?: string } | undefined;
+      return f?.sprintId === sid;
+    });
+  } else if (handoff === "goal") {
+    const gid = goalIdForTask(task, list);
+    if (!gid) return own;
+    bucket = all.filter((t) => goalIdForTask(t, list) === gid);
+  } else {
+    return own;
+  }
+  return hardestDifficulty(bucket as unknown as Array<{ difficulty?: string }>) ?? own;
+}
+
+export function handoffModelNote(handoff: HandoffGranularity): string {
+  switch (handoff) {
+    case "off":
+    case "goal":
+      return "Model per run (off/goal) — the whole run shares its hardest model; finer per-task routing requires task/subtask handoff";
+    case "phase":
+      return "Model per phase — tasks & subtasks in a phase share the hardest model in that phase";
+    case "sprint":
+      return "Model per sprint — tasks & subtasks in a sprint share the hardest model in that sprint";
+    case "feature":
+      return "Model per feature — tasks & subtasks in a feature share the hardest model in that feature";
+    case "task":
+      return "Model per task — subtasks share their parent task's model";
+    case "subtask":
+      return "Model per subtask — each subtask may use its own model (needs subtask difficulty)";
+    default:
+      return "";
+  }
+}
 
 export type PickOpts = {
   targetDir: string;
@@ -36,8 +133,8 @@ export type WorkerSnapshot = {
 /** Tail a worker attempt's output.log (best-effort, never throws). */
 export function tailWorkerOutput(attemptDir: string, bytes = 3000): string {
   try {
-    const { readFileSync, existsSync } = require("node:fs");
-    const p = require("node:path").join(attemptDir, "output.log");
+    const { readFileSync, existsSync } = require("node:fs") as typeof import("node:fs");
+    const p = (require("node:path") as typeof import("node:path")).join(attemptDir, "output.log");
     if (!existsSync(p)) return "";
     const raw = readFileSync(p, "utf-8") as string;
     return raw.slice(-bytes);
@@ -46,8 +143,8 @@ export function tailWorkerOutput(attemptDir: string, bytes = 3000): string {
 
 export function listWorkers(targetDir: string, runId?: string): WorkerSnapshot[] {
   try {
-    const { readdirSync, existsSync } = require("node:fs");
-    const path = require("node:path");
+    const { readdirSync, existsSync } = require("node:fs") as typeof import("node:fs");
+    const path = require("node:path") as typeof import("node:path");
     const root = path.resolve(targetDir, "tmp/infinity-harness", runId ?? "");
     const roots: string[] = [];
     if (runId) {
@@ -92,7 +189,7 @@ export function listWorkers(targetDir: string, runId?: string): WorkerSnapshot[]
 
 export function nextModelForTask(targetDir: string, difficulty?: string, taskId?: string, key?: string): { model?: string; thinking?: string } {
   try {
-    const { resolveModel, resolveThinking } = require("./modelRouter.ts");
+    const { resolveModel, resolveThinking } = require("./modelRouter.ts") as typeof import("./modelRouter.ts");
     return {
       model: resolveModel({ projectDir: targetDir, task: { difficulty: difficulty as any, id: taskId, key } }),
       thinking: resolveThinking({ projectDir: targetDir, task: { difficulty: difficulty as any, id: taskId, key } }),
@@ -104,8 +201,7 @@ export function pickRunnableTasks(opts: PickOpts): FlatTask[] {
   const { list } = loadFeatureList(opts.targetDir);
   const phase = (opts.phase ?? null) as Phase | null;
   // Phase-filtered pool when phase given, else all tasks across phases.
-  const { flattenTasks } = require("./core/featureList.ts");
-  const all: FlatTask[] = phase ? tasksForPhase(list, phase) : (flattenTasks(list) as FlatTask[]);
+  const all: FlatTask[] = phase ? tasksForPhase(list, phase) : (flattenTasks(list) as FlatTask[]); // imported above
   // Build key map for dep check
   const byKey = new Map<string, FlatTask>();
   for (const t of all) {
@@ -172,13 +268,20 @@ export async function spawnWorkers(
 ): Promise<SpawnWorkerResult[]> {
   const { resolveModel } = await import("./modelRouter.ts");
   const runId = opts?.runId ?? runIdFor(targetDir, "sched");
+  // handoff bucket determines effective difficulty — read once
+  let handoff: HandoffGranularity = "task";
+  try { handoff = (loadConfig(targetDir).config.session?.handoff as HandoffGranularity) ?? "task"; } catch {}
+  const allList = (()=>{ try{ return loadFeatureList(targetDir).list; }catch{ return null as unknown as import("./core/types.ts").FeatureList; } })();
   const results: SpawnWorkerResult[] = [];
   for (const t of tasks) {
     const prompt = opts.promptFor(t);
     const router = loadRouterConfig(targetDir);
     let modelHint: string | undefined;
     if (router.enabled) {
-      try { modelHint = resolveModel({ projectDir: targetDir, task: { difficulty: (t as { difficulty?: string }).difficulty, id: t.id, key: t.compositeKey } }); } catch {}
+      try {
+        const effDiff = allList ? effectiveDifficultyForTask(t, handoff, allList) : (t as { difficulty?: string }).difficulty;
+        modelHint = resolveModel({ projectDir: targetDir, task: { difficulty: effDiff as string | undefined, id: t.id, key: t.compositeKey } });
+      } catch {}
     }
     const res = await spawnIsolatedWorker({
       projectDir: targetDir,

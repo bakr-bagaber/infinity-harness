@@ -244,6 +244,10 @@ export type DisplayPolicy = {
   taskWindow: number;
 };
 
+/** How deep the research phase goes, when enabled. Only asked when research is in the pipeline. */
+export type ResearchDepth = "standard" | "deep" | "comprehensive";
+export const RESEARCH_DEPTHS: readonly ResearchDepth[] = ["standard", "deep", "comprehensive"] as const;
+
 /** What the start-up wizard settled, so it is never asked twice. */
 export type IntakeState = {
   /** True once the wizard has run to completion for this project. */
@@ -257,6 +261,8 @@ export type IntakeState = {
 export type HarnessConfig = {
   version: string;
   stack: string | null;
+  /** Research depth — only meaningful when research is in phases.enabled. */
+  researchDepth?: ResearchDepth;
   mode: "copilot" | "autopilot";
   currentPhase: Phase | null;
   currentRole: Role | null;
