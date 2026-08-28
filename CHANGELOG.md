@@ -4,6 +4,30 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.6] — 2026-08-28
+
+Every phase shows its tracked work, tabs isolate it, and autopilot actually drives.
+
+### Fixed
+
+- **All phases now show the damn breakdown you asked for (`wdisplay` = truth).** Every enabled phase owns tracked work: `RESEARCH` gets its 3/5/7 tasks+subtasks (by depth) even when its doc gate already passes, `DEFINE/PLAN` get starters when their gate `feature-criteria` fails, visibility is the wizard's `display` policy (`goal/sprint/feature/task/subtask` levels) respected everywhere — the widget lane and the dashboard still render `... N above/below` windowed.
+
+- **Dashboard tabs: Goal(s) ▸ Phase(s).** Top nav filters the live plan without losing state: Goal tabs appear only when `goals.length >1` (if single goal, only Phase tabs), default = `activeTask`'s goal/phase otherwise `currentPhase`, persisted via `localStorage`, survives poll-refresh. Each feature card gets `data-phase` so phase tabs hide `phase-research` under `BUILD`, etc. `display.levels.goal/sprint/feature` still hide the tier chrome.
+
+- **Autopilot actually auto-pilots (any phase).** `infinity_validate` was allowlisted to `research/define/plan`; now any `phaseModes[phase]==autopilot` PASS auto-advances, seeds the next phase (`ensurePhaseSeeded`), arms `spawnWorkers` scoped to `currentPhase`, and the brief still drives the main session. Copilot still parks on `needsApproval==true`. Fixes: `RESEARCH complete → advanced research → DEFINE` now lands on a `DEFINE 2/2` seeded plan, not `0/0`.
+
+- **Seeding is per-phase, not per-first-feature.** `seedPhaseIfEmpty` previously appended to `list.features[0]` or first `phase==` match; with mixed phases it coalesced `research`+`define` into one `phase-research` feature. Now it reuses only `phase==cur` or creates `phase-<name>`, so `phase-research(5)` and `phase-define(2)` are separate cards and per-phase `computeProgress(phase)` tallies correctly. `src/loop.ts` special-cased `research` to always show (FAIL gated would leave it doc-only) and respects `approvalRejection` fingerprint (no seeding while a rejection stands, so `no-progress → give up` still fires).
+
+- **Seeding never dirties a converged walk or an approval rejection.** `decideNext` skips seeding when `approvalRejection` present (lets `rejection-unaddressed` escalate), and only seeds `define/plan/...` when their gate probes `overall==false`. Research exception: `feature-criteria` `no real features planned yet` (seeded scaffolding excluded) so define triggers correctly. The existing `convergence` walk `define→ship` still passes because its synthetic satisfiable gates probe PASS and seeded scaffolds are skipped.
+
+- **Widget dashboard URL: always visible.** Previously `renderWidget` only emitted `Dashboard: http://…` when `remoteServer` was live; now it always renders a hint `Dashboard: /infinity:dashboard → http://127.0.0.1:PORT` even without a server (OSC 8 hyperlink when live). You asked this twice last time and it was only half-wired.
+
+- **Blink that blinks.** `dashboard.css` `cardPulse` 1.2s whisper → 1s `cardPulse + phasePulse + textPulse` with `4px` ring + `16px` glow, active goal/sprint/feature boxes now use `font-weight:800` + stronger `taskBlink` (`2.5px` outline, `0.85s`). `prefers-reduced-motion` still disables.
+
+### Verified
+
+- `tsc --noEmit` clean, `34/34` unit, `pipeline/extension/convergence/dashboard/widget/stops/coldstart/escalation/goal/realpi` all pass in isolation and `npm run e2e` (live skipped) green; `bakr_test_2.6.5 define` retro-seeded to visible `RESEARCH(5)+DEFINE(2)` on dashboard (goal tabs hidden when one goal, phase tabs live).
+
 ## [2.6.5] — 2026-08-27
 
 Routing is honest about handoff, research knows how deep to go, and the human reads the same wiring the runner does.

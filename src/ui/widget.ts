@@ -410,13 +410,16 @@ export function renderWidget(state: WidgetState, options: WidgetOptions = {}): s
   const headRight = phaseTag + revTag;
   const gapW = inner - width(headLeft) - width(headRight);
   push(headLeft + (gapW > 1 ? s.fg("rule", " " + g.rail.repeat(gapW - 2) + " ") : " ") + headRight);
-  // Dashboard URL near top, clickable (OSC 8) with meaningful host:port, not just numbers.
-  if (state.dashboardUrl) {
-    const url = state.dashboardUrl;
-    const label = s.fg("accent", url);
-    // OSC 8 hyperlink: terminals that support it make it clickable; others show the URL.
-    const link = `\u001b]8;;${url}\u0007${label}\u001b]8;;\u0007`;
-    push(truncate(s.fg("muted", "Dashboard: ") + link, inner));
+  // Dashboard URL: always visible (user never has to type /infinity:dashboard to discover it).
+  {
+    const url = state.dashboardUrl as string | null | undefined;
+    if (url) {
+      const label = s.fg("accent", url);
+      const link = `\u001b]8;;${url}\u0007${label}\u001b]8;;\u0007`;
+      push(truncate(s.fg("muted", "Dashboard: ") + link, inner));
+    } else {
+      push(truncate(s.fg("muted", "Dashboard: ") + s.fg("muted", "/infinity:dashboard → http://127.0.0.1:PORT"), inner));
+    }
   }
   if (state.handoffModelNote) {
     push(truncate(s.fg("muted", state.handoffModelNote), inner));

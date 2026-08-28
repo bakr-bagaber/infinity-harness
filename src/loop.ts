@@ -275,17 +275,32 @@ export async function decideNext(options: DecideOptions): Promise<{ decision: Lo
 
   state.lastPhase = config.currentPhase;
 
-  // Generic: current phase with 0 tasks gets starters (research → deep, define/plan → fix rev 0).
-  // Same code for every phase, same trigger: 0 tasks && gate fails. Never dirties a converged walk.
+  // Every enabled phase owns tracked work. Visible breakdown (requirement 1) says RESEARCH must
+  // show its tasks even when its doc gate already PASSed — progress is the real signal.
+  // On a copilot approval project with real features, never inject scaffolding on a PASSing DEFINE.
+  // On synthetic mkSatisfiableProject (define→ship already complete, first tick PASS) also skip.
+  // All other empty phases (bakr_test define/plan after autopilot research) seed on FAIL.
   if (config.currentPhase && (config.phases?.enabled ?? []).includes(config.currentPhase)) {
+    const maybeRejected = Boolean((config as { approvalRejection?: unknown }).approvalRejection);
+    if (!maybeRejected) {
     try {
       const { list: _list } = loadFeatureList(targetDir);
       const hasPhaseTasks = (await import("./core/featureList.ts")).tasksForPhase(_list, config.currentPhase).length > 0;
       if (!hasPhaseTasks) {
-        const gateTrial = await runChecks(targetDir, config.currentPhase, { record: false });
-        if (!gateTrial.overall) seedPhaseIfEmpty(targetDir, config.currentPhase);
+        const curPhase = config.currentPhase;
+        if (curPhase === "research") {
+          // Research is doc + tracked tasks: always show the breakdown (5 tasks for deep). 
+          seedPhaseIfEmpty(targetDir, curPhase);
+        } else {
+          const curState = state;
+          const probe = await runChecks(targetDir, curPhase, { record: false });
+          if (!probe.overall) {
+            seedPhaseIfEmpty(targetDir, curPhase);
+          }
+        }
       }
     } catch {}
+    }
   }
 
   // -- terminal conditions --------------------------------------------------

@@ -991,10 +991,14 @@ table.tasks tr:last-child td{border-bottom:0}
 /* While-developed: the whole active branch pulses — every active box, not just one feature. */
 .dash-url{margin:8px 0 0;font-size:13px} .dash-url a{color:var(--t-accent);text-decoration:none;border-bottom:1px dashed rgba(var(--rgb-accent),.45)} .dash-url a:hover{border-bottom-style:solid}
 .handoff-note{margin:4px 0 0;color:var(--muted);font-size:12px}
-.tier.is-current,.feature.is-current{animation:cardPulse 1.2s ease-in-out infinite; border-color:var(--c-accent)!important; box-shadow:0 0 0 3px rgba(var(--rgb-accent),.45), 0 0 12px rgba(var(--rgb-accent),.25), var(--shadow)}
-.tier.is-current .tier-name,.feature.is-current .feature-name{color:var(--t-accent);font-weight:650}
-.row.is-active{animation:taskBlink 0.9s ease-in-out infinite; outline:2px solid var(--c-active); outline-offset:-2px; box-shadow:0 0 8px rgba(var(--rgb-active),.35)}
-@keyframes cardPulse{0%,100%{box-shadow:0 0 0 3px rgba(var(--rgb-accent),.45),0 0 12px rgba(var(--rgb-accent),.25),var(--shadow); border-color:var(--c-accent)}50%{box-shadow:0 0 0 7px rgba(var(--rgb-accent),.22),0 0 16px rgba(var(--rgb-accent),.32),var(--shadow); border-color:rgba(var(--rgb-accent),.70)}}
+/* Active branching: make it scream, not whisper. Three cues: glow, ring, and text luminance — reduced-motion still keeps the ring.
+   Pulse is strong at the crest, not near-reduced-motion. */
+.tier.is-current,.feature.is-current{animation:cardPulse 1s ease-in-out infinite; border-color:var(--c-accent)!important; box-shadow:0 0 0 4px rgba(var(--rgb-accent),.60), 0 0 16px rgba(var(--rgb-accent),.45), var(--shadow)}
+.tier.is-current .tier-name,.feature.is-current .feature-name{color:var(--t-accent);font-weight:800; animation:textPulse 1s ease-in-out infinite}
+.row.is-active{animation:taskBlink 0.85s ease-in-out infinite; outline:2.5px solid var(--c-active); outline-offset:-2px; box-shadow:0 0 10px rgba(var(--rgb-active),.45)}
+.step.is-current .dot{box-shadow:0 0 0 5px rgba(var(--rgb-accent),.50), 0 0 14px rgba(var(--rgb-accent),.40); animation:phasePulse 1s ease-in-out infinite}
+@keyframes cardPulse{0%,100%{box-shadow:0 0 0 4px rgba(var(--rgb-accent),.60),0 0 16px rgba(var(--rgb-accent),.45),var(--shadow); border-color:var(--c-accent)}50%{box-shadow:0 0 0 8px rgba(var(--rgb-accent),.15),0 0 20px rgba(var(--rgb-accent),.55),var(--shadow); border-color:rgba(var(--rgb-accent),.40)}}
+@keyframes phasePulse{0%,100%{box-shadow:0 0 0 5px rgba(var(--rgb-accent),.50),0 0 14px rgba(var(--rgb-accent),.40)}50%{box-shadow:0 0 0 9px rgba(var(--rgb-accent),.10),0 0 18px rgba(var(--rgb-accent),.55)}}
 @keyframes textPulse{0%,100%{opacity:1}50%{opacity:.78}}
 .row-blocked{background:rgba(var(--rgb-blocked),.07)}
 .row-blocked .cell-n{box-shadow:inset 2px 0 0 var(--c-blocked)}
@@ -1120,6 +1124,43 @@ const SCRIPT = `
     return o;
   }
 
+  // Tabs: remember selection in localStorage; Goal hidden when only one goal; filter by phase/goal.
+  function tabBind() {
+    try {
+      var GK='ih-goal', PK='ih-phase';
+      function read(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+      function write(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+      var selGoal = read(GK);
+      var selPhase = read(PK);
+      var goalEls = document.querySelectorAll('[data-goal]');
+      var phaseEls = document.querySelectorAll('[data-phase]');
+      // Seed from is-current when no stored choice.
+      if(!selGoal){ var cur=document.querySelector('[data-goal].is-current'); if(cur) selGoal=cur.getAttribute('data-goal'); }
+      if(!selPhase){ var curP=document.querySelector('[data-phase].is-current'); if(curP) selPhase=curP.getAttribute('data-phase'); }
+      function apply(){
+        var gTabs=document.querySelectorAll('.dash-tabs [data-goal]');
+        var pTabs=document.querySelectorAll('.dash-tabs [data-phase]');
+        gTabs.forEach(function(el){ el.classList.toggle('is-current', el.getAttribute('data-goal')===selGoal); });
+        pTabs.forEach(function(el){ el.classList.toggle('is-current', el.getAttribute('data-phase')===selPhase); });
+        // If user picked a goal that doesn't exist anymore, fall back to first.
+        var tiers=document.querySelectorAll('.tier.tier-goal');
+        if(tiers.length===0) tiers=document.querySelectorAll('.tier:not(.tier-goal)');
+        // Hide tiers that don't match selected goal (when goal tabs visible, else show all).
+        if(goalEls.length>0 && selGoal){
+          document.querySelectorAll('.tier.tier-goal').forEach(function(t){ var id=(t.querySelector('[data-goal]')||t).getAttribute('data-goal'); var match = !id || id===selGoal; t.classList.toggle('tier-hidden', !match); });
+        }
+        // Phase filter: hide features/tasks not in selected phase. Server could filter but client keeps auto-refresh.
+        if(selPhase){
+          document.querySelectorAll('.feature').forEach(function(f){ var ph=f.getAttribute('data-phase')||''; if(ph && ph!==selPhase) f.classList.add('tier-hidden'); else f.classList.remove('tier-hidden'); });
+        }
+        // If only one goal, goal strip already hidden server-side — no tier-hidden by goal.
+      }
+      goalEls.forEach(function(el){ el.addEventListener('click', function(){ selGoal=el.getAttribute('data-goal'); write(GK, selGoal); apply(); }); });
+      phaseEls.forEach(function(el){ el.addEventListener('click', function(){ selPhase=el.getAttribute('data-phase'); write(PK, selPhase); apply(); }); });
+      apply();
+    } catch(e){}
+  }
+  tabBind();
   function refresh() {
     // A hidden tab is not being read; skip the work but keep the loop alive.
     if (document.hidden) { schedule(BASE); return; }
@@ -1217,7 +1258,33 @@ export function renderDashboard(state: DashboardState): string {
   // Which feature/sprint/goal is currently being worked (for blinking).
   const activeTask = tasks.find((t) => t.status === "in_progress" || t.status === "rework") ?? tasks.find((t) => t.status === "pending") ?? null;
   const activeFeatureId = activeTask?.featureId ?? null;
-  const body = features.length
+  // — tabs: Goal(s) top row, Phase(s) second row. Default = active task's goal/phase, else current phase.
+  // On a project that has exactly one goal, the goal tab strip hides (requirement §3). The phase tab strip
+  // always shows so RESEARCH progress is isolated from BUILD progress — same plan-list, filtered view.
+  const activeGoalId = (() => {
+    if (!activeTask) return goals[0]?.id ?? null;
+    const f = features.find((ff) => ff.id === activeTask.featureId) ?? null;
+    const s = f?.sprintId ? sprints.find((ss) => ss.id === f!.sprintId) ?? null : null;
+    return (f?.goalId ?? s?.goalId ?? goals[0]?.id ?? null) as string | null;
+  })();
+  const currentPhase = state.phase ?? null;
+  const showGoalTabs = display.levels.goal && goals.length > 1;
+  const phaseTabs = getPhaseOrder(state.enabledPhases);
+  const goalTabsHtml = showGoalTabs
+    ? `<nav class="dash-tabs" aria-label="Goals">` +
+      goals.map((g) => {
+        const cur = g.id === activeGoalId ? ' is-current' : '';
+        return `<button type="button" class="dash-tab${cur}" data-goal="${esc(g.id)}">${esc(g.title ?? g.id)}</button>`;
+      }).join("") + `</nav>`
+    : "";
+  const phaseTabsHtml = `<nav class="dash-tabs" aria-label="Phases">` +
+    phaseTabs.map((p) => {
+      const cur = p === currentPhase ? ' is-current' : '';
+      return `<button type="button" class="dash-tab${cur}" data-phase="${esc(p)}">${esc(p.toUpperCase())}</button>`;
+    }).join("") + `</nav>`;
+  const tabStyle = `<style>.dash-tabs{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 6px}.dash-tab{appearance:none;border:1px solid var(--border);background:var(--surface);border-radius:999px;padding:4px 10px;font:500 12px/1.2 inherit;color:var(--muted);cursor:pointer}.dash-tab.is-current{background:var(--c-accent);color:#fff;border-color:var(--c-accent);box-shadow:0 0 0 3px var(--ring)}.dash-tab:focus-visible{outline:2px solid var(--c-accent);outline-offset:2px}.tier-hidden{display:none!important}</style>`;
+  // Tag every feature row with its effective phase so tabs can filter client-side without a round-trip.
+  const origBody = features.length
     ? groups
         .map((group) =>
           renderGoalGroup(
@@ -1234,6 +1301,16 @@ export function renderDashboard(state: DashboardState): string {
         )
         .join("")
     : renderEmptyPlan(state.phase);
+  const body = (() => {
+    if (!origBody) return origBody;
+    // Inject data-phase on each feature card using featurePhase list.
+    let idx = 0;
+    return origBody.replace(/<section class="card feature/g, () => {
+      const f = features[idx++] ?? null;
+      const ph = (f as { phase?: string } | null)?.phase ?? (flattenTasks(list).find((t) => t.featureId === f?.id)?.effectivePhase as string | undefined) ?? "build";
+      return `<section data-phase="${esc(ph)}" class="card feature`;
+    });
+  })();
 
   const titleBits: string[] = [];
   if (paused) titleBits.push("PAUSED");
@@ -1253,7 +1330,7 @@ export function renderDashboard(state: DashboardState): string {
 <!-- Empty data URI: suppresses the /favicon.ico request the harness server would 404. -->
 <link rel="icon" href="data:,">
 <title>${esc(title)}</title>
-<style>${STYLES}</style>
+<style>${STYLES}</style>${tabStyle}
 </head>
 <body>
 <div id="app">
@@ -1273,6 +1350,7 @@ ${
 }
 ${display.progress ? renderProgress(counts, progress.tasksTotal, progress.featuresDone, progress.featuresTotal) : ""}
 ${renderGate(gate)}
+${goalTabsHtml}${phaseTabsHtml}
 ${body}
 <footer class="foot">
   <span>state as of <span class="mono">${esc(formatTimestamp(state.timestamp))}</span></span>

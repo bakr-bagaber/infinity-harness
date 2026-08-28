@@ -160,7 +160,7 @@ export function buildHtml(state: RemoteState): string {
 }
 
 /** JSON payload for `/api/harness`. Excludes the full list to stay compact. */
-export function buildApiPayload(state: RemoteState): Record<string, unknown> {
+export function buildApiPayload(state: RemoteState & { dashboardUrl?: string | null; handoffModelNote?: string | null }): Record<string, unknown> {
   return {
     baseRevision: state.baseRevision,
     phase: state.phase,

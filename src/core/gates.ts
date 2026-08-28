@@ -336,8 +336,10 @@ async function checkNoEmptyDirs({ targetDir }: Ctx): Promise<CheckResult> {
 async function checkFeatureCriteria({ targetDir }: Ctx): Promise<CheckResult> {
   const { list } = loadFeatureList(targetDir);
   // Seeded starter features (phase-*) are scaffolding, not real features — ignore for criteria gate.
+  // Also: if no non-scaffold features exist yet, DEFINE has not been planned and must not PASS on a
+  // single phase-* dummy. Treat absent as FAIL with a distinct detail so callers seeding define know to act.
   const features = (list.features ?? []).filter((f) => !(f as { phase?: string }).phase);
-  if (features.length === 0) return fail("feature-criteria", "no features planned yet");
+  if (features.length === 0) return fail("feature-criteria", "no real features planned yet — run DEFINE");
   const missing = features.filter((f) => !(f.criteria ?? []).length).map((f) => f.id);
   return missing.length === 0
     ? pass("feature-criteria", `${features.length} feature(s) have criteria`)
@@ -381,10 +383,9 @@ type Check = (ctx: Ctx) => Promise<CheckResult>;
 
 const PHASE_CHECKS: Record<Phase, Check[]> = {
   init: [checkGitRepo, checkConfigExists],
-  // Generic: tasks + doc on every phase — RESEARCH no longer doc-only, DEFINE/PLAN no longer doc-only.
-  // tasksComplete is advisory on define/plan/research so seeded tasks stay visible without freezing
-  // the synthetic mkSatisfiableProject walk that never completes seeded tasks. The dashboard widget
-  // still shows ... subtasks and progress as the real signal; BUILD keeps tasksComplete blocking.
+  // tasksComplete is advisory on seeded-phase gates only when seeded work exists — otherwise the
+  // converge walk would freeze on the seeded define/plan tasks that test never completes. Once BUILD
+  // has tasksComplete remains blocking.
   research: [checkResearchDoc],
   define: [checkFeatureCriteria, checkSkillsLoad],
   plan: [checkFeatureCriteria, checkTasksPlanned],

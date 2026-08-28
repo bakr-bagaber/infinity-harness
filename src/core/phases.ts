@@ -217,6 +217,15 @@ function startersForPhase(dir: string, phase: string): StarterTask[] {
   return STARTER_TASKS_BY_DEPTH[DEFAULT_RESEARCH_DEPTH] ?? [];
 }
 
+export function ensurePhaseSeeded(dir: string, phase: import("./types.ts").Phase): boolean {
+  try {
+    const { list } = loadFeatureList(dir);
+    if (tasksForPhase(list, phase).length > 0) return false;
+    const r = seedPhaseIfEmpty(dir, phase);
+    return r.seeded;
+  } catch { return false; }
+}
+
 export function seedPhaseIfEmpty(dir: string, phase: import("./types.ts").Phase): { seeded: boolean; error: string | null } {
   const seeded = startersForPhase(dir, phase);
   if (seeded.length === 0) return { seeded: false, error: null };
@@ -224,12 +233,10 @@ export function seedPhaseIfEmpty(dir: string, phase: import("./types.ts").Phase)
     const { list } = loadFeatureList(dir);
     const existing = tasksForPhase(list, phase);
     if (existing.length > 0) return { seeded: false, error: null };
-    // Append to first feature matching phase, or create a phase feature.
-    const feature = (
-      list.features.find((f) => (f as { phase?: string }).phase === phase) ??
-      list.features[0] ??
-      ({ id: `phase-${phase}`, name: phase.toUpperCase(), tasks: [] } as unknown as typeof list.features[number])
-    );
+    // Each phase gets its own feature (phase-<name>) so per-phase tabs/groups isolate correctly.
+    // Never append a "define" task to a "research" feature — the feature.phase is the grouping key.
+    const match = list.features.find((f) => (f as { phase?: string }).phase === phase);
+    const feature: typeof list.features[number] = match ?? ({ id: `phase-${phase}`, name: phase.toUpperCase(), tasks: [] } as unknown as typeof list.features[number]);
     if (!list.features.includes(feature as any)) {
       (feature as { phase?: string }).phase = phase;
       list.features.push(feature as any);
