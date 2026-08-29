@@ -32,3 +32,19 @@ Agreed.
 **Negotiation rounds:** 2/5
 
 
+
+
+## Update V3 — Daemon and Thin Control Room (sprint-007)
+
+**Built:**
+- `harness/plan.json` canonical + legacy stub + `src/core/plan.ts` shim; `config.tiers`/`pilot`/`limits`/`execution.isolation` validated & clamped (tier migration from `model-router.json` once)
+- `src/core/runState.ts` extended with `baseModel`/`tiers`/`budget` (`budget.byTier` + `cap` + `X` tripwire); `daemon/budget.ts` + `daemon/preflight.ts` + `daemon/isolation.ts` (harness-free loader + `customTools`)
+- `daemon/guard.ts` + `daemon/server.ts` (daemon.json pid/port/token 0600, heartbeat 20s stale 90s, single-owner) + `daemon/worker.ts` events→TurnResult (servedModel, usage cumulative max, compaction recycle capped 2, CredentialSync retry)
+- `daemon/index.ts` detached spawn + baseModel required + preflight blocking + sequential runLoop; `daemon/supervisorState.ts` + `ui/viewState.ts` daemon.json first, asked vs served, activity 400
+- Extension thin viewer: widget never renders dead run as live, control-panel contract + X tripwire, dashboard served by daemon
+- Per-phase invariants: Task.phase required on write, progressive expansion A-worker, decideNext phase-scoped, rework forward-only capped 2, replan cancels capped 3
+- Parallel steel: scheduler ready set (`phase`/`dependsOn`/`parallelAt`/`maxWorkers`), worktree per worker (gate in worktree, merge lock, post-merge verify), maxWorkers 1→3 with e2e realpi proof
+
+**Not built:** Multi-step consultation (one-step only), horizontal parallel inside a unit, X direct assignment, `isolation:none` parallelism.
+
+**Agreement:** V3 delivered as 6 features (009–014, 20 tasks) in `harness/plan.json` sprint-007; `harness/config.json` armed with `execution:background/worktree/3` and `pilot:autopilot`.

@@ -302,12 +302,19 @@ export function applyTaskList(current: FeatureList, input: ApplyInput): ApplyRes
 
     if (raw.difficulty !== undefined) task.difficulty = raw.difficulty as Task["difficulty"];
     if (raw.modelHint !== undefined) task.modelHint = raw.modelHint;
-    if (raw.criteria !== undefined) task.criteria = raw.criteria;
     if (raw.phase !== undefined) {
       const pa = String(raw.phase).trim().toLowerCase();
       const VALID_PHASES = ["init","research","define","plan","build","verify","simplify","review","ship"];
       if (!VALID_PHASES.includes(pa)) throw new ValidationError(`${path}.phase is invalid: ${String(raw.phase)}`);
       (task as unknown as { phase: string }).phase = pa;
+    }
+    if (raw.serialize !== undefined) {
+      (task as unknown as { serialize: boolean }).serialize = Boolean(raw.serialize);
+    }
+    if (raw.criteria !== undefined) {
+      if (!Array.isArray(raw.criteria)) throw new ValidationError(`${path}.criteria must be an array`);
+      const criteria = validateCriteria(raw.criteria, `${path}.criteria`);
+      (task as unknown as { criteria: string[] }).criteria = criteria;
     }
 
     staged.push({ featureId, task, compositeKey: key });

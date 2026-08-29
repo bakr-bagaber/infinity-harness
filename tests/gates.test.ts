@@ -179,7 +179,7 @@ function byName(checks: readonly CheckResult[], name: string): CheckResult {
   const dir = tmpProject((c) => {
     c.gates.coverage.enabled = true;
     c.gates.coverage.threshold = 80;
-    c.commands.coverage = "echo 'All files | 91.2% stmts | 84% branch'";
+    c.commands.coverage = "node -e \"console.log('All files | 91.2% stmts | 84% branch')\"";
   }, onePlan("complete"));
   try {
     const pass = await runChecks(dir, "build", { record: false });

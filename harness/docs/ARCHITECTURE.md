@@ -33,7 +33,7 @@ decisions honest across a very long run.
               └───────────────────────┬───────────────────────┘
                                       ▼
                             harness/  (state on disk)
-                            config.json · features/feature-list.json
+                            config.json · plan.json (legacy: harness/features/feature-list.json) · run.json · daemon.json · supervisor.json
 ```
 
 **The extension is thin on purpose.** An earlier version inlined its own copies of the plan engine
@@ -53,11 +53,14 @@ mistake has already been made twice and fixed twice.
 | `fsx.ts` | Atomic JSON writes, `.bak` snapshots, absent-vs-corrupt reads. |
 | `exec.ts` | Every shell-out, bounded by a timeout. Never throws; failures are data. |
 | `lock.ts` | `withLockSync` (exclusive, fail-closed) and `withLock` (advisory, best-effort). |
-| `config.ts` | `harness/config.json` — pipeline state, retry budgets, gate history. |
+| `config.ts` | `harness/config.json` — pipeline state, pilot/limits/tiers/isolation, retry budgets, gate history. |
 | `phases.ts` | The forward-only state machine and `transitionPhase`. |
 | `gates.ts` | The deterministic checks and the runner. |
-| `featureList.ts` | The plan on disk: load, save, flatten, progress, dependency integrity. |
+| `featureList.ts` | The plan on disk (`harness/plan.json` canonical): load, save, flatten, progress, dependency integrity. |
+| `plan.ts` | Canonical alias for `featureList.ts` — the name the ARCHITECTURE diagram calls `plan`. |
+| `runState.ts` | `harness/run.json` — is a run armed, tiers/budget, wallClock. |
 | `brief.ts` | "What do I do now?", assembled from state and rendered for a model. |
+| `modelRouter.ts` | Tier routing `A/B/C/D/X` (pure routing; preflight + budget live in `daemon/`). |
 
 These were ported to TypeScript from a sibling CLI project that used to be reached through a symlink.
 The symlink made the package unshippable — it pointed at an absolute path on one developer's
@@ -74,6 +77,9 @@ machine — so the needed logic is now owned, typed, and tested here.
   mid-build amendment.
 - **`unstuck.ts` / `review.ts`** — escalation strategy matrix; the REVIEW bounce guard.
 - **`remote.ts`** — the read-only dashboard server.
+- **`daemon/`** — `daemon.json` liveness, localhost `port 0` token server, worker adapter, preflight + budget guardrails, detached heartbeat, `worktree` isolation.
+- **`supervisor.ts` / `runState.ts` / `handoff.ts` / `loop.ts`** — who is armed, when to hand off, when to stop, and which unit owns which session/model.
+- **`scheduler.ts` / `daemon/worker.ts` / `daemon/isolation.ts`** — ready-set, worktree-per-worker, gate-in-worktree + merge lock, model fallback handling.
 
 ### `src/ui/` — the visible surface
 
@@ -87,7 +93,7 @@ machine — so the needed logic is now owned, typed, and tested here.
 session_start ──► buildBrief ──► renderBrief ──► sendMessage        the agent is told what to do
                      ▲
                      │
-agent works ─────────┼──► infinity_plan ──► writeTaskList ──► feature-list.json
+agent works ─────────┼──► infinity_plan ──► writeTaskList ──► plan.json (legacy: feature-list.json)
                      │                          (locked)              │
                      │                                                ▼
 agent_settled ──► decideNext ──► runChecks ──► gate verdict      widget · dashboard
@@ -99,7 +105,7 @@ agent_settled ──► decideNext ──► runChecks ──► gate verdict   
 ```
 
 Nothing caches a second copy of the plan. The widget, the dashboard and the brief all read
-`feature-list.json`, so the visible state is always the real state — even when the agent's own
+`plan.json (legacy: feature-list.json)`, so the visible state is always the real state — even when the agent's own
 narration has drifted.
 
 ## Concurrency
@@ -152,8 +158,8 @@ Every stop carries a reason. A human coming back finds an explanation, not a mys
 
 ## Verification
 
-- `npm test` — 20 unit files, plain `node:assert`, no framework.
-- `npm run e2e` — 15 scenarios over real temp projects, real git repos, real child processes: the
+- `npm test` — 35 unit files, plain `node:assert`, no framework.
+- `npm run e2e` — 17 scenarios over real temp projects, real git repos, real child processes: the
   full pipeline walkthrough, loop convergence, every stop condition, SIGKILL-and-restart, a 6-way
   concurrent write fan-out with an unlocked control, data round-trip, the dashboard, widget
   rendering across shapes, adversarial input, and the extension adapter itself.

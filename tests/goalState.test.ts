@@ -13,7 +13,7 @@ function tmpProject(): string {
 // --- paths repointed to tmp/infinity-harness/goals ---
 {
   const store = new GoalStateStore({ cwd: "/tmp", goalRunId: "run-1" });
-  assert.ok(store.paths.goalRunDir.includes("tmp/infinity-harness/goals/run-1"), `goalRunDir ${store.paths.goalRunDir} should contain tmp/infinity-harness/goals`);
+  assert.ok(store.paths.goalRunDir.replace(/\\/g, "/").includes("tmp/infinity-harness/goals/run-1"), `goalRunDir ${store.paths.goalRunDir} should contain tmp/infinity-harness/goals`);
   assert.ok(store.paths.statePath.endsWith("GOAL_STATE.json"));
   assert.ok(store.paths.tracePath.endsWith("GOAL_TRACE.jsonl"));
   assert.ok(store.paths.goalSpecPath.endsWith("GOAL_SPEC.json"));
@@ -111,7 +111,7 @@ function tmpProject(): string {
     let s2 = startGoalIteration(state, { now });
     const snapPath = await store.writeIterationSnapshot(s2.iterations[0]);
     assert.ok(existsSync(snapPath), "snapshot exists");
-    assert.ok(snapPath.includes("iterations/01/ITERATION_STATE.json"), `snapPath ${snapPath}`);
+    assert.ok(snapPath.replace(/\\/g, "/").includes("iterations/01/ITERATION_STATE.json"), `snapPath ${snapPath}`);
     assert.equal(store.iterationDir(2), join(store.paths.iterationsDir, "02"));
     assert.equal(store.iterationDir(12), join(store.paths.iterationsDir, "12"));
 
@@ -181,8 +181,8 @@ function tmpProject(): string {
     const afterFl = JSON.parse(readFileSync(flPath, "utf8"));
     assert.equal(afterFl.baseRevision, 7, "baseRevision preserved");
     // tmp isolated: runDir under tmp/infinity-harness/goals not under harness
-    assert.ok(store.paths.goalRunDir.includes("tmp/infinity-harness/goals"), "isolated runDir");
-    assert.ok(!store.paths.goalRunDir.includes("harness/features"), "not in feature-list");
+    assert.ok(store.paths.goalRunDir.replace(/\\/g, "/").includes("tmp/infinity-harness/goals"), "isolated runDir");
+    assert.ok(!store.paths.goalRunDir.replace(/\\/g, "/").includes("harness/features"), "not in feature-list");
     console.log("✓ saveGoalSpecificationWithCanonical mirrors + baseRevision preserved + isolated");
   } finally {
     rmSync(proj, { recursive: true, force: true });

@@ -1,42 +1,42 @@
 {
-  "version": "0.1",
+  "version": "2.0",
   "baseRevision": 8,
   "goals": [
     {
       "id": "goal-001",
-      "title": "infinity-harness v1.0 — superset visual harness",
+      "title": "infinity-harness v1.0 \u2014 superset visual harness",
       "description": "Enforced, 5-level, compaction-safe, worker-isolated"
     }
   ],
   "sprints": [
     {
       "id": "sprint-001",
-      "name": "F1 — Visual 5-Level Widget + baseRevision",
+      "name": "F1 \u2014 Visual 5-Level Widget + baseRevision",
       "goalId": "goal-001"
     },
     {
       "id": "sprint-002",
-      "name": "F2 — Enforcer Auto-Loop Hardening",
+      "name": "F2 \u2014 Enforcer Auto-Loop Hardening",
       "goalId": "goal-001"
     },
     {
       "id": "sprint-003",
-      "name": "F3 — Worker Isolation per BUILD Task",
+      "name": "F3 \u2014 Worker Isolation per BUILD Task",
       "goalId": "goal-001"
     },
     {
       "id": "sprint-004",
-      "name": "F4 — Goal Loop with GOAL_SPEC.json + Reviewer Worker",
+      "name": "F4 \u2014 Goal Loop with GOAL_SPEC.json + Reviewer Worker",
       "goalId": "goal-001"
     },
     {
       "id": "sprint-005",
-      "name": "F5 — Remote Read-Only Web View → 1.0.0",
+      "name": "F5 \u2014 Remote Read-Only Web View \u2192 1.0.0",
       "goalId": "goal-001"
     },
     {
       "id": "sprint-006",
-      "name": "F6 — Resilient Self-Correction → 1.1.0",
+      "name": "F6 \u2014 Resilient Self-Correction \u2192 1.1.0",
       "goalId": "goal-001"
     },
     {
@@ -49,13 +49,13 @@
     {
       "id": "feature-001",
       "name": "Visual 5-Level Widget + baseRevision",
-      "description": "Pi TUI widget showing Goal→Feature→Sprint→Task→Subtask with rolling window, deps, and compaction-safe atomic state",
+      "description": "Pi TUI widget showing Goal\u2192Feature\u2192Sprint\u2192Task\u2192Subtask with rolling window, deps, and compaction-safe atomic state",
       "passes": true,
       "producedByRole": "generator",
       "sprintId": "sprint-001",
       "goalId": "goal-001",
       "definitionOfDone": [
-        "Widget renders 5 levels with ○●◐⚠↷, Progress, +3 more, ← #1 deps, wraps long labels",
+        "Widget renders 5 levels with \u25cb\u25cf\u25d0\u26a0\u21b7, Progress, +3 more, \u2190 #1 deps, wraps long labels",
         "harness/feature-list.json has baseRevision, key, dependsOn, subtasks; stale baseRevision rejected",
         "State survives /reload, /tree, and compaction via hidden checkpoint"
       ],
@@ -91,8 +91,8 @@
           "status": "complete",
           "acceptanceCriteria": [
             "src/widget.ts implements getWidgetWindowBounds, wrapWidgetLines, statusIcon, rolling window",
-            "Widget shows Goal→Feature→Sprint→Task→Subtask with Progress and +3 more overflow",
-            "Long labels wrap not truncate, deps shown as ← #1"
+            "Widget shows Goal\u2192Feature\u2192Sprint\u2192Task\u2192Subtask with Progress and +3 more overflow",
+            "Long labels wrap not truncate, deps shown as \u2190 #1"
           ],
           "dependsOn": [
             "schema-5level"
@@ -125,6 +125,11 @@
         1,
         2,
         3
+      ],
+      "criteria": [
+        "Widget renders 5 levels with \u25cb\u25cf\u25d0\u26a0\u21b7, Progress, +3 more, \u2190 #1 deps, wraps long labels",
+        "harness/feature-list.json has baseRevision, key, dependsOn, subtasks; stale baseRevision rejected",
+        "State survives /reload, /tree, and compaction via hidden checkpoint"
       ]
     },
     {
@@ -159,6 +164,11 @@
         1,
         2,
         3
+      ],
+      "criteria": [
+        "session_start notify+widget without mid-stream sendUserMessage survives reload",
+        "context injects hidden checkpoint after compaction and reminder every 3 calls",
+        "tool_call blocks phase-skip and session_before_compact checkpoint stored, tsc clean"
       ]
     },
     {
@@ -208,6 +218,11 @@
         1,
         2,
         3
+      ],
+      "criteria": [
+        "src/worker.ts provides worker dirs and proper-lockfile isolation, tests pass and tsc clean",
+        "Worker attempt history tmp/infinity-harness/<run-id>/... written by the infinity:run command workers, baseRevision preserved",
+        "Version 0.4.0 with changelog, enforcer stays notify-only without stream race"
       ]
     },
     {
@@ -272,11 +287,16 @@
         1,
         2,
         3
+      ],
+      "criteria": [
+        "src/goalSpec.ts, src/goalLoop.ts, src/goalState.ts provide spec/loop/state helpers with proper-lockfile and tsc clean",
+        "GoalSpecification persists to harness/goals/GOAL_SPEC.json and loop writes tmp/infinity-harness/goals/<runId>/GOAL_STATE.json + GOAL_TRACE.jsonl + iterations/<nn>/ with GOAL_SPEC.json mirrored and reviewer isolated to tmp/infinity-harness/<runId>/review/attempt-1/",
+        "Version 0.5.0 with changelog, enforcer exposes infinity_goal via spawnIsolatedWorker without stream race"
       ]
     },
     {
       "id": "feature-005",
-      "name": "Remote Read-Only Web View → 1.0.0",
+      "name": "Remote Read-Only Web View \u2192 1.0.0",
       "description": "Read-only HTTP view of harness state with widget lines reuse src/widget.ts, no mutation, 127.0.0.1 ephemeral -> GET / HTML + GET /api/harness JSON + GET /api/health",
       "passes": true,
       "producedByRole": "generator",
@@ -321,6 +341,11 @@
         1,
         2,
         3
+      ],
+      "criteria": [
+        "src/remote.ts provides buildRemoteState and createRemoteServer read-only polling with node:http 127.0.0.1 ephemeral, tsc clean",
+        "Remote demonstrates GET /api/harness shape baseRevision/widgetLines/timestamp and GET / HTML contains infinity-harness + Progress/Todos without mutating baseRevision or feature-list.json, concurrent serialized, close frees port, escaping",
+        "Version 1.0.0 with changelog, enforcer exposes infinity_dashboard alias infinity_dashboard without stream race, singleton session_shutdown closes"
       ]
     },
     {
@@ -370,6 +395,11 @@
           ],
           "subtasks": []
         }
+      ],
+      "criteria": [
+        "Schema allows status rework and difficulty/modelHint; widget renders amber and infinity_plan accepts rework",
+        "src/rework.ts startRework computes impact BFS limited by maxImpactDepth, flips origin+impacted to rework, bumps baseRevision, writes harness/rework.json atomically",
+        "src/replan.ts amendPlan validates DAG (no cycles/missing deps), guards maxReplansPerRun, bumps baseRevision atomically"
       ]
     },
     {
@@ -421,6 +451,11 @@
           ],
           "subtasks": []
         }
+      ],
+      "criteria": [
+        "harness/model-router.json v1 exists with enabled/default/byDifficulty/master/byPhase/byRole/byTask/consultation/budgets; read fresh each call",
+        "src/modelRouter.ts exports resolveModel and consultNext with ladder easy->moderate->difficult->MASTER, MASTER never assigned, oneStepOnly and requireExhaustion",
+        "src/worker.ts SpawnOpts.model passthrough isolates per-task model; goalLoop reviewerCommand uses resolveModel; enforcer infinity_spawn_worker accepts model"
       ]
     },
     {
@@ -472,6 +507,11 @@
           ],
           "subtasks": []
         }
+      ],
+      "criteria": [
+        "src/unstuck.ts chooses strategy in unstuck.strategies order with budgets, fingerprint dedup, fileDelta guard, hysteresis",
+        "Review bounce flips to rework only when fileDelta true and bounceRequiresDelta, guarded by maxBounces; consultation one-step and requires exhaustion; MASTER once per run",
+        "src/remote.ts buildRemoteState includes router:{enabled,budgets,byDifficulty} and rework:{active,impactedCount} read-only; package.json 1.1.0 and CHANGELOG"
       ]
     },
     {

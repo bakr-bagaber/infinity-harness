@@ -159,6 +159,8 @@ function normalizeList(raw: FeatureList): FeatureList {
     if (!Array.isArray(f.tasks)) f.tasks = [];
     for (const t of f.tasks) {
       if ((t as { phase?: unknown }).phase !== undefined && typeof (t as { phase?: unknown }).phase !== "string") delete (t as { phase?: unknown }).phase;
+      if ((t as { criteria?: unknown }).criteria !== undefined && !Array.isArray((t as { criteria?: unknown }).criteria)) delete (t as { criteria?: unknown }).criteria;
+      if ((t as { serialize?: unknown }).serialize !== undefined && typeof (t as { serialize?: unknown }).serialize !== "boolean") delete (t as { serialize?: unknown }).serialize;
       if (!Array.isArray(t.dependsOn)) t.dependsOn = [];
       if (!Array.isArray(t.subtasks)) t.subtasks = [];
       try {

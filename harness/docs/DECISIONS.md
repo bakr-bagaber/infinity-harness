@@ -105,3 +105,47 @@ verdict instead.
 expensive side effect. And a page rendering model output on a public interface leaks the project;
 binding elsewhere requires an explicit opt-in, and the CSP is tight enough that an escaping slip
 cannot become script execution.
+
+---
+
+## 9. The canonical plan is `harness/plan.json`
+
+**Context.** The plan lived as `harness/features/feature-list.json`, a nested path that leaked storage layout into every reader. V3 renamed the canonical to `harness/plan.json` and kept the legacy path as a read-through + write-through alias with a `movedTo` stub. Reads try canonical first, then legacy; writes materialise both so `loadFeatureList` callers and `plan.json` callers see the same truth. One implementation in `src/core/featureList.ts`, one alias in `src/core/plan.ts`.
+
+**Cost.** Dual-write until all callers migrate; `.bak` handling for both paths.
+
+---
+
+## 10. Config tiers + limits are validated and clamped with a warning, not an exception
+
+**Decision.** `loadConfig` validates `pilot`, `limits`, `tiers`, and `execution.isolation`. Unknown pilot falls back to `autopilot`; `parallelAt` finer than `handoff` is clamped and logged; `isolation:none` forces `maxWorkers` to 1. `src/core/config.normalizeTiers` migrates `byDifficulty`/`master` from `harness/model-router.json` once, per tier.
+
+**Why.** A hand-edited `config.json` must produce a widget, never an exception that takes the session down. Logging the clamp tells the human what was changed without breaking the run.
+
+---
+
+## 11. The Daemon owns the run; the session becomes a control panel
+
+**Context.** Before 2.7 the run lived in the human's session and its model. The loop pushed the brief back into that session, so the session's model did every task, its context carried the whole run, and handoff replaced the human's terminal.
+
+**Decision.** A detached Daemon (`daemon/index.ts` via `spawn(detached:true)` + `unref()`) owns the run: heartbeat every 20s (stale 90s), localhost server on `127.0.0.1:0` with a 0600 token (`daemon.json`), `supervisor.json` + `activity.json` workers log. The extension captures `ctx.model` to `run.json.baseModel` at arm time; workers run as `pi --mode rpc` children with `--model` from their tier. `src/supervisor.ts` drives them — plain JS, zero tokens in the human session.
+
+**Cost.** One more process; `harness/daemon.log` for diagnostics; `guardSingleOwner` to prevent rival Daemons.
+
+---
+
+## 12. Handoff and model boundary are the same boundary
+
+**Decision.** `session.handoff` names the unit (goal/phase/sprint/feature/task/subtask). One worker owns one unit from start to finish. Crossing a unit boundary closes that worker and starts a new one; because the model is chosen at spawn, the session boundary and the model boundary are the same boundary by construction. A feature-level handoff is one session for the whole feature, and its tasks share that feature's hardest tier.
+
+---
+
+## 13. Per-phase planning invariants
+
+**Decision.** Every phase owns its tasks (`Task.phase` required on write, handoff collapse, progressive expansion via an `A` worker). `decideNext` is phase-scoped; `isPhaseDone` includes the rework queue; `rework` flips `complete` to `pending` with a record (forward-only); `replan` cancels (adds a `replan.json` record) rather than deleting, capped at 3 per phase. Gates hold until rework is drained; rework is capped at 2 and `maxBounces` at 2 with `bounceRequiresDelta`.
+
+---
+
+## 14. Parallel steel: ready-set, worktree, gate, merge
+
+**Decision.** `scheduler.ts` `ready` set respects `phase`/`dependsOn`/`parallelAt`/`maxWorkers`; `daemon/worktree.ts` creates a git worktree per concurrent worker, gates in the worktree, then merges under a merge lock with `post-merge gate` verification. Merge conflicts rework; worktree per worker is `worktree`/`none` isolation. After the worktree path was proven, `maxWorkers` was raised 1 → 3 with an `e2e --only realpi` proof.

@@ -319,7 +319,7 @@ assert.equal(hashLite(""), 0);
     });
     const after = readFileSync(join(proj, "harness", "features", "feature-list.json"), "utf-8");
     assert.equal(before, after, "feature-list.json untouched by isolated worker");
-    assert.ok(res.attemptDir.includes("tmp/infinity-harness"));
+    assert.ok(res.attemptDir.replace(/\\/g, "/").includes("tmp/infinity-harness"));
     console.log("✓ tmp/infinity-harness isolated from harness files");
   } finally {
     rmSync(proj, { recursive: true, force: true });

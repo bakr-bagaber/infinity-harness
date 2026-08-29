@@ -268,7 +268,7 @@ export function initHarness(targetDir: string, options: InitOptions = {}): InitR
   }
 
   const write = (path: string, body: string) => {
-    const rel = path.slice(targetDir.length + 1);
+    const rel = path.slice(targetDir.length + 1).replace(/\\/g, "/");
     if (existsSync(path)) {
       kept.push(rel);
       return;

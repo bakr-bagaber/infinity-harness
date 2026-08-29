@@ -220,6 +220,30 @@
                 },
                 "modelHint": {
                   "type": "string"
+                },
+                "phase": {
+                  "type": "string",
+                  "enum": [
+                    "init",
+                    "research",
+                    "define",
+                    "plan",
+                    "build",
+                    "verify",
+                    "simplify",
+                    "review",
+                    "ship"
+                  ]
+                },
+                "criteria": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "default": []
+                },
+                "serialize": {
+                  "type": "boolean"
                 }
               }
             }
@@ -231,6 +255,27 @@
               "moderate",
               "difficult"
             ]
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "init",
+              "research",
+              "define",
+              "plan",
+              "build",
+              "verify",
+              "simplify",
+              "review",
+              "ship"
+            ]
+          },
+          "criteria": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
           }
         }
       }
