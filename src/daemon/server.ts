@@ -25,6 +25,7 @@ export type ServerOpts = {
   onApprove?: (req: unknown) => Promise<unknown>;
   onReplan?: (req: unknown) => Promise<unknown>;
   onRework?: (req: unknown) => Promise<unknown>;
+  onPilot?: (req: unknown) => Promise<unknown>;
 };
 
 export function startServer(opts: ServerOpts): Promise<{ server: Server; port: number; token: string }> {
@@ -125,6 +126,7 @@ export function startServer(opts: ServerOpts): Promise<{ server: Server; port: n
           if (path === "/approve" && opts.onApprove) { const r = await opts.onApprove(parsed); writeJson(200, r ?? { ok: true }); return; }
           if (path === "/replan" && opts.onReplan) { const r = await opts.onReplan(parsed); writeJson(200, r ?? { ok: true }); return; }
           if (path === "/rework" && opts.onRework) { const r = await opts.onRework(parsed); writeJson(200, r ?? { ok: true }); return; }
+          if (path === "/pilot" && opts.onPilot) { const r = await opts.onPilot(parsed); writeJson(200, r ?? { ok: true }); return; }
           writeJson(404, { ok: false, error: `unknown POST ${path}` });
         } catch (e) {
           writeJson(500, { ok: false, error: e instanceof Error ? e.message : String(e) });

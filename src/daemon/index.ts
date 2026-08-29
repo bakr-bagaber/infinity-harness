@@ -88,7 +88,63 @@ async function main(): Promise<void> {
     targetDir,
     onHalt: async () => { await boundedStop(targetDir, "halted by user"); return { ok: true }; },
     onRun: async () => ({ ok: true, daemon: loadDaemon(targetDir) }),
-    onApprove: async () => ({ ok: true }),
+    onApprove: async (body) => {
+      try {
+        const note = typeof (body as { note?: unknown })?.note === "string" ? String((body as { note: string }).note) : "";
+        const { resolveApproval: _resolveApproval } = await import("../approval.ts");
+        await _resolveApproval(targetDir, note || true as unknown as string);
+        appendActivity(targetDir, { level: "good", worker: null, text: `approved: ${note || "(no note)"}` });
+      } catch (e) { return { ok: false, error: e instanceof Error ? e.message : String(e) }; }
+      return { ok: true };
+    },
+    onReplan: async (body) => {
+      try {
+        const b = body as { reason?: string; addFeatures?: Array<{ id: string; name: string }>; addTasks?: Array<{ featureId: string; task: unknown }> };
+        const { amendPlan: _amendPlan } = await import("../replan.ts");
+        const r = await _amendPlan({ projectDir: targetDir, reason: typeof b.reason === "string" ? b.reason : undefined, addFeatures: b.addFeatures as never, addTasks: b.addTasks as never });
+        appendActivity(targetDir, { level: "info", worker: null, text: `replan +${r.added.features}f +${r.added.tasks}t rev ${r.baseRevision}` });
+        return { ok: true, ...r };
+      } catch (e) { return { ok: false, error: e instanceof Error ? e.message : String(e) }; }
+    },
+    onRework: async (body) => {
+      try {
+        const b = body as { task?: string; key?: string; reason?: string };
+        const needle = String(b.task ?? b.key ?? "").trim();
+        if (!needle) return { ok: false, error: "task required" };
+        const { flattenTasks } = await import("../core/featureList.ts");
+        const list = loadFeatureList(targetDir).list;
+        const target = flattenTasks(list).find(t => t.compositeKey === needle || t.key === needle || t.id === needle);
+        if (!target) return { ok: false, error: `no task ${needle}` };
+        const { startRework: _startRework } = await import("../rework.ts");
+        const rs = loadRunState(targetDir);
+        const runId = rs?.runId ?? "daemon";
+        const res = await _startRework({ projectDir: targetDir, featureId: target.featureId, taskId: target.id, key: target.key, reason: typeof b.reason === "string" ? b.reason : "rework via daemon", runId });
+        appendActivity(targetDir, { level: "warn", worker: null, text: `rework ${target.compositeKey} → ${res.impacted.length} deps rev ${res.baseRevision}` });
+        return { ok: true, ...res };
+      } catch (e) { return { ok: false, error: e instanceof Error ? e.message : String(e) }; }
+    },
+    onPilot: async (body) => {
+      try {
+        const b = body as { pilot?: string };
+        const p = String(b.pilot ?? "").trim().toLowerCase();
+        if (!["copilot","autopilot","full"].includes(p)) return { ok: false, error: `pilot must be copilot|autopilot|full, got ${JSON.stringify(b.pilot)}` };
+        const { loadConfig: _lc, saveConfig: _sc } = await import("../core/config.ts");
+        const { applyPilotPreset: _app } = await import("../core/config.ts");
+        const { withLock: _wl } = await import("../core/lock.ts");
+        const { configPath: _cp } = await import("../core/paths.ts");
+        await (_wl as unknown as (path: string, fn: ()=>unknown)=>Promise<unknown>)(_cp(targetDir), () => {
+          const l = _lc(targetDir);
+          if (!l.ok) throw new Error(l.error ?? "cannot load config");
+          (l.config as unknown as { pilot: string }).pilot = p;
+          _app(l.config as Parameters<typeof _app>[0], p as "copilot"|"autopilot"|"full");
+          const ok = _sc(targetDir, l.config).ok;
+          if (!ok) throw new Error("cannot save config");
+          return true;
+        });
+        appendActivity(targetDir, { level: "info", worker: null, text: `pilot → ${p}` });
+        return { ok: true, pilot: p };
+      } catch (e) { return { ok: false, error: e instanceof Error ? e.message : String(e) }; }
+    },
   });
   server = srv;
 

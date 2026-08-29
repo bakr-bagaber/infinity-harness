@@ -2622,13 +2622,73 @@ export default function (pi: ExtensionAPI): void {
   });
 
   pi.registerCommand("infinity:run", {
-    description: "Start the continuous loop — validate, advance, re-brief, until done or stuck",
+    description: "Start the continuous loop — validate, advance, re-brief, until done or stuck (captures baseModel for daemon)",
     handler: async (_args: string, ctx: ExtensionContext) => {
       const dir = projectDir(ctx);
       if (!isHarnessProject(dir)) {
         notify(ctx, NO_HARNESS, "warning");
         return;
       }
+      // Capture baseModel (X) at arm time — the detached Daemon has no ctx.model.
+      // Without this, Daemon refuses to arm and silently falls back to pi default.
+      try {
+        const bm = baseModelOf(ctx);
+        if (bm) {
+          const { loadRunState: _load, saveRunState: _save, runIdFor: _runIdFor } = await import("../../src/core/runState.ts");
+          const runId = _runIdFor(dir, sessionId);
+          const rs = _load(dir);
+          const parts = bm.split("/");
+          const baseModel = parts.length >= 2 ? { provider: parts[0]!, id: parts.slice(1).join("/") } : { provider: "anthropic", id: bm };
+          if (rs) { rs.baseModel = baseModel as never; _save(dir, rs); }
+          else {
+            const { newRunState } = await import("../../src/core/runState.ts");
+            const ns = newRunState(runId);
+            ns.baseModel = baseModel as never;
+            _save(dir, ns);
+          }
+        }
+      } catch {}
+      // When a detached Daemon can serve this repo, prefer it: it is the only
+      // path where /infinity:halt|approve|pilot|replan go to Daemon and the
+      // model stays on X. Spawning it is one detached `node` process.
+      const tryDaemonSpawn = async (): Promise<{ spawned: boolean; url?: string }> => {
+        try {
+          const { spawn } = await import("node:child_process");
+          const { existsSync, openSync, closeSync } = await import("node:fs");
+          const { resolve: _resolve } = await import("node:path");
+          // Daemon entry must exist; when not built (dev) fall back to supervisor.
+          const candidates = [
+            _resolve(dir, "dist/daemon/index.js"),
+            _resolve(dir, "src/daemon/index.ts"),
+          ];
+          let entry: string | null = null;
+          for (const c of candidates) if (existsSync(c)) { entry = c; break; }
+          if (!entry) return { spawned: false };
+          // Guard: single owner — if a daemon is already alive, do not spawn rival.
+          try {
+            const { loadDaemon: _ld, isDaemonAlive: _alive } = await import("../../src/daemon/guard.ts");
+            const live = _ld(dir);
+            if (live && _alive(live)) return { spawned: true, url: `http://127.0.0.1:${live.port}/dashboard` };
+          } catch {}
+          const logFd = openSync(_resolve(dir, "harness/daemon.log"), "a");
+          const args: string[] = [];
+          if (entry.endsWith(".ts")) args.push("--experimental-strip-types", "--no-warnings=ExperimentalWarning");
+          args.push(entry, dir);
+          const child = spawn(process.execPath, args, { detached: true, stdio: ["ignore", logFd, logFd], windowsHide: true, env: { ...process.env, INFINITY_HARNESS_WORKER: "1" } } as unknown as Parameters<typeof spawn>[2]);
+          try { child.unref(); } catch {}
+          try { closeSync(logFd); } catch {}
+          // Brief poll for daemon.json liveness (port picked as 0).
+          for (let i = 0; i < 40; i++) {
+            await new Promise(r=>setTimeout(r, 250));
+            try {
+              const { loadDaemon: ld2, isDaemonAlive: alive2 } = await import("../../src/daemon/guard.ts");
+              const live2 = ld2(dir);
+              if (live2 && alive2(live2)) return { spawned: true, url: `http://127.0.0.1:${live2.port}/dashboard` };
+            } catch {}
+          }
+          return { spawned: true };
+        } catch { return { spawned: false }; }
+      };
       armRun(dir, sessionId);
       const engine = engineFor(dir);
       notify(
@@ -2642,9 +2702,13 @@ export default function (pi: ExtensionAPI): void {
         pi.sendUserMessage(text, { deliverAs: "followUp" });
         return;
       }
-      // The background engine: this session says nothing to its own model. It
-      // starts an orchestrator that spawns pi children on the routed models,
-      // and from here on it is a control panel.
+      const daemonResult = await tryDaemonSpawn();
+      if (daemonResult.spawned) {
+        notify(ctx, daemonResult.url ? `infinity-harness: daemon running at ${daemonResult.url} — this session stays free; /infinity:halt stops it.` : "infinity-harness: daemon started — this session stays free; /infinity:halt stops it.", "info");
+        refreshWidget(ctx);
+        return;
+      }
+      // Fallback: legacy background supervisor (spawns pi child sessions in this pi process).
       const unit = currentUnit(dir, baseModelOf(ctx));
       await startEngine(ctx, dir);
       notify(
@@ -3048,7 +3112,6 @@ export default function (pi: ExtensionAPI): void {
         notify(ctx, NO_HARNESS, "warning");
         return;
       }
-      // Prefer daemon's dashboard. Read daemon.json for its port, tell user to open it.
       try {
         const d = readJsonSafe<{ port?: number; token?: string } | null>(resolvePath(dir, "harness/daemon.json"), null);
         if (d?.port) {
@@ -3066,6 +3129,73 @@ export default function (pi: ExtensionAPI): void {
       remoteServer = srv;
       remoteDir = dir;
       notify(ctx, `infinity-harness dashboard: ${srv.url}`, "info");
+    },
+  });
+
+  pi.registerCommand("infinity:pilot", {
+    description: "Set pilot mode — copilot | autopilot | full (takes effect at next phase boundary)",
+    handler: async (args: string, ctx: ExtensionContext) => {
+      const dir = projectDir(ctx);
+      if (!isHarnessProject(dir)) { notify(ctx, NO_HARNESS, "warning"); return; }
+      // Prefer daemon when alive.
+      const raw = String(args ?? "").trim().toLowerCase();
+      if (raw && ["copilot","autopilot","full"].includes(raw)) {
+        try {
+          const d = readJsonSafe<{ port?: number; token?: string } | null>(resolvePath(dir, "harness/daemon.json"), null);
+          if (d?.port) {
+            const h: Record<string,string> = { "Content-Type": "application/json" };
+            if (d.token) h["Authorization"]=`Bearer ${d.token}`;
+            const r = await fetch(`http://127.0.0.1:${d.port}/pilot`, { method:"POST", headers:h, body: JSON.stringify({ pilot: raw }) });
+            const j = await r.json().catch(()=>({})) as { ok?:boolean; error?:string };
+            if (r.ok && j.ok!==false) { notify(ctx, `infinity-harness: pilot → ${raw} via daemon (next boundary).`, "info"); refreshWidget(ctx); return; }
+          }
+        } catch {}
+      }
+      // Fallback: write config locally. Import core helper for pilot preset.
+      try {
+        const { applyPilotPreset } = await import("../../src/core/config.ts");
+        const { withLock: _wl } = await import("../../src/core/lock.ts");
+        if (!raw) {
+          const { config: c } = loadConfig(dir);
+          const cur = (c as unknown as { pilot?: string }).pilot ?? "autopilot";
+          notify(ctx, `infinity-harness pilot is ${cur}. Usage: /infinity:pilot copilot|autopilot|full`, "info");
+          return;
+        }
+        if (!["copilot","autopilot","full"].includes(raw)) { notify(ctx, `"${raw}" is not a pilot mode — copilot | autopilot | full`, "warning"); return; }
+        const wl = _wl as unknown as (path: string, fn: ()=>unknown)=>Promise<{ ok:boolean; value: unknown }>;
+        await wl(configPath(dir), () => {
+          const l = loadConfig(dir);
+          if (!l.ok) return false;
+          (l.config as unknown as { pilot: string }).pilot = raw;
+          applyPilotPreset(l.config as unknown as Parameters<typeof applyPilotPreset>[0], raw as "copilot"|"autopilot"|"full");
+          return saveConfig(dir, l.config).ok;
+        });
+        notify(ctx, `infinity-harness: pilot → ${raw} (next phase boundary).`, "info");
+        refreshWidget(ctx);
+      } catch (e) { notify(ctx, e instanceof Error ? e.message : String(e), "error"); }
+    },
+  });
+
+  pi.registerCommand("infinity:replan", {
+    description: "Propose a plan amendment (mid-run addFeatures/addTasks) — via daemon when running",
+    handler: async (args: string, ctx: ExtensionContext) => {
+      const dir = projectDir(ctx);
+      if (!isHarnessProject(dir)) { notify(ctx, NO_HARNESS, "warning"); return; }
+      const raw = String(args ?? "").trim();
+      // Try daemon first so replan invariants (cancel-not-delete, maxReplansPerPhase) are honoured under daemon lock.
+      try {
+        const d = readJsonSafe<{ port?: number; token?: string } | null>(resolvePath(dir, "harness/daemon.json"), null);
+        if (d?.port) {
+          const h: Record<string,string> = { "Content-Type": "application/json" };
+          if (d.token) h["Authorization"]=`Bearer ${d.token}`;
+          let body: Record<string, unknown> = {};
+          if (raw) { try { body = JSON.parse(raw) as Record<string, unknown>; } catch { body = { reason: raw }; } }
+          const r = await fetch(`http://127.0.0.1:${d.port}/replan`, { method:"POST", headers:h, body: JSON.stringify(body) });
+          const j = await r.json().catch(()=>({})) as { ok?:boolean; error?:string };
+          if (r.ok && j.ok!==false) { notify(ctx, `infinity-harness: replan via daemon — ${JSON.stringify(j)}`, "info"); refreshWidget(ctx); return; }
+        }
+      } catch {}
+      notify(ctx, `Replan: ${raw || "use infinity_replan tool with addFeatures/addTasks, or POST JSON to /replan"}`, "info");
     },
   });
 
