@@ -745,7 +745,7 @@
           "id": "task-036",
           "key": "worktree-per-worker",
           "description": "worktree git add per worker, gate in worktree, merge lock",
-          "status": "pending",
+          "status": "complete",
           "dependsOn": [
             "scheduler-ready-set"
           ],
