@@ -1,6 +1,6 @@
 {
   "version": "0.1",
-  "baseRevision": 6,
+  "baseRevision": 7,
   "goals": [
     {
       "id": "goal-001",
@@ -687,11 +687,12 @@
           "id": "task-032",
           "key": "phase-scoped-planning",
           "description": "Task.phase required on write, handoff collapse, progressive expansion A worker",
-          "status": "pending",
+          "status": "complete",
           "dependsOn": [
             "extension-contract"
           ],
-          "subtasks": []
+          "subtasks": [],
+          "phase": "ship"
         },
         {
           "id": "task-033",
@@ -701,7 +702,8 @@
           "dependsOn": [
             "phase-scoped-planning"
           ],
-          "subtasks": []
+          "subtasks": [],
+          "phase": "ship"
         },
         {
           "id": "task-034",
@@ -711,7 +713,8 @@
           "dependsOn": [
             "rework-forward-only"
           ],
-          "subtasks": []
+          "subtasks": [],
+          "phase": "ship"
         }
       ]
     },
@@ -735,7 +738,8 @@
           "dependsOn": [
             "replan-invariants"
           ],
-          "subtasks": []
+          "subtasks": [],
+          "phase": "build"
         },
         {
           "id": "task-036",
@@ -745,7 +749,8 @@
           "dependsOn": [
             "scheduler-ready-set"
           ],
-          "subtasks": []
+          "subtasks": [],
+          "phase": "build"
         },
         {
           "id": "task-037",
@@ -755,7 +760,8 @@
           "dependsOn": [
             "worktree-per-worker"
           ],
-          "subtasks": []
+          "subtasks": [],
+          "phase": "build"
         }
       ]
     }

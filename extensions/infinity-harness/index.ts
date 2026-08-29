@@ -1334,6 +1334,7 @@ export default function (pi: ExtensionAPI): void {
               difficulty: { type: "string", enum: ["easy", "moderate", "difficult"] },
               modelHint: { type: "string" },
               criteria: { type: "array", items: { type: "string" } },
+              phase: { type: "string", enum: ["research","define","plan","build","verify","simplify","review","ship"], description: "Which phase owns this task — task.phase, absent means build" },
             },
           },
         },
