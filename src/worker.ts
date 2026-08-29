@@ -11,7 +11,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { resolve, join, dirname } from "node:path";
 import { spawn, execSync } from "node:child_process";
-import { stripBom } from "./core/fsx.ts";
+import { loadFeatureList, resolvePlanFile } from "./core/featureList.ts";
+import { planPath } from "./core/paths.ts";
 
 // ── constants ───────────────────────────────────────────────────────────────
 export const WORKER_ROOT_SEGMENT = "tmp/infinity-harness";
@@ -53,10 +54,8 @@ function gitHeadSync(projectDir: string): string | undefined {
 
 function readBaseRevision(projectDir: string): number {
   try {
-    const p = resolve(projectDir, "harness", "features", "feature-list.json");
-    if (!existsSync(p)) return 0;
-    const raw = JSON.parse(stripBom(readFileSync(p, "utf-8")));
-    return typeof raw.baseRevision === "number" ? raw.baseRevision : 0;
+    const { list } = loadFeatureList(projectDir);
+    return typeof list.baseRevision === "number" ? list.baseRevision : 0;
   } catch {
     return 0;
   }
@@ -75,8 +74,8 @@ export function buildFingerprint(opts: {
   const baseRevision = opts.baseRevision ?? readBaseRevision(projectDir);
   let featureListHash: number | undefined;
   try {
-    const p = resolve(projectDir, "harness", "features", "feature-list.json");
-    if (existsSync(p)) featureListHash = hashLite(readFileSync(p, "utf-8"));
+    const { path: planFile } = resolvePlanFile(projectDir);
+    if (existsSync(planFile)) featureListHash = hashLite(readFileSync(planFile, "utf-8"));
   } catch {}
   return {
     runId: opts.runId,
@@ -178,7 +177,12 @@ async function withLock<T>(targetPath: string, fn: () => Promise<T> | T): Promis
 }
 
 export async function withFeatureListLock<T>(projectDir: string, fn: () => Promise<T> | T): Promise<T> {
-  const p = resolve(projectDir, "harness", "features", "feature-list.json");
+  const p = planPath(projectDir);
+  try {
+    const d = dirname(p);
+    mkdirSync(d, { recursive: true });
+    if (!existsSync(p)) writeFileSync(p, "", "utf-8");
+  } catch {}
   return withLock(p, fn);
 }
 

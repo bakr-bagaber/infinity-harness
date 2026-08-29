@@ -177,7 +177,7 @@ export function planIntake(answers: IntakeAnswers): IntakePlan {
       plan: phaseModes.plan === "copilot",
     },
     session,
-    execution: { engine, parallelAt, maxWorkers },
+    execution: { engine, parallelAt, maxWorkers, isolation: "worktree" as const },
     display,
     router: answers.router,
     summary: summarize(workflow, phases, phaseModes, session, display, brief, _researchDepth),

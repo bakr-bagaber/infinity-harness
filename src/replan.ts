@@ -26,7 +26,7 @@ import { TASK_STATUSES } from "./core/types.ts";
 import { detectCycle, flattenTasks, loadFeatureList, saveFeatureList } from "./core/featureList.ts";
 import { fileExists, readJsonSafe, writeJsonAtomic } from "./core/fsx.ts";
 import { loadConfig } from "./core/config.ts";
-import { featureListPath, replanPath } from "./core/paths.ts";
+import { planPath, replanPath } from "./core/paths.ts";
 import { withLockSync } from "./core/lock.ts";
 
 /**
@@ -198,7 +198,7 @@ export async function amendPlan(opts: AmendPlanOpts): Promise<AmendPlanResult> {
 
   // Read, amend, validate, bump, write — one atomic section. Adding to the
   // plan is a read-apply-write over the same file every parallel worker edits.
-  const result = withLockSync(featureListPath(projectDir), () => {
+  const result = withLockSync(planPath(projectDir), () => {
     const list = loadPlan(projectDir);
 
     let addedSprints = 0;

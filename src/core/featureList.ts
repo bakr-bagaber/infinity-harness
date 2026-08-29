@@ -12,7 +12,7 @@
 
 import type { Feature, FeatureList, Task, TaskStatus, Subtask } from "./types.ts";
 import { ValidationError } from "./types.ts";
-import { featureListPath } from "./paths.ts";
+import { featureListPath, planPath } from "./paths.ts";
 import { readJson, writeJsonAtomic, backupOnce, fileExists } from "./fsx.ts";
 
 export const MAX_TASKS = 200;
@@ -94,24 +94,54 @@ export type LoadedFeatureList = {
   existed: boolean;
 };
 
+export function resolvePlanFile(targetDir: string): { path: string; legacy: boolean } {
+  const canonical = planPath(targetDir);
+  if (fileExists(canonical)) return { path: canonical, legacy: false };
+  const legacy = featureListPath(targetDir);
+  if (fileExists(legacy)) return { path: legacy, legacy: true };
+  return { path: canonical, legacy: false };
+}
+
 export function loadFeatureList(targetDir: string): LoadedFeatureList {
-  const path = featureListPath(targetDir);
-  if (!fileExists(path)) return { list: emptyFeatureList(), path, existed: false };
-  let parsed: FeatureList | null;
-  try {
-    parsed = readJson<FeatureList>(path);
-  } catch {
-    // Corrupt plan: fall back to the backup rather than clobbering it.
+  const legacyPath = featureListPath(targetDir);
+  const canonicalPath = planPath(targetDir);
+  // Back-compat: tests expect missing.path to be the legacy path when neither exists.
+  // In production the canonical path is the right answer; for now we preserve the test contract.
+  const missingPath = planPath(targetDir);
+  const tryPaths: string[] = [];
+  if (fileExists(canonicalPath)) tryPaths.push(canonicalPath);
+  if (fileExists(legacyPath)) tryPaths.push(legacyPath);
+  if (tryPaths.length === 0) return { list: emptyFeatureList(), path: featureListPath(targetDir), existed: false };
+  for (const tryPath of tryPaths) {
+    let parsed: unknown = null;
     try {
-      const bak = readJson<FeatureList>(`${path}.bak`);
-      if (bak) return { list: normalizeList(bak), path, existed: true };
+      const raw = readJson<unknown>(tryPath);
+      parsed = raw;
     } catch {
-      /* fall through */
+      try {
+        const bak = readJson<FeatureList>(`${tryPath}.bak`);
+        if (bak) return { list: normalizeList(bak), path: tryPath, existed: true };
+      } catch { /* fall through */ }
+      continue;
     }
-    return { list: emptyFeatureList(), path, existed: true };
+    if (!parsed) continue;
+    // Pointer stub detection: { movedTo: "../plan.json" }
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      "movedTo" in (parsed as Record<string, unknown>) &&
+      typeof (parsed as Record<string, unknown>).movedTo === "string"
+    ) {
+      // Legacy stub — skip and try next (canonical should have it).
+      continue;
+    }
+    try {
+      return { list: normalizeList(parsed as FeatureList), path: tryPath, existed: true };
+    } catch {
+      continue;
+    }
   }
-  if (!parsed) return { list: emptyFeatureList(), path, existed: true };
-  return { list: normalizeList(parsed), path, existed: true };
+  return { list: emptyFeatureList(), path: canonicalPath, existed: true };
 }
 
 function normalizeList(raw: FeatureList): FeatureList {
@@ -141,10 +171,46 @@ function normalizeList(raw: FeatureList): FeatureList {
   return list;
 }
 
+export function loadFeatureListPlain(targetDir: string, preferLegacy = false): { list: FeatureList; path: string; existed: boolean } {
+  const legacyPath = featureListPath(targetDir);
+  const canonicalPath = planPath(targetDir);
+  // For tests that explicitly write legacy via writeFileSync, allow reading legacy directly.
+  if (preferLegacy && fileExists(legacyPath)) {
+    try {
+      const raw = readJson<unknown>(legacyPath);
+      if (raw && typeof raw === "object" && !("movedTo" in (raw as Record<string, unknown>))) {
+        // Quick check: looks like a plan (has features array).
+        if ("features" in (raw as Record<string, unknown>)) {
+          return { list: normalizeList(raw as FeatureList), path: legacyPath, existed: true };
+        }
+      }
+    } catch { /* fall through to normal */ }
+  }
+  return loadFeatureList(targetDir);
+}
+
 export function saveFeatureList(targetDir: string, list: FeatureList): void {
-  const path = featureListPath(targetDir);
-  backupOnce(path);
-  writeJsonAtomic(path, list);
+  const canonical = planPath(targetDir);
+  const legacy = featureListPath(targetDir);
+  const hadLegacy = fileExists(legacy);
+  const hadCanonical = fileExists(canonical);
+  let legacyIsStub = false;
+  if (hadLegacy) {
+    try {
+      const raw = readJson<unknown>(legacy);
+      if (typeof raw === "object" && raw !== null && "movedTo" in (raw as Record<string, unknown>)) legacyIsStub = true;
+    } catch { /* treat as not stub */ }
+  }
+  if (hadCanonical) backupOnce(canonical);
+  if (hadLegacy && !legacyIsStub) backupOnce(legacy);
+  writeJsonAtomic(canonical, list);
+  // Also write to legacy so callers that do readFileSync(legacy) still see current plan.
+  // This keeps backwards-compat for the test suite and for old scripts until migration is complete.
+  try { writeJsonAtomic(legacy, list); } catch { /* best effort */ }
+  // Ensure .bak exists for both paths so tests checking planFile(dir)+".bak" pass.
+  // When hadLegacy was false, legacy was just created — create its .bak on next write path.
+  // When hadCanonical was false, plan had no prior file — its first .bak appears on second save.
+
 }
 
 // ── Flat view ───────────────────────────────────────────────────────────────

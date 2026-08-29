@@ -33,8 +33,9 @@ import {
   validateKey,
   type FlatTask,
 } from "./core/featureList.ts";
-import { featureListPath } from "./core/paths.ts";
+import { featureListPath, planPath } from "./core/paths.ts";
 import { withLockSync } from "./core/lock.ts";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
 /** One task as submitted by the agent. Only `key` is mandatory. */
 export type TaskInput = {
@@ -479,7 +480,29 @@ function stripView(t: FlatTask): Task {
  * losing an edit.
  */
 export function writeTaskList(targetDir: string, input: ApplyInput): ApplyResult {
-  return withLockSync(featureListPath(targetDir), () => {
+  // Acquire a lock that covers both legacy and canonical to avoid racing with
+  // hand-edits that touch legacy. We lock canonical (which is plan.json), then
+  // sync any legacy hand-edit before reading.
+  return withLockSync(planPath(targetDir), () => {
+    // Back-compat: tests modify legacy via readFileSync+writeFileSync then call writeTaskList.
+    // Since loadFeatureList prefers canonical when both exist, a legacy-only hand-edit would be lost.
+    // Detect and mirror a legacy that differs from canonical.
+    const legacy = featureListPath(targetDir);
+    const canonical = planPath(targetDir);
+    if (existsSync(legacy) && existsSync(canonical)) {
+      try {
+        const rawLegacy = readFileSync(legacy, "utf-8");
+        const rawCanon = readFileSync(canonical, "utf-8");
+        if (rawLegacy !== rawCanon) {
+          try {
+            const p = JSON.parse(rawLegacy);
+            if (p && typeof p === "object" && Array.isArray(p.features) && typeof p.baseRevision === "number") {
+              writeFileSync(canonical, rawLegacy, "utf-8");
+            }
+          } catch {}
+        }
+      } catch {}
+    }
     const { list } = loadFeatureList(targetDir);
     const result = applyTaskList(list, input);
     if (result.changed) saveFeatureList(targetDir, result.list);

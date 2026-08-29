@@ -74,6 +74,22 @@ export type SubtaskStatus = (typeof SUBTASK_STATUSES)[number];
 
 export type Difficulty = "easy" | "moderate" | "difficult";
 
+export type PilotMode = "copilot" | "autopilot" | "full";
+
+export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
+export type TierSpec = {
+  provider: string;
+  id: string;
+  thinkingLevel?: ThinkingLevel | "";
+};
+
+export type TierId = "A" | "B" | "C" | "D" | "X";
+
+export type TierMap = Partial<Record<TierId, TierSpec>>;
+
+export type ExecutionIsolation = "worktree" | "none";
+
 // ── Feature list (the SSOT on disk) ─────────────────────────────────────────
 
 export type Subtask = {
@@ -185,6 +201,8 @@ export type ExecutionPolicy = {
   parallelAt: HandoffGranularity;
   /** Max parallel workers (1..16). Guarded by lock and budget. */
   maxWorkers: number;
+  /** How concurrent workers stay out of each other's way. */
+  isolation: ExecutionIsolation;
 };
 
 export type ExecutionEngine = "background" | "main-session";
@@ -319,6 +337,19 @@ export type HarnessConfig = {
   workflow: { id: string; name: string } | null;
   display: DisplayPolicy;
   intake: IntakeState;
+  /** Run-level pilot preset over per-phase modes. `full` = hands-off intake→SHIP. */
+  pilot: PilotMode;
+  /** Tier definitions A/B/C/D/X. Each is provider+id+thinking. Empty means use baseModel. */
+  tiers: TierMap;
+  /** Global caps that bound a run. */
+  limits: {
+    unitWallClockMs: number;
+    maxRecycles: number;
+    maxReworkPerUnit: number;
+    maxReplansPerPhase: number;
+    tokenCap: number | null;
+    costCap: number | null;
+  };
   /** Set when a gate passed but the phase needs a human signature first. */
   awaitingApproval: Phase | null;
   /** Budgets that bound an unattended continuous run. See src/loop.ts. */

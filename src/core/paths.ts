@@ -46,6 +46,26 @@ export function featureListPath(targetDir: string): string {
   return resolve(harnessDir(targetDir), "features", "feature-list.json");
 }
 
+export function planPath(targetDir: string): string {
+  return resolve(harnessDir(targetDir), "plan.json");
+}
+
+export function daemonPath(targetDir: string): string {
+  return resolve(harnessDir(targetDir), "daemon.json");
+}
+
+export function supervisorPath(targetDir: string): string {
+  return resolve(harnessDir(targetDir), "supervisor.json");
+}
+
+export function activityPath(targetDir: string): string {
+  return resolve(harnessDir(targetDir), "activity.json");
+}
+
+export function sessionsDir(targetDir: string): string {
+  return resolve(harnessDir(targetDir), "sessions");
+}
+
 export function progressPath(targetDir: string): string {
   return resolve(harnessDir(targetDir), "progress.md");
 }

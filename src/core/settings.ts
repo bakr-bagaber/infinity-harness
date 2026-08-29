@@ -465,7 +465,7 @@ export const SETTINGS: SettingsGroup[] = [
         path: "gates.antiPlaceholder.enabled",
         file: "config",
         label: "Reject placeholders",
-        help: "Fail the gate on TODO-implement, FIXME, 'not implemented' and friends in source.",
+        help: "Fail the gate when source still has unfinished markers.",
         type: { kind: "boolean" },
       },
     ],

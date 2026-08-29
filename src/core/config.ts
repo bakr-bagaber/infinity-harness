@@ -18,6 +18,63 @@ export const DEFAULT_FEATURE_RETRIES = 2;
 export const DEFAULT_PHASE_RETRIES = 2;
 export const COVERAGE_THRESHOLD_DEFAULT = 80;
 
+export type PilotMode = "copilot" | "autopilot" | "full";
+export const PILOT_MODES: readonly PilotMode[] = ["copilot", "autopilot", "full"] as const;
+
+export const DEFAULT_LIMITS = {
+  unitWallClockMs: 30 * 60 * 1000,
+  maxRecycles: 2,
+  maxReworkPerUnit: 2,
+  maxReplansPerPhase: 3,
+  tokenCap: null as number | null,
+  costCap: null as number | null,
+};
+
+function normalizeTiers(raw: unknown): Record<string, { provider: string; id: string; thinkingLevel?: string }> | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const out: Record<string, { provider: string; id: string; thinkingLevel?: string }> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!["A","B","C","D","X"].includes(k)) continue;
+    if (!v || typeof v !== "object" || Array.isArray(v)) continue;
+    const vv = v as Record<string, unknown>;
+    if (typeof vv.provider !== "string" || typeof vv.id !== "string") continue;
+    out[k] = { provider: String(vv.provider), id: String(vv.id), ...(typeof vv.thinkingLevel === "string" ? { thinkingLevel: vv.thinkingLevel } : {}) };
+  }
+  return out;
+}
+
+function migrateModelRouterTiers(targetDir: string, tiers: Record<string, unknown>): Record<string, { provider: string; id: string }> {
+  // One-time migration from harness/model-router.json "byDifficulty" strings.
+  // "anthropic/claude-x" → {provider:"anthropic", id:"claude-x"}
+  try {
+    const p = `${targetDir}/harness/model-router.json`;
+    // Lazy import to avoid circular dep.
+    const { existsSync, readFileSync } = require("node:fs") as typeof import("node:fs");
+    if (!existsSync(p)) return tiers as Record<string, { provider: string; id: string }>;
+    const raw = JSON.parse(readFileSync(p, "utf-8"));
+    const bd: Record<string, string> = raw?.byDifficulty ?? {};
+    const labels: Record<string, string> = { easy: "B", moderate: "C", difficult: "D" };
+    for (const [diff, label] of Object.entries(labels)) {
+      const v = bd[diff];
+      if (typeof v === "string" && v.trim() && !tiers[label]) {
+        const parts = v.split("/");
+        if (parts.length >= 2) {
+          const id = parts.slice(1).join("/");
+          tiers[label] = { provider: parts[0]!, id };
+        } else {
+          tiers[label] = { provider: "anthropic", id: v.trim() };
+        }
+      }
+    }
+    if (typeof raw.master === "string" && raw.master.trim() && !tiers.X) {
+      const v = raw.master as string;
+      const parts = v.split("/");
+      tiers.X = parts.length >= 2 ? { provider: parts[0]!, id: parts.slice(1).join("/") } : { provider: "anthropic", id: v.trim() };
+    }
+  } catch { /* ignore */ }
+  return tiers as Record<string, { provider: string; id: string }>;
+}
+
 /** Cap on gateHistory length. Unbounded growth is a real problem on multi-day runs. */
 export const GATE_HISTORY_LIMIT = 500;
 
@@ -26,6 +83,9 @@ export function defaultConfig(): HarnessConfig {
     version: "2.0",
     stack: null,
     mode: "copilot",
+    pilot: "autopilot" as PilotMode,
+    tiers: {},
+    limits: { ...DEFAULT_LIMITS },
     currentPhase: null,
     currentRole: null,
     currentFeature: null,
@@ -52,7 +112,7 @@ export function defaultConfig(): HarnessConfig {
     roles: { strict: false },
     researchDepth: "deep" as import("./types.ts").ResearchDepth,
     session: { handoff: "task", contextThreshold: 0.6, carryNotes: true },
-    execution: { engine: "background", parallelAt: "task", maxWorkers: 3 },
+    execution: { engine: "background", parallelAt: "task", maxWorkers: 1, isolation: "worktree" as const },
     approvals: { research: false, define: false, plan: false },
     phaseModes: Object.fromEntries(DEFAULT_ENABLED_PHASES.map((p) => [p, "autopilot"])),
     workflow: { id: "autopilot", name: "autopilot" },
@@ -117,6 +177,47 @@ function migrate(config: HarnessConfig, stored: Partial<HarnessConfig>): Harness
   const out = config as Record<string, unknown>;
   const phases = Array.isArray(config.phases?.enabled) ? config.phases.enabled : [...DEFAULT_ENABLED_PHASES];
 
+  // pilot default for v2.x configs
+  if (!stored.pilot || typeof stored.pilot !== "string" || !(PILOT_MODES as readonly string[]).includes(stored.pilot as string)) {
+    // v2.x closest to autopilot
+    if (!("pilot" in (stored as Record<string, unknown>))) (out as Record<string, unknown>).pilot = "autopilot";
+  }
+  // limits defaults
+  if (!stored.limits || typeof stored.limits !== "object") {
+    (out as Record<string, unknown>).limits = { ...DEFAULT_LIMITS };
+  } else {
+    const lim = (out as Record<string, unknown>).limits as Record<string, unknown>;
+    for (const k of Object.keys(DEFAULT_LIMITS)) if (!(k in lim)) (lim as Record<string, unknown>)[k] = (DEFAULT_LIMITS as Record<string, unknown>)[k];
+  }
+  // execution.isolation + maxWorkers default bump-down until worktrees
+  const exec = (out as Record<string, unknown>).execution as Record<string, unknown>;
+  if (exec) {
+    if (!("isolation" in exec) || (exec.isolation !== "worktree" && exec.isolation !== "none")) exec.isolation = "worktree";
+    // v3.0 sequential default: stored without execution.maxWorkers keeps default 1 (no migration needed).
+    // Null op — defaults already set via deepMerge; no explicit clamp.
+    // Clamp parallelAt finer than handoff
+    const order = ["off","goal","phase","sprint","feature","task","subtask"];
+    const handoff = (config.session as unknown as { handoff?: string })?.handoff ?? "task";
+    const parallelAt = typeof exec.parallelAt === "string" ? exec.parallelAt as string : "task";
+    const hIdx = order.indexOf(handoff);
+    const pIdx = order.indexOf(parallelAt);
+    if (pIdx !== -1 && hIdx !== -1 && pIdx > hIdx) {
+      // parallelAt finer than handoff — clamp and log via console (no throw)
+      exec.parallelAt = handoff;
+      try { console.warn(`[config] parallelAt "${parallelAt}" finer than handoff "${handoff}" — clamped to "${handoff}".`); } catch {}
+    }
+    // isolation none forces maxWorkers 1
+    if (exec.isolation === "none" && typeof exec.maxWorkers === "number" && exec.maxWorkers > 1) {
+      exec.maxWorkers = 1;
+    }
+  }
+  // tiers: validate + migrate from model-router.json if empty
+  {
+    const t = normalizeTiers((out as Record<string, unknown>).tiers);
+    if (t !== undefined) (out as Record<string, unknown>).tiers = t;
+    else (out as Record<string, unknown>).tiers = {};
+  }
+
   // The signal is what the *file* had, not what the merge produced: defaults
   // supply a `phaseModes` for every phase, so a merged config always looks
   // migrated and the old approvals would be silently dropped.
@@ -140,7 +241,24 @@ function migrate(config: HarnessConfig, stored: Partial<HarnessConfig>): Harness
   }
 
   config.display = normalizeDisplay(config.display);
+  // Pilot preset -> phaseModes helper: full means all autopilot; stored phaseModes still authoritative after migration.
+  // We keep model-router.json migration delayed — requires targetDir. Do it in loadConfig wrapper.
   return config;
+}
+
+export function applyPilotPreset(config: HarnessConfig, pilot: PilotMode): void {
+  const all = [...DEFAULT_ENABLED_PHASES, "init", "research", "simplify"] as string[];
+  if (pilot === "full") {
+    for (const p of all) (config.phaseModes as Record<string, unknown>)[p] = "autopilot";
+  } else if (pilot === "autopilot") {
+    for (const p of all) {
+      if (["build","verify","simplify"].includes(p)) (config.phaseModes as Record<string, unknown>)[p] = "autopilot";
+      else if (["define","plan","ship"].includes(p)) (config.phaseModes as Record<string, unknown>)[p] = "copilot";
+      else if (p === "research") (config.phaseModes as Record<string, unknown>)[p] = "autopilot";
+    }
+  } else if (pilot === "copilot") {
+    for (const p of all) (config.phaseModes as Record<string, unknown>)[p] = "copilot";
+  }
 }
 
 export type LoadResult = {

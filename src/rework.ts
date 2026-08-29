@@ -22,7 +22,7 @@ import type { FeatureList, Task } from "./core/types.ts";
 import { flattenTasks, loadFeatureList, saveFeatureList } from "./core/featureList.ts";
 import { fileExists, readJsonSafe, writeJsonAtomic } from "./core/fsx.ts";
 import { loadConfig } from "./core/config.ts";
-import { featureListPath, reworkPath } from "./core/paths.ts";
+import { planPath, reworkPath } from "./core/paths.ts";
 import { withLockSync } from "./core/lock.ts";
 
 /**
@@ -209,7 +209,7 @@ export async function startRework(opts: StartReworkOpts): Promise<StartReworkRes
 
   // Read, flip, bump, write — one atomic section. The status flip is a
   // read-apply-write over the same file every parallel worker edits.
-  const result = withLockSync(featureListPath(projectDir), () => {
+  const result = withLockSync(planPath(projectDir), () => {
     const list = loadPlan(projectDir);
     const tasks = flattenTasks(list);
     if (!tasks.some((t) => taskKey(t) === originKey)) {
