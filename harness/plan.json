@@ -1,6 +1,6 @@
 {
   "version": "0.1",
-  "baseRevision": 4,
+  "baseRevision": 6,
   "goals": [
     {
       "id": "goal-001",
@@ -652,7 +652,7 @@
           "id": "task-030",
           "key": "extension-thin",
           "description": "Thin extension: forward run/halt/approve/pilot/rework/replan to Daemon",
-          "status": "pending",
+          "status": "complete",
           "dependsOn": [
             "ui-viewstate-integration"
           ],
@@ -662,7 +662,7 @@
           "id": "task-031",
           "key": "extension-contract",
           "description": "Control-panel contract plus token tripwire stays cheap",
-          "status": "pending",
+          "status": "complete",
           "dependsOn": [
             "extension-thin"
           ],
