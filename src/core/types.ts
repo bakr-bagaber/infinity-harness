@@ -111,6 +111,8 @@ export type Task = {
   difficulty?: Difficulty;
   modelHint?: string;
   criteria?: string[];
+  /** When true this task must run alone — whole-tree isolation (lockfile regen, codemod). */
+  serialize?: boolean;
   /** Free-form extras are preserved verbatim on round-trip. */
   [k: string]: unknown;
 };
