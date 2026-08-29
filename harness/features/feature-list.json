@@ -722,7 +722,7 @@
       "id": "feature-014",
       "name": "V3 Parallel Steel",
       "description": "Ready set, worktree per worker, gate in worktree, merge plus post-merge gate, maxWorkers 3",
-      "passes": false,
+      "passes": true,
       "sprintId": "sprint-007",
       "goalId": "goal-001",
       "criteria": [
@@ -756,7 +756,7 @@
           "id": "task-037",
           "key": "raise-maxworkers-3",
           "description": "Raise maxWorkers 1 to 3 after worktree tested, e2e realpi proof",
-          "status": "pending",
+          "status": "complete",
           "dependsOn": [
             "worktree-per-worker"
           ],

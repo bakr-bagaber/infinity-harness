@@ -112,7 +112,7 @@ export function defaultConfig(): HarnessConfig {
     roles: { strict: false },
     researchDepth: "deep" as import("./types.ts").ResearchDepth,
     session: { handoff: "task", contextThreshold: 0.6, carryNotes: true },
-    execution: { engine: "background", parallelAt: "task", maxWorkers: 1, isolation: "worktree" as const },
+    execution: { engine: "background", parallelAt: "task", maxWorkers: 3, isolation: "worktree" as const },
     approvals: { research: false, define: false, plan: false },
     phaseModes: Object.fromEntries(DEFAULT_ENABLED_PHASES.map((p) => [p, "autopilot"])),
     workflow: { id: "autopilot", name: "autopilot" },
