@@ -476,7 +476,14 @@ console.log("All widget tests PASS");
   assert.match(busy, /42%/, "and how full its context is, because that is when it gets replaced");
   assert.match(busy, /edit src\/checkout\/total\.ts/, "and the last thing it did");
   assert.match(busy, /bash npm test/, "the background log is there too");
-  assert.match(busy, /09:1[45]/, "with a readable clock, not an ISO stamp");
+  // The clock is the reader's local one, which is the point of it — so the
+  // expectation is derived the same way rather than hard-coded to UTC. A test
+  // that only passes in one timezone is a test that fails on the user's laptop.
+  const localHM = (iso: string): string => {
+    const d = new Date(iso);
+    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  };
+  assert.ok(busy.includes(localHM("2026-08-29T09:14:05.000Z")), "with a readable local clock, not an ISO stamp");
 
   // An armed-but-idle run must not look identical to a dead one.
   const idle = renderWidget({ ...base, engine: "background" }, { width: 76, styler: PLAIN, glyphs: G }).join("\n");
