@@ -1,6 +1,6 @@
 {
   "version": "0.1",
-  "baseRevision": 7,
+  "baseRevision": 8,
   "goals": [
     {
       "id": "goal-001",
@@ -674,7 +674,7 @@
       "id": "feature-013",
       "name": "V3 Per-Phase Planning invariants",
       "description": "Every phase owns tasks, progressive expansion, rework forward-only, replan cancels",
-      "passes": false,
+      "passes": true,
       "sprintId": "sprint-007",
       "goalId": "goal-001",
       "criteria": [
@@ -709,7 +709,7 @@
           "id": "task-034",
           "key": "replan-invariants",
           "description": "Replan cancels not deletes, complete to pending only via rework, capped 3",
-          "status": "pending",
+          "status": "complete",
           "dependsOn": [
             "rework-forward-only"
           ],
