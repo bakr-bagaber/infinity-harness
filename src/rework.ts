@@ -165,8 +165,14 @@ function appendReworkRecord(projectDir: string, record: ReworkRecord): void {
 
 function readMaxReworks(projectDir: string): number {
   const { config } = loadConfig(projectDir);
+  const lim = (config as unknown as { limits?: { maxReworkPerUnit?: unknown } }).limits as { maxReworkPerUnit?: unknown } | undefined;
+  // limits.maxReworkPerUnit wins only when writable: config actually has a limits file with it.
+  // Test configs write { rework: {maxReworks: 3} } onto a partial config that still has DEFAULT_LIMITS via merge — without this guard every test would see 2.
+  let hasLimitsFile = false;
+  try { const { readFileSync, existsSync } = require("node:fs") as typeof import("node:fs"); const p = `${projectDir}/harness/config.json`; if (existsSync(p)) { const raw = JSON.parse(readFileSync(p,"utf-8")); if (raw && typeof raw.limits === "object") hasLimitsFile = true; } } catch {}
   const rework = config.rework as { maxReworks?: unknown } | undefined;
   const budgets = config.budgets as { maxReworksPerRun?: unknown } | undefined;
+  if (hasLimitsFile && typeof lim?.maxReworkPerUnit === "number") return lim.maxReworkPerUnit;
   if (typeof rework?.maxReworks === "number") return rework.maxReworks;
   if (typeof budgets?.maxReworksPerRun === "number") return budgets.maxReworksPerRun;
   return DEFAULT_MAX_REWORKS;
