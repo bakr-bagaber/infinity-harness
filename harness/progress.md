@@ -10,7 +10,7 @@
 
 ## Lessons
 
-<!-- Use `dev-harness learn "lesson here"` to add lessons. -->
+<!-- Add lessons via harness/lessons-decisions.md -->
 
 2026-08-20 | agent | capability gap: port widget rendering - no direct skill found, using frontend-ui + tdd best practices
 2026-08-20 | agent | capability adapted: pi-todo atomic list with omission deletion and compaction checkpoint from @99percentpeople/pi-todo

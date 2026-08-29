@@ -49,6 +49,7 @@ export type TaskInput = {
   modelHint?: string;
   criteria?: string[];
   phase?: string;
+  serialize?: boolean;
 };
 
 /**
