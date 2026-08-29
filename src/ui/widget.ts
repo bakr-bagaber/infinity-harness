@@ -46,6 +46,12 @@ export type WidgetState = {
   enabledPhases?: readonly string[] | null;
   paused?: boolean;
   gate?: { overall: boolean; failures: string[] } | null;
+  viewState?: import("./viewState.ts").ViewSnapshot | null;
+  pilot?: string | null;
+  phaseModes?: Record<string, string> | null;
+  tierSpend?: Record<string, { input: number; output: number; cost: number; calls: number }> | null;
+  reworkDepth?: number | null;
+  replanDiff?: string | null;
   /** Dashboard URL to show near the top, clickable. Meaningful host:port, not just numbers. */
   dashboardUrl?: string | null;
   /** Model routing note: e.g. "Model per task — subtasks share parent". Shown once. */
@@ -510,6 +516,55 @@ export function renderWidget(state: WidgetState, options: WidgetOptions = {}): s
 
   const progress = computeProgress(state.list);
   const tasks = flattenTasks(state.list);
+  const viewSnap = (state as WidgetState & { viewState?: import("./viewState.ts").ViewSnapshot | null }).viewState ?? null;
+
+  // -- viewState banner -----------------------------------------------------
+  // Reads daemon.json first. Widget never renders dead run as live.
+  if (viewSnap && viewSnap.state !== "running" && viewSnap.state !== "awaiting-approval") {
+    const hb = (viewSnap.daemon as { heartbeatAt?: string } | null)?.heartbeatAt ?? null;
+    const ts = hb ? s.fg("muted", ` (as of ${String(hb).slice(11, 16)})`) : "";
+    const msg =
+      viewSnap.state === "stale"
+        ? s.fg("rework", `\u26A0 Daemon unresponsive since ${hb ? String(hb).slice(11, 16) : "?"}`) + ts
+        : viewSnap.state === "not-running"
+          ? s.fg("blocked", "Daemon not running \u2014 /infinity:run to start.") + ts
+          : viewSnap.state === "never-armed"
+            ? s.fg("muted", viewSnap.reason ?? "Never armed \u2014 run the wizard.")
+            : viewSnap.state === "stopped"
+              ? s.fg("blocked", `STOPPED: ${viewSnap.reason ?? (viewSnap.run as { stopReason?: string } | null)?.stopReason ?? "stopped"}`) + ts
+              : s.fg("muted", viewSnap.reason ?? "");
+    push(truncate(msg, inner));
+  }
+  if (viewSnap && viewSnap.state === "awaiting-approval") {
+    const phase2 = ((viewSnap.supervisor as { phase?: string } | null)?.phase ?? state.phase ?? "?");
+    push(truncate(s.fg("active", `\u23F8 Awaiting approval: ${String(phase2).toUpperCase()} \u2192 /infinity:approve`) + s.fg("muted", " (run is healthy, not stuck)"), inner));
+  }
+
+  // -- pilot badge + per-tier spend + rework queue ---------------------------
+  if ((state as WidgetState).pilot) {
+    const pilot = (state as WidgetState).pilot as string;
+    const tag = s.bold(s.fg(pilot === "full" ? "rework" : pilot === "autopilot" ? "success" : "accent", pilot.toUpperCase()));
+    const pModes = (state as WidgetState).phaseModes ?? null;
+    const modesStr = pModes ? Object.entries(pModes).map(([ph, m]) => s.fg(m === "autopilot" ? "success" : "active", `${ph}:${m}`)).join(s.fg("rule", " \u00b7 ")) : "";
+    push(truncate(s.fg("muted", "Pilot ") + tag + (modesStr ? s.fg("rule", "  ") + modesStr : ""), inner));
+  }
+  {
+    const ts2 = (state as WidgetState).tierSpend ?? null;
+    if (ts2) {
+      const parts: string[] = [];
+      for (const tier of ["A", "B", "C", "D", "X"] as const) {
+        const t = (ts2 as Record<string,{input:number;output:number;cost:number;calls:number}>)[tier];
+        if (!t) continue;
+        const label = `${tier}:${t.input + t.output}`;
+        parts.push(tier === "X" && (t.cost > 0 || t.input + t.output > 0) ? s.bold(s.fg("blocked", label)) : s.fg("muted", label));
+      }
+      if (parts.length) push(truncate(s.fg("muted", "Spend ") + parts.join(s.fg("rule", " \u00b7 ")), inner));
+    }
+  }
+  if (typeof (state as WidgetState).reworkDepth === "number" && ((state as WidgetState).reworkDepth as number) > 0) {
+    push(truncate(s.fg("rework", `\u21BB Rework queue: ${(state as WidgetState).reworkDepth} item(s) holding gate open`), inner));
+  }
+  if ((state as WidgetState).replanDiff) push(truncate(s.fg("muted", "Replan: ") + s.fg("text", String((state as WidgetState).replanDiff).slice(0, 80)), inner));
 
   // -- header ---------------------------------------------------------------
   const brand = s.bold(s.fg("brand", "∞ INFINITY"));

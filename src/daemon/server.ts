@@ -63,16 +63,51 @@ export function startServer(opts: ServerOpts): Promise<{ server: Server; port: n
     }
 
     if (req.method === "GET" && (path === "/dashboard" || path === "/" || path === "/api/harness")) {
-      // Serve dashboard HTML or harness state JSON depending on path.
+      // /api/harness is the JSON shape; dashboard / path serves the dashboard HTML.
       if (path === "/api/harness") {
         const { loadFeatureList } = await import("../core/featureList.ts");
         const { list } = loadFeatureList(targetDir);
         writeJson(200, { baseRevision: list.baseRevision, features: list.features, goals: list.goals, sprints: list.sprints });
         return;
       }
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(`<!doctype html><title>infinity-harness</title>< meta name="viewport" content="width=device-width"><h1>infinity-harness</h1><p>Daemon at ${targetDir}</p><p><a href="/status">/status</a> <a href="/api/harness">/api/harness</a></p>`);
-      return;
+      try {
+        const { loadFeatureList } = await import("../core/featureList.ts");
+        const { loadConfig } = await import("../core/config.ts");
+        const { renderDashboard } = await import("../ui/dashboard.ts");
+        const { normalizeDisplay } = await import("../ui/display.ts");
+        const { readJsonSafe: rjs } = await import("../core/fsx.ts");
+        const { list } = loadFeatureList(targetDir);
+        const cfg = loadConfig(targetDir).config;
+        const daemon = loadDaemon(targetDir);
+        // dashboard derives viewState same way widget does, but via server data
+        const run = rjs<Record<string,unknown>|null>(require("../core/paths.ts").runStatePath(targetDir), null);
+        const sup = rjs<Record<string,unknown>|null>(require("../core/paths.ts").supervisorPath(targetDir), null);
+        const act = rjs<unknown[]>(require("../core/paths.ts").activityPath(targetDir), []);
+        const html = renderDashboard({
+          list,
+          phase: (cfg.currentPhase as unknown as import("../core/types.ts").Phase) ?? null,
+          enabledPhases: (cfg.phases as { enabled?: readonly string[] })?.enabled ?? null,
+          paused: Boolean((cfg as { paused?: boolean }).paused),
+          gate: null,
+          baseRevision: list.baseRevision,
+          timestamp: new Date().toISOString(),
+          dashboardUrl: daemon ? `http://127.0.0.1:${(daemon as { port?: number }).port ?? 0}/dashboard` : null,
+          handoffModelNote: null,
+          awaitingApproval: (cfg as unknown as { awaitingApproval?: string | null }).awaitingApproval ?? null,
+          display: normalizeDisplay((cfg as unknown as { display?: unknown }).display as unknown as import("../core/types.ts").DisplayPolicy | undefined),
+          engine: "background",
+          workers: sup && typeof (sup as Record<string,unknown>).name === "string" ? [sup as unknown as import("../ui/dashboard.ts").DashWorker] : [],
+          activity: Array.isArray(act) ? (act as unknown as import("../ui/dashboard.ts").DashActivity[]).slice(-40) : [],
+        });
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(html);
+        return;
+      } catch (e) {
+        // If dashboard render throws, fall back to minimal page — never 500 the only way to see the run.
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(`<!doctype html><title>infinity-harness</title>< meta name="viewport" content="width=device-width"><h1>infinity-harness</h1><p>Daemon at ${targetDir}</p><p><a href="/status">/status</a> <a href="/api/harness">/api/harness</a></p><p style="color:#c33">dashboard render error: ${String((e as Error).message ?? e).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]??c))}</p>`);
+        return;
+      }
     }
 
     if (req.method === "POST") {

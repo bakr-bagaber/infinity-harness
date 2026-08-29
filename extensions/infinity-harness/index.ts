@@ -31,6 +31,9 @@ import { runChecks } from "../../src/core/gates.ts";
 import { advancePhase } from "../../src/core/phases.ts";
 import { configPath } from "../../src/core/paths.ts";
 import { readJsonSafe } from "../../src/core/fsx.ts";
+import { resolve as resolvePath } from "node:path";
+import { deriveViewState as deriveViewStateSync } from "../../src/ui/viewState.ts";
+import { runStatePath as runStatePathSync } from "../../src/core/paths.ts";
 import { withLock } from "../../src/core/lock.ts";
 import {
   DEFAULT_ENABLED_PHASES,
@@ -234,6 +237,16 @@ export default function (pi: ExtensionAPI): void {
       const { config } = loadConfig(dir);
       const handoffModelNote: string | null = handoffNoteFor((config.session?.handoff as import("../../src/core/types.ts").HandoffGranularity) ?? "task");
       const spent = escalationSummary(dir);
+      // v3 viewState: widget must read daemon.json before rendering — deriveViewState is that check.
+      let viewState: WidgetState["viewState"] = null;
+      try { viewState = deriveViewStateSync(dir) as unknown as WidgetState["viewState"]; } catch {}
+      let pilotTag2: string | null = (config as unknown as { pilot?: string }).pilot ?? null;
+      let phaseModes2: Record<string,string> | null = (config as unknown as { phaseModes?: Record<string,string> }).phaseModes ?? null;
+      if (!pilotTag2) pilotTag2 = (config as unknown as { mode?: string }).mode === "copilot" ? "copilot" : (config as unknown as { mode?: string }).mode === "autopilot" ? "autopilot" : null;
+      let tierSpend2: WidgetState["tierSpend"] = null;
+      let reworkDepth2: number | null = null;
+      try { const rs = readJsonSafe<{ budget?: { byTier?: Record<string,{input:number;output:number;cost:number;calls:number}> } } | null>(runStatePathSync(dir), null); tierSpend2 = (rs?.budget?.byTier as WidgetState["tierSpend"]) ?? null; } catch {}
+      try { const rw = readJsonSafe<{ impactedCount?:number, queue?: unknown[] } | null>(resolvePath(dir,"harness/rework.json"), null); if (Array.isArray((rw as { queue?:unknown[]})?.queue)) reworkDepth2 = (rw as { queue: unknown[]}).queue.length; else if (typeof (rw as { impactedCount?:number})?.impactedCount === "number") reworkDepth2 = Number((rw as { impactedCount:number}).impactedCount); } catch {}
       const loop = readJsonSafe<{ escalations?: { strategy: string }[] } | null>(
         loopStatePath(dir),
         null,
@@ -246,6 +259,11 @@ export default function (pi: ExtensionAPI): void {
       const worker = sup?.worker ?? null;
       return {
         list,
+        viewState,
+        pilot: pilotTag2,
+        phaseModes: phaseModes2,
+        tierSpend: tierSpend2,
+        reworkDepth: reworkDepth2,
         view,
         engine: executionPolicyOf(config).engine,
         workers: worker
@@ -975,13 +993,20 @@ export default function (pi: ExtensionAPI): void {
       try { await applyRouting(ctx, dir, "before_agent_start"); } catch {}
     }
     try {
+      const viewState = (()=>{ try{ return deriveViewStateSync(dir); }catch{return null; }})();
+      const daemonAlive = (()=>{ try { const d=readJsonSafe<{heartbeatAt?:string}|null>(resolvePath(dir,"harness/daemon.json"), null); if(!d?.heartbeatAt) return false; return Date.now()-new Date(d.heartbeatAt).getTime()<90_000; } catch { return false; }})() ? "daemon alive" : viewState ? `daemon ${viewState.state}` : "daemon unknown";
+      const armed = (()=>{ try{ const r=readJsonSafe<{armed?:boolean}|null>(runStatePathSync(dir), null); return r?.armed===true ? "armed" : "not armed"; }catch{return "not armed";}})();
+      const prefix = `[infinity-harness] ${daemonAlive}, ${armed}, phase=${loadConfig(dir).config.currentPhase ?? "?"}${viewState?.reason ? ` — ${viewState.reason}` : ""}\n`;
       const contract =
         engineFor(dir) === "main-session" ? harnessContract(dir) : controlPanelContract(dir);
-      if (!contract) return;
+      if (!contract) {
+        const base0 = (event as { systemPrompt?: string }).systemPrompt ?? ctx.getSystemPrompt();
+        return { systemPrompt: `${prefix}\n${base0}` };
+      }
       const base = (event as { systemPrompt?: string }).systemPrompt ?? ctx.getSystemPrompt();
       const routed = await routingSummaryForBrief(dir);
       const suffix = routed ? `\n\n${routed}` : "";
-      return { systemPrompt: `${base}${suffix}\n\n${contract}` };
+      return { systemPrompt: `${prefix}${base}${suffix}\n\n${contract}` };
     } catch {
       return;
     }
@@ -2082,13 +2107,24 @@ export default function (pi: ExtensionAPI): void {
   });
 
   pi.registerCommand("infinity:approve", {
-    description: "Approve the phase waiting for you — or send it back with a note",
+    description: "Approve the phase waiting for you — or send it back with a note (via daemon when running)",
     handler: async (args: string, ctx: ExtensionContext) => {
       const dir = projectDir(ctx);
       if (!isHarnessProject(dir)) {
         notify(ctx, NO_HARNESS, "warning");
         return;
       }
+      // Prefer daemon when alive: forward approval to localhost daemon (token-guarded).
+      try {
+        const d = readJsonSafe<{ port?: number; token?: string } | null>(resolvePath(dir, "harness/daemon.json"), null);
+        if (d?.port) {
+          const h: Record<string,string> = { "Content-Type": "application/json" };
+          if (d.token) h["Authorization"]=`Bearer ${d.token}`;
+          const r = await fetch(`http://127.0.0.1:${d.port}/approve`, { method: "POST", headers: h, body: JSON.stringify({ note: args.trim() }) });
+          const j = await r.json().catch(()=>({})) as { ok?: boolean; error?: string };
+          if (r.ok && j.ok !== false) { notify(ctx, "infinity-harness: approved via daemon.", "info"); refreshWidget(ctx); return; }
+        }
+      } catch {}
       const { config } = loadConfig(dir);
       if (!config.awaitingApproval) {
         const signing = approvedPhases(config);
@@ -2101,7 +2137,6 @@ export default function (pi: ExtensionAPI): void {
         );
         return;
       }
-      // Approving re-arms the run: the human answering is them saying carry on.
       if (!loopArmed(dir)) armRun(dir, sessionId);
       await applyApproval(ctx, dir, args.trim());
     },
@@ -2704,7 +2739,7 @@ export default function (pi: ExtensionAPI): void {
   });
 
   pi.registerCommand("infinity:rework", {
-    description: "Send a task and its dependents back to rework",
+    description: "Send a task and its dependents back to rework (via daemon when running)",
     handler: async (args: string, ctx: ExtensionContext) => {
       const dir = projectDir(ctx);
       if (!isHarnessProject(dir)) {
@@ -2712,6 +2747,19 @@ export default function (pi: ExtensionAPI): void {
         return;
       }
       const key = args.trim();
+      // Daemon owns rework.json mutation — forward when alive.
+      if (key && key !== "clear") {
+        try {
+          const d = readJsonSafe<{ port?: number; token?: string } | null>(resolvePath(dir, "harness/daemon.json"), null);
+          if (d?.port) {
+            const h: Record<string,string> = { "Content-Type": "application/json" };
+            if (d.token) h["Authorization"] = `Bearer ${d.token}`;
+            const r = await fetch(`http://127.0.0.1:${d.port}/rework`, { method: "POST", headers: h, body: JSON.stringify({ task: key }) });
+            const j = await r.json().catch(()=>({})) as { ok?: boolean; error?: string };
+            if (r.ok && j.ok !== false) { notify(ctx, `infinity-harness: rework ${key} via daemon.`, "info"); refreshWidget(ctx); return; }
+          }
+        } catch {}
+      }
       const { list } = loadFeatureList(dir);
       const tasks = flattenTasks(list);
 
@@ -2766,6 +2814,17 @@ export default function (pi: ExtensionAPI): void {
         notify(ctx, NO_HARNESS, "warning");
         return;
       }
+      // Prefer daemon path: POST /halt to daemon (token-guarded), fall back to local.
+      try {
+        const d = readJsonSafe<{ port?: number; token?: string } | null>(resolvePath(dir, "harness/daemon.json"), null);
+        if (d?.port) {
+          const headers: Record<string,string> = { "Content-Type": "application/json" };
+          if (d.token) headers["Authorization"] = `Bearer ${d.token}`;
+          const r = await fetch(`http://127.0.0.1:${d.port}/halt`, { method: "POST", headers, body: JSON.stringify({}) });
+          const j = await r.json().catch(()=> ({})) as { ok?: boolean; error?: string };
+          if (r.ok && j.ok !== false) { notify(ctx, "infinity-harness: halted via daemon.", "info"); refreshWidget(ctx); return; }
+        }
+      } catch {}
       disarmRun(dir, "halted from /infinity:halt");
       clearHandoff(dir);
       await stopEngine("halted from /infinity:halt");
@@ -2982,16 +3041,25 @@ export default function (pi: ExtensionAPI): void {
   });
 
   pi.registerCommand("infinity:dashboard", {
-    description: "Open the read-only web dashboard for this run",
+    description: "Open the read-only web dashboard for this run (served by daemon when running, fallback remote)",
     handler: async (_args: string, ctx: ExtensionContext) => {
       const dir = projectDir(ctx);
       if (!isHarnessProject(dir)) {
         notify(ctx, NO_HARNESS, "warning");
         return;
       }
+      // Prefer daemon's dashboard. Read daemon.json for its port, tell user to open it.
+      try {
+        const d = readJsonSafe<{ port?: number; token?: string } | null>(resolvePath(dir, "harness/daemon.json"), null);
+        if (d?.port) {
+          const url = `http://127.0.0.1:${d.port}/dashboard`;
+          notify(ctx, `infinity-harness dashboard (daemon): ${url}`, "info");
+          return;
+        }
+      } catch {}
       const remote = await import("../../src/remote.ts");
       if (remoteServer) {
-        notify(ctx, `Dashboard already live at ${remoteServer.url}`, "info");
+        notify(ctx, `Dashboard already live at ${remoteServer.url} (fallback remote)`, "info");
         return;
       }
       const srv = await remote.createRemoteServer({ projectDir: dir, host: "127.0.0.1", port: 0 });
@@ -3000,6 +3068,8 @@ export default function (pi: ExtensionAPI): void {
       notify(ctx, `infinity-harness dashboard: ${srv.url}`, "info");
     },
   });
+
+
 }
 
 function errMsg(e: unknown): string {
