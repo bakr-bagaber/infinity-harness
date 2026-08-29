@@ -739,7 +739,7 @@
             "replan-invariants"
           ],
           "subtasks": [],
-          "phase": "build"
+          "phase": "ship"
         },
         {
           "id": "task-036",
@@ -750,7 +750,7 @@
             "scheduler-ready-set"
           ],
           "subtasks": [],
-          "phase": "build"
+          "phase": "ship"
         },
         {
           "id": "task-037",
@@ -761,7 +761,7 @@
             "worktree-per-worker"
           ],
           "subtasks": [],
-          "phase": "build"
+          "phase": "ship"
         }
       ]
     }
