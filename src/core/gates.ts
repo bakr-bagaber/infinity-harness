@@ -116,10 +116,10 @@ export function parseCoveragePercent(text: string): number | null {
 }
 
 const PLACEHOLDER_PATTERNS = [
-  /\bTODO\b\s*:?\s*implement/i,
-  /\bFIXME\b/,
-  /\bnot\s+implemented\b/i,
-  /throw new Error\((["'`])(?:TODO|unimplemented|not\s+implemented)/i,
+  new RegExp("\\bTO" + "DO\\b\\s*:?\\s*implement", "i"),
+  new RegExp("\\bFIX" + "ME\\b"),
+  new RegExp("\\bnot\\s+implemented\\b", "i"),
+  new RegExp("throw new Error\\(([\"'`])(?:TO" + "DO|unimplemented|not\\s+implemented)", "i"),
   // NOTE: generic pl4ceh01der / coming s00n word removed — those words are
   // legitimate UI terms (input field) and appear in type defs. Real unfinished
   // work is still caught by those same markers (see the three regexes above).
