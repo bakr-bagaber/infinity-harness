@@ -144,6 +144,15 @@ export function agentDocPath(targetDir: string, role: string): string {
   return resolve(docsDir(targetDir), "agents", `${role}.md`);
 }
 
+/** Per-worker worktree root; git worktree per concurrent worker when isolation=worktree. */
+export function worktreesDir(targetDir: string): string {
+  return resolve(harnessDir(targetDir), "worktrees");
+}
+
+export function worktreePath(targetDir: string, branch: string): string {
+  return resolve(worktreesDir(targetDir), branch.replace(/[^a-zA-Z0-9._-]/g, "-"));
+}
+
 /** Root for per-run worker isolation. Always inside the project, always ignorable. */
 export function runRoot(targetDir: string): string {
   return resolve(targetDir, "tmp", "infinity-harness");

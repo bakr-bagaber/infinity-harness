@@ -200,15 +200,23 @@ export function nextModelForTask(targetDir: string, difficulty?: string, taskId?
 export function pickRunnableTasks(opts: PickOpts): FlatTask[] {
   const { list } = loadFeatureList(opts.targetDir);
   const phase = (opts.phase ?? null) as Phase | null;
-  // Phase-filtered pool when phase given, else all tasks across phases.
   const all: FlatTask[] = phase ? tasksForPhase(list, phase) : (flattenTasks(list) as FlatTask[]); // imported above
-  // Build key map for dep check
   const byKey = new Map<string, FlatTask>();
   for (const t of all) {
     byKey.set(t.compositeKey, t);
     byKey.set(t.id, t);
     if (t.key) byKey.set(t.key, t);
   }
+  const hasSerialize = all.some((t) => (t as { serialize?: unknown }).serialize === true && (t.status === "pending" || t.status === "in_progress" || t.status === "rework"));
+  if (hasSerialize) {
+    const serializeTask = all.find((t) => (t as { serialize?: unknown }).serialize === true && t.status === "pending" && (t.dependsOn ?? []).every((d) => { const dep = byKey.get(d); return dep && dep.status === "complete"; }) && !opts.exclude?.has(t.compositeKey) && !opts.exclude?.has(t.id));
+    if (serializeTask) return [serializeTask];
+    // A serialize task is running — nothing else is runnable alongside it.
+    if (all.some((t) => (t as { serialize?: unknown }).serialize === true && (t.status === "in_progress" || t.status === "rework"))) return [];
+  }
+  // Budget admission — do not pick more than the run can pay for (tokenCost check is fallible; skip when unknown).
+  const budgetFull = (()=>{ try { const { loadRunState } = require("./core/runState.ts") as typeof import("./core/runState.ts"); const rs = loadRunState(opts.targetDir); if (!rs?.budget) return false; const { isCapExceeded } = require("./daemon/budget.ts") as typeof import("./daemon/budget.ts"); return isCapExceeded(rs.budget as never).exceeded; } catch { return false; }})();
+  if (budgetFull) return [];
   const eligible = all.filter((t) => {
     if (t.status !== "pending") return false;
     if (opts.exclude?.has(t.compositeKey) || opts.exclude?.has(t.id)) return false;
