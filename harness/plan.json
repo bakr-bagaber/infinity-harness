@@ -1,6 +1,6 @@
 {
   "version": "0.1",
-  "baseRevision": 3,
+  "baseRevision": 4,
   "goals": [
     {
       "id": "goal-001",
@@ -642,7 +642,7 @@
           "id": "task-029",
           "key": "ui-viewstate-integration",
           "description": "Integrate viewState into widget/dashboard",
-          "status": "pending",
+          "status": "complete",
           "dependsOn": [
             "daemon-viewstate"
           ],
