@@ -478,7 +478,7 @@
       "id": "feature-009",
       "name": "V3 Core plan, pilot, tiers, limits, runState, router",
       "description": "Canonical plan.json plus legacy fallback and stub, config tiers/pilot/limits/isolation, runState baseModel tiers budget, pure router",
-      "passes": false,
+      "passes": true,
       "sprintId": "sprint-007",
       "goalId": "goal-001",
       "criteria": [
@@ -531,7 +531,7 @@
       "id": "feature-010",
       "name": "V3 Daemon isolation, preflight, budget guardrails",
       "description": "Three files that prove leak is gone: isolation zero harness, preflight per tier, budget per-tier UsageTotals plus X tripwire",
-      "passes": false,
+      "passes": true,
       "sprintId": "sprint-007",
       "goalId": "goal-001",
       "criteria": [
@@ -574,7 +574,7 @@
       "id": "feature-011",
       "name": "V3 Daemon lifecycle, worker adapter, detached heartbeat",
       "description": "Detached daemon with daemon.json liveness, localhost server port 0 token, worker events to TurnResult, recycling, bounded stop",
-      "passes": false,
+      "passes": true,
       "sprintId": "sprint-007",
       "goalId": "goal-001",
       "criteria": [
@@ -629,7 +629,7 @@
       "id": "feature-012",
       "name": "V3 Thin Control Room",
       "description": "Extension becomes thin viewer: daemon.json first, forwards infinity commands, control-panel contract",
-      "passes": false,
+      "passes": true,
       "sprintId": "sprint-007",
       "goalId": "goal-001",
       "criteria": [
@@ -698,7 +698,7 @@
           "id": "task-033",
           "key": "rework-forward-only",
           "description": "Rework without breaking forward-only, gate holds, capped 2",
-          "status": "pending",
+          "status": "complete",
           "dependsOn": [
             "phase-scoped-planning"
           ],
