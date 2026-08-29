@@ -734,7 +734,7 @@
           "id": "task-035",
           "key": "scheduler-ready-set",
           "description": "scheduler ready plan phase dependsOn plus parallelAt plus maxWorkers",
-          "status": "pending",
+          "status": "complete",
           "dependsOn": [
             "replan-invariants"
           ],
