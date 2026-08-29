@@ -297,12 +297,19 @@ export async function spawnWorkers(
   return results;
 }
 
-export function executionPolicyOf(config: HarnessConfig): { parallelAt: HandoffGranularity; maxWorkers: number } {
-  const e = (config.execution ?? {}) as Partial<{ parallelAt: unknown; maxWorkers: unknown }>;
+export function executionPolicyOf(config: HarnessConfig): {
+  engine: import("./core/types.ts").ExecutionEngine;
+  parallelAt: HandoffGranularity;
+  maxWorkers: number;
+} {
+  const e = (config.execution ?? {}) as Partial<{ engine: unknown; parallelAt: unknown; maxWorkers: unknown }>;
+  // Anything but the explicit legacy value means background: a config written
+  // before this setting existed should get the new behaviour, not the bug.
+  const engine: import("./core/types.ts").ExecutionEngine = e.engine === "main-session" ? "main-session" : "background";
   const at = typeof e.parallelAt === "string" && (["off","goal","phase","sprint","feature","task","subtask"] as const).includes(e.parallelAt as HandoffGranularity)
     ? (e.parallelAt as HandoffGranularity)
     : "task";
   const raw = typeof e.maxWorkers === "number" ? e.maxWorkers : 3;
   const maxWorkers = Math.max(1, Math.min(16, Math.floor(raw)));
-  return { parallelAt: at, maxWorkers };
+  return { engine, parallelAt: at, maxWorkers };
 }

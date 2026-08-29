@@ -432,3 +432,83 @@ console.log("All widget tests PASS");
   }
   console.log("✓ the goal pass and the last escalation are visible, and still fit");
 }
+
+// ── the background sessions, and the log of what they did ──────────────────
+//
+// The run's work no longer happens in the session the human is watching, so a
+// widget that does not show the background sessions shows nothing about the
+// run at all. It has to say which model each one is on, because "routed to the
+// difficult tier" is a claim, and an invisible claim is how the last version
+// silently did not route anything.
+{
+  const base: WidgetState = { list: sample(), phase: "build", view: defaultView() };
+  const busy = renderWidget(
+    {
+      ...base,
+      engine: "background",
+      workers: [
+        {
+          name: "W3",
+          unit: "feature-002 · Checkout",
+          level: "feature",
+          model: "openrouter/big-model",
+          difficulty: "difficult",
+          state: "working",
+          doing: "edit src/checkout/total.ts",
+          tokens: 41000,
+          contextRatio: 0.42,
+        },
+      ],
+      activity: [
+        { at: "2026-08-29T09:14:00.000Z", level: "info", worker: null, text: "supervisor started" },
+        { at: "2026-08-29T09:14:05.000Z", level: "work", worker: "W3", text: "bash npm test" },
+        { at: "2026-08-29T09:15:00.000Z", level: "warn", worker: "W3", text: "gate failed: tests" },
+      ],
+    },
+    { width: 76, styler: PLAIN, glyphs: G },
+  ).join("\n");
+
+  assert.match(busy, /background/, "the widget says where the work is happening");
+  assert.match(busy, /W3/, "and names the session doing it");
+  assert.match(busy, /feature-002 · Checkout/, "and the unit it owns");
+  assert.match(busy, /difficult/, "and the tier that chose its model");
+  assert.match(busy, /openrouter\/big-model/, "and the model itself");
+  assert.match(busy, /42%/, "and how full its context is, because that is when it gets replaced");
+  assert.match(busy, /edit src\/checkout\/total\.ts/, "and the last thing it did");
+  assert.match(busy, /bash npm test/, "the background log is there too");
+  assert.match(busy, /09:1[45]/, "with a readable clock, not an ISO stamp");
+
+  // An armed-but-idle run must not look identical to a dead one.
+  const idle = renderWidget({ ...base, engine: "background" }, { width: 76, styler: PLAIN, glyphs: G }).join("\n");
+  assert.match(idle, /no worker running/, "an idle background engine says so");
+
+  // The legacy engine has no background section to draw.
+  const legacy = renderWidget({ ...base, engine: "main-session" }, { width: 76, styler: PLAIN, glyphs: G }).join("\n");
+  assert.ok(!/no worker running/.test(legacy));
+
+  // And none of it may overrun the frame — the constraint on this surface.
+  for (const w of [58, 60, 76, 120]) {
+    const lines = renderWidget(
+      {
+        ...base,
+        engine: "background",
+        workers: [
+          {
+            name: "W12",
+            unit: "feature-002 · a deliberately long feature name that will not fit anywhere",
+            level: "feature",
+            model: "some-provider/a-very-long-model-identifier-2026-08-29",
+            difficulty: "moderate",
+            state: "working",
+            doing: "bash npm run test -- --watch=false --reporter=verbose --coverage",
+            contextRatio: 0.99,
+          },
+        ],
+        activity: [{ at: "2026-08-29T09:14:00.000Z", level: "work", worker: "W12", text: "x".repeat(300) }],
+      },
+      { width: w, boxed: true, styler: PLAIN, glyphs: G },
+    );
+    for (const line of lines) assert.equal(width(line), w, `boxed widget must be exactly ${w} columns`);
+  }
+  console.log("✓ the background sessions and their log are on screen, and still fit");
+}

@@ -68,7 +68,29 @@ export type DashboardState = {
    * reads, so a level turned off in one is off in the other.
    */
   display?: DisplayPolicy | null;
+  /** Where the work is happening. */
+  engine?: "background" | "main-session" | null;
+  /** The background pi sessions doing the work, and what each is on. */
+  workers?: DashWorker[] | null;
+  /** The tail of the background log. */
+  activity?: DashActivity[] | null;
 };
+
+export type DashWorker = {
+  name: string;
+  unitLabel: string;
+  level: string;
+  model: string;
+  servedModel?: string | null;
+  difficulty?: string | null;
+  state: string;
+  doing?: string | null;
+  turns?: number;
+  tokens?: { inputTokens: number; outputTokens: number } | null;
+  contextRatio?: number | null;
+};
+
+export type DashActivity = { at: string; level: string; worker: string | null; text: string };
 
 // ── escaping ────────────────────────────────────────────────────────────────
 
@@ -799,6 +821,50 @@ body{
   color:var(--faint);font-weight:600;margin-bottom:6px;
 }
 
+
+/* -- background sessions --------------------------------------------------- */
+/*
+ * The run's work happens in other pi processes now, so this panel is the only
+ * place it is visible. It is deliberately the loudest thing under the meter:
+ * a live dot, the model each session is on, and a reverse-chronological log.
+ */
+.card.background h2{margin:0 0 4px;font-size:14px;letter-spacing:.01em}
+.bg-note{margin:0 0 12px;color:var(--muted);font-size:13px}
+.bg-workers{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.bg-worker{
+  display:grid;grid-template-columns:auto auto 1fr;gap:4px 10px;align-items:baseline;
+  padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);
+}
+.bg-dot{
+  width:8px;height:8px;border-radius:50%;background:var(--muted);
+  align-self:center;grid-row:1;
+}
+.bg-worker.is-working .bg-dot,.bg-worker.is-starting .bg-dot{
+  background:var(--c-accent);box-shadow:0 0 0 3px var(--ring);animation:bgpulse 1.6s ease-in-out infinite;
+}
+.bg-worker.is-failed .bg-dot{background:var(--t-blocked,#C0392B)}
+@keyframes bgpulse{0%,100%{opacity:1}50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){.bg-worker .bg-dot{animation:none}}
+.bg-name{font-weight:650}
+.bg-model{
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;
+  color:var(--c-accent);overflow-wrap:anywhere;
+}
+.bg-meta{grid-column:2/-1;color:var(--muted);font-size:12.5px}
+.bg-doing{grid-column:2/-1;font-size:13px;overflow-wrap:anywhere}
+.bg-log{
+  list-style:none;margin:12px 0 0;padding:10px 0 0;border-top:1px solid var(--border);
+  max-height:260px;overflow:auto;display:grid;gap:2px;
+}
+.bg-line{display:grid;grid-template-columns:44px 34px 1fr;gap:8px;font-size:12.5px;align-items:baseline}
+.bg-time{color:var(--faint);font-variant-numeric:tabular-nums}
+.bg-who{color:var(--c-accent);font-weight:600}
+.bg-text{color:var(--muted);overflow-wrap:anywhere}
+.bg-line.lvl-work .bg-text{color:var(--text)}
+.bg-line.lvl-good .bg-text{color:var(--t-success,#177245)}
+.bg-line.lvl-warn .bg-text{color:var(--t-rework,#8E44AD)}
+.bg-line.lvl-error .bg-text{color:var(--t-blocked,#C0392B)}
+
 /* -- masthead ------------------------------------------------------------- */
 .masthead{
   position:sticky;top:0;z-index:20;
@@ -1210,6 +1276,66 @@ function formatTimestamp(iso: string): string {
   return d.toISOString().replace("T", " ").replace(/\.\d+Z$/, "Z");
 }
 
+/**
+ * The background sessions, and the log of what they have done.
+ *
+ * When the work moved out of the human's terminal this became the only place
+ * a run is visible at all — so it says, per session, which unit it owns, what
+ * model is answering for it, and the last thing it did. The model is on the
+ * card because "routed to the difficult tier" is a claim, and a claim you
+ * cannot see is one nobody believes.
+ */
+export function renderBackground(
+  engine: DashboardState["engine"],
+  workers: readonly DashWorker[],
+  activity: readonly DashActivity[],
+): string {
+  if (!engine && workers.length === 0 && activity.length === 0) return "";
+  const head =
+    engine === "main-session"
+      ? `<p class="bg-note">Work runs in the pi session you started the harness from.</p>`
+      : `<p class="bg-note">Work runs in separate background pi sessions, each on the model its difficulty tier names.</p>`;
+  const cards = workers.length
+    ? workers
+        .map((w) => {
+          const tokens = w.tokens ? w.tokens.inputTokens + w.tokens.outputTokens : 0;
+          const ctx = typeof w.contextRatio === "number" ? `${Math.round(w.contextRatio * 100)}% ctx` : "";
+          const bits = [
+            `${w.level} · ${w.unitLabel}`,
+            w.difficulty ? `${w.difficulty} tier` : "",
+            `${w.turns ?? 0} turn${(w.turns ?? 0) === 1 ? "" : "s"}`,
+            tokens ? `${tokens.toLocaleString("en-US")} tokens` : "",
+            ctx,
+          ].filter(Boolean);
+          return (
+            `<li class="bg-worker is-${esc(w.state)}">` +
+            `<span class="bg-dot" aria-hidden="true"></span>` +
+            `<span class="bg-name">${esc(w.name)}</span>` +
+            `<span class="bg-model">${esc(w.servedModel || w.model || "pi default")}</span>` +
+            `<span class="bg-meta">${esc(bits.join(" · "))}</span>` +
+            (w.doing ? `<span class="bg-doing">${esc(w.doing)}</span>` : "") +
+            `</li>`
+          );
+        })
+        .join("")
+    : `<li class="bg-worker is-idle"><span class="bg-dot" aria-hidden="true"></span><span class="bg-name">idle</span><span class="bg-meta">no background session running</span></li>`;
+  const log = activity.length
+    ? `<ol class="bg-log">` +
+      activity
+        .slice(-40)
+        .reverse()
+        .map(
+          (l) =>
+            `<li class="bg-line lvl-${esc(l.level)}"><span class="bg-time">${esc(l.at.slice(11, 16))}</span>` +
+            (l.worker ? `<span class="bg-who">${esc(l.worker)}</span>` : `<span class="bg-who"></span>`) +
+            `<span class="bg-text">${esc(l.text)}</span></li>`,
+        )
+        .join("") +
+      `</ol>`
+    : "";
+  return `<section class="card background"><h2>Background</h2>${head}<ul class="bg-workers">${cards}</ul>${log}</section>`;
+}
+
 export function renderDashboard(state: DashboardState): string {
   const list = normalizeForRender(state.list ?? { version: "0", baseRevision: 0, features: [] });
   const features = list.features ?? [];
@@ -1349,6 +1475,7 @@ ${
     : ""
 }
 ${display.progress ? renderProgress(counts, progress.tasksTotal, progress.featuresDone, progress.featuresTotal) : ""}
+${renderBackground(state.engine ?? null, state.workers ?? [], state.activity ?? [])}
 ${renderGate(gate)}
 ${goalTabsHtml}${phaseTabsHtml}
 ${body}

@@ -22,6 +22,7 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 
 import { isHarnessProject, loadConfig, saveConfig } from "../../src/core/config.ts";
 import { loadFeatureList, computeProgress, nextActionableTask } from "../../src/core/featureList.ts";
@@ -49,6 +50,20 @@ import { amendPlan, loadReplanHistory, type ReplanTaskInput } from "../../src/re
 import { chooseUnstuckStrategy } from "../../src/unstuck.ts";
 import { escalationSummary } from "../../src/escalate.ts";
 import { spawnIsolatedWorker } from "../../src/worker.ts";
+import { executionPolicyOf } from "../../src/scheduler.ts";
+import { isWorkerProcess } from "../../src/exec/piWorker.ts";
+import {
+  appendActivity,
+  currentUnit,
+  describeUnit,
+  loadActivity,
+  loadSupervisorState,
+  isRefusal,
+  startSupervisor,
+  type ActivityLine,
+  type RunningSupervisor,
+  type SupervisorState,
+} from "../../src/supervisor.ts";
 import {
   startGoal,
   loadGoal,
@@ -104,6 +119,23 @@ import type { DisplayPolicy } from "../../src/core/types.ts";
 import { defaultView, scrollView, SCROLL_STEP, TASK_WINDOW, EXPANDED_WINDOW, type WidgetView } from "../../src/ui/widget.ts";
 import { buildPlanRows } from "../../src/ui/planTree.ts";
 
+/**
+ * This file's own path.
+ *
+ * A background worker normally discovers the harness the same way this
+ * session did, because the harness is an installed pi package. When it was
+ * loaded from an explicit `-e` instead — a dev checkout, and every e2e run —
+ * discovery finds nothing, and the supervisor restarts the worker with this
+ * path so it still has the plan tools.
+ */
+const SELF_PATH: string | null = (() => {
+  try {
+    return fileURLToPath(import.meta.url);
+  } catch {
+    return null;
+  }
+})();
+
 const CHECKPOINT = "infinity:checkpoint";
 const WIDGET_KEY = "infinity-harness";
 const STATUS_KEY = "infinity";
@@ -138,6 +170,21 @@ export default function (pi: ExtensionAPI): void {
   let remoteServer: { url: string; close: () => Promise<void> } | null = null;
   let remoteDir: string | null = null;
   let view: WidgetView = defaultView();
+
+  /**
+   * The background orchestrator, when one is running in this session.
+   *
+   * It is a plain async loop in this process — no LLM, no tokens — that keeps
+   * one `pi` child working on the current unit. Only one session drives a run
+   * at a time; a second pi window on the same project shows the widget and
+   * the log, and leaves the driving alone.
+   */
+  let supervisor: RunningSupervisor | null = null;
+  /** This session is a background worker, not the human's control panel. */
+  const workerProcess = isWorkerProcess();
+  /** Ring of activity lines mirrored into the widget. */
+  let activity: ActivityLine[] = [];
+  let supState: SupervisorState | null = null;
 
   /**
    * Is this instance's session still the live one?
@@ -195,9 +242,33 @@ export default function (pi: ExtensionAPI): void {
       const pass = typeof config.goalPass === "number" ? config.goalPass : null;
       const maxPasses = typeof config.goalMaxPasses === "number" ? config.goalMaxPasses : null;
       const run = loadRunState(dir);
+      const sup = supState ?? loadSupervisorState(dir);
+      const worker = sup?.worker ?? null;
       return {
         list,
         view,
+        engine: executionPolicyOf(config).engine,
+        workers: worker
+          ? [
+              {
+                name: worker.name,
+                unit: worker.unitLabel,
+                level: worker.level,
+                model: worker.servedModel ?? worker.model,
+                difficulty: worker.difficulty,
+                state: worker.state,
+                doing: worker.doing,
+                tokens: worker.tokens.inputTokens + worker.tokens.outputTokens,
+                contextRatio: worker.contextRatio,
+              },
+            ]
+          : [],
+        activity: (activity.length ? activity : loadActivity(dir)).slice(-40).map((l) => ({
+          at: l.at,
+          level: l.level,
+          worker: l.worker,
+          text: l.text,
+        })),
         dashboardUrl: remoteServer?.url ?? null,
         handoffModelNote,
         sessions: run?.sessions ?? null,
@@ -415,6 +486,106 @@ export default function (pi: ExtensionAPI): void {
       if (!m || !m.trim()) return null;
       return `Routing: ${task.compositeKey} → ${m}${th ? ` · thinking ${th}` : ""}`;
     } catch { return null; }
+  };
+
+
+  // -- the background engine -------------------------------------------------
+
+  /** Where work runs for this project, honouring the legacy escape hatch. */
+  const engineFor = (dir: string): "background" | "main-session" => {
+    try {
+      return executionPolicyOf(loadConfig(dir).config).engine;
+    } catch {
+      return "background";
+    }
+  };
+
+  /**
+   * The model this session is on, as `provider/id`.
+   *
+   * A router slot left empty means "whatever pi is already configured with",
+   * and a *child* process does not inherit that: it would fall back to pi's
+   * default provider, which is not necessarily what the human is looking at.
+   * So we read it here and hand it to the worker explicitly.
+   */
+  const baseModelOf = (ctx: unknown): string | null => {
+    try {
+      const m = (ctx as { model?: { id?: string; provider?: string } }).model;
+      if (m?.id) return m.provider ? `${m.provider}/${m.id}` : m.id;
+    } catch {
+      /* pi without a model is a pi that cannot run anything anyway */
+    }
+    return null;
+  };
+
+  /**
+   * Start the background orchestrator for this project.
+   *
+   * Everything it does happens in this process, in plain JavaScript. It costs
+   * no tokens in this session: the only LLM calls a run makes are made by the
+   * `pi` children it spawns, on the models the router chose for them.
+   */
+  const startEngine = async (ctx: ExtensionContext, dir: string): Promise<boolean> => {
+    if (supervisor?.isRunning()) return true;
+    if (ctx.mode !== "tui" && ctx.mode !== "rpc") {
+      // `pi -p` has no future in which to watch anything. Arming the run is
+      // still right — the next interactive session picks it up.
+      notify(ctx, "infinity-harness: run armed. Open pi interactively to drive it.", "info");
+      return false;
+    }
+    const runId = runFor(dir);
+    const started = startSupervisor({
+      targetDir: dir,
+      runId,
+      sessionId,
+      baseModel: baseModelOf(ctx),
+      harnessExtension: SELF_PATH,
+      hooks: {
+        onState: (st) => {
+          supState = st;
+          if (sessionLive) refreshWidget(ctx);
+        },
+        onActivity: (line) => {
+          activity = [...activity, line].slice(-120);
+          if (!sessionLive) return;
+          // Only the things a human would want interrupted for. Tool-by-tool
+          // narration belongs in the widget's log, not in notifications.
+          if (line.level === "error" || line.level === "warn" || line.level === "good") {
+            notify(ctx, `infinity-harness: ${line.text}`, line.level === "error" ? "error" : line.level === "warn" ? "warning" : "info");
+          }
+          refreshWidget(ctx);
+        },
+        onApproval: (phase) => {
+          if (sessionLive) void askForApproval(ctx, dir, phase);
+        },
+        onStop: (reason, detail) => {
+          if (!sessionLive) return;
+          notify(ctx, `infinity-harness: run finished — ${detail}`, reason === "complete" ? "info" : "warning");
+          refreshWidget(ctx);
+        },
+      },
+    });
+    if (isRefusal(started)) {
+      // A second pi window on the same project is a *viewer*. Saying so is
+      // better than quietly putting two workers in one working tree.
+      notify(ctx, `infinity-harness: ${started.reason} This window still shows the run.`, "warning");
+      supervisor = null;
+      refreshWidget(ctx);
+      return false;
+    }
+    supervisor = started;
+    return true;
+  };
+
+  const stopEngine = async (reason: string): Promise<void> => {
+    const running = supervisor;
+    supervisor = null;
+    if (!running) return;
+    try {
+      await running.stop(reason);
+    } catch {
+      /* a supervisor that will not stop cleanly must not block the command */
+    }
   };
 
   // -- session handoff ------------------------------------------------------
@@ -664,16 +835,35 @@ export default function (pi: ExtensionAPI): void {
     const dir = projectDir(ctx);
     if (!isHarnessProject(dir)) return;
 
+    // A background worker loads this extension too — it needs the plan tools
+    // and the phase guard. What it must not do is drive: no widget, no brief
+    // injection, no loop, and above all no supervisor of its own, or one run
+    // would fork into a tree of pi processes spawning pi processes.
+    if (workerProcess) {
+      try {
+        pi.appendEntry("infinity:worker-session", {
+          unit: process.env.INFINITY_HARNESS_UNIT ?? null,
+          runId: process.env.INFINITY_HARNESS_RUN ?? null,
+        });
+      } catch {
+        /* best effort */
+      }
+      return;
+    }
+
     view = defaultView();
     refreshWidget(ctx);
     installTerminalShortcuts(ctx);
     const reason = (event as { reason?: string } | undefined)?.reason ?? "startup";
     const { config } = loadConfig(dir);
     lastBriefPhase = config.currentPhase;
-    // Route on session start (including after handoff) so the fresh session
-    // actually runs on the tier model, not whatever the harness was started with.
-    try { await applyRouting(ctx, dir, `session_start:${reason}`); } catch {}
-    ;(async () => { try { await applyRouting(ctx, dir, "session_start"); } catch {} })();
+    const engine = engineFor(dir);
+    // Under the background engine this session is a control panel: its model
+    // is the human's and stays the human's. Routing only ever applied to the
+    // legacy engine, where the human's session *is* the worker.
+    if (engine === "main-session") {
+      try { await applyRouting(ctx, dir, `session_start:${reason}`); } catch {}
+    }
 
     
     const run = reason === "startup" ? loadRunState(dir) : countSession(dir);
@@ -700,6 +890,36 @@ export default function (pi: ExtensionAPI): void {
     // A handoff written by the session this one replaces. It carries the brief
     // plus the reason the previous session ended, so the agent does not spend
     // its first turn working out why it woke up mid-run.
+    // The background engine picks a run back up by restarting the supervisor:
+    // the plan, the phase and every budget are on disk, so a pi that was
+    // closed overnight resumes where it stopped rather than starting over.
+    if (engine !== "main-session") {
+      clearHandoff(dir);
+      if (armed) {
+        const ok = await startEngine(ctx, dir);
+        if (ok) notify(ctx, "infinity-harness: continuing the run in background sessions.", "info");
+      }
+      // A short orientation note, not the brief. The brief is several
+      // kilobytes and it is what makes a model start *working* the pipeline;
+      // in a control panel it would be paid for on every turn the human takes
+      // and would invite this session to do the work itself.
+      try {
+        pi.sendMessage(
+          {
+            customType: "infinity:brief",
+            content: controlPanelNote(dir, armed),
+            display: true,
+            details: { phase: config.currentPhase, engine },
+          },
+          { triggerTurn: false },
+        );
+      } catch (e) {
+        notify(ctx, `infinity-harness: ${errMsg(e)}`, "warning");
+      }
+      refreshWidget(ctx);
+      return;
+    }
+
     const pending = takeHandoff(dir);
     if (pending && pending.runId === runFor(dir)) {
       try {
@@ -748,13 +968,15 @@ export default function (pi: ExtensionAPI): void {
     if (!sessionLive) return;
     const dir = projectDir(ctx);
     if (!isHarnessProject(dir)) return;
-    // Live-model routing: switch the pi session model/thinking for the next
-    // actionable task. This is what makes harness/model-router.json do anything
-    // in the main session; without it the GUI pointing at the same model was
-    // the whole behavior.
-    try { await applyRouting(ctx, dir, "before_agent_start"); } catch {}
+    // Live-model routing rewrites *this* session's model, which is only ever
+    // right when this session is the worker. Under the background engine the
+    // human's model is theirs, and the routed model belongs to the child.
+    if (engineFor(dir) === "main-session") {
+      try { await applyRouting(ctx, dir, "before_agent_start"); } catch {}
+    }
     try {
-      const contract = harnessContract(dir);
+      const contract =
+        engineFor(dir) === "main-session" ? harnessContract(dir) : controlPanelContract(dir);
       if (!contract) return;
       const base = (event as { systemPrompt?: string }).systemPrompt ?? ctx.getSystemPrompt();
       const routed = await routingSummaryForBrief(dir);
@@ -766,7 +988,7 @@ export default function (pi: ExtensionAPI): void {
   });
 
   pi.on("session_tree", async (_event, ctx) => {
-    if (!sessionLive) return;
+    if (!sessionLive || workerProcess) return;
     refreshWidget(ctx);
   });
 
@@ -776,7 +998,7 @@ export default function (pi: ExtensionAPI): void {
    * few calls costs little and keeps the plan honest.
    */
   pi.on("context", async (event, ctx) => {
-    if (!sessionLive) return;
+    if (!sessionLive || workerProcess) return;
     const dir = projectDir(ctx);
     if (!isHarnessProject(dir)) return;
 
@@ -855,6 +1077,9 @@ export default function (pi: ExtensionAPI): void {
 
   pi.on("session_compact", async (event, ctx) => {
     if (!sessionLive) return;
+    // A worker that compacts re-reads the brief from its own prompt; the
+    // control-panel re-brief would put a second brief in front of it.
+    if (workerProcess) return;
     const dir = projectDir(ctx);
     if (!isHarnessProject(dir)) return;
     try {
@@ -883,7 +1108,7 @@ export default function (pi: ExtensionAPI): void {
   });
 
   pi.on("turn_end", async (_event, ctx) => {
-    if (!sessionLive) return;
+    if (!sessionLive || workerProcess) return;
     refreshWidget(ctx);
   });
 
@@ -896,11 +1121,15 @@ export default function (pi: ExtensionAPI): void {
    * `/reload`, `/resume`, and pi being restarted.
    */
   pi.on("agent_settled", async (_event, ctx) => {
-    if (!sessionLive) return;
+    if (!sessionLive || workerProcess) return;
     const dir = projectDir(ctx);
     if (!isHarnessProject(dir)) return;
     if (loopBusy || handingOff) return;
     if (!loopArmed(dir)) return;
+    // The background engine drives the run from the supervisor, in this
+    // process, with no LLM turn in this session at all. Driving it from here
+    // too is what made the human's model pay for the whole run.
+    if (engineFor(dir) !== "main-session") return;
 
     loopBusy = true;
     try {
@@ -1020,6 +1249,8 @@ export default function (pi: ExtensionAPI): void {
 
   pi.on("session_shutdown", async () => {
     sessionLive = false;
+    // A pi that closes must not leave a worker running against the project.
+    await stopEngine("this pi session closed");
     if (remoteServer) {
       try {
         await remoteServer.close();
@@ -1792,6 +2023,64 @@ export default function (pi: ExtensionAPI): void {
     },
   });
 
+
+  /**
+   * What the background sessions are doing.
+   *
+   * The run's work is no longer in this transcript, so this is where a human
+   * looks when they come back to the terminal. It prints rather than asking
+   * the model anything: reading the log must never cost a turn.
+   */
+  pi.registerCommand("infinity:workers", {
+    description: "Show the background pi sessions — which unit, which model, and the recent log",
+    handler: async (args: string, ctx: ExtensionContext) => {
+      const dir = projectDir(ctx);
+      if (!isHarnessProject(dir)) {
+        notify(ctx, NO_HARNESS, "warning");
+        return;
+      }
+      const rows = Math.max(5, Math.min(120, Number.parseInt(args.trim(), 10) || 25));
+      const st = loadSupervisorState(dir);
+      const log = loadActivity(dir);
+      const engine = engineFor(dir);
+      const lines: string[] = [];
+      lines.push(
+        engine === "background"
+          ? "Work runs in background pi sessions. This session spends nothing on it."
+          : "Work runs in THIS session (execution.engine = main-session). Your model is paying for the run.",
+      );
+      if (st?.unit) lines.push(`Unit      ${describeUnit(st.unit, st.baseModel)}`);
+      if (st?.worker) {
+        const w = st.worker;
+        lines.push(
+          `Worker    ${w.name} · ${w.state} · ${w.unitLabel} · asked ${w.model || "pi default"}` +
+            (w.servedModel && w.servedModel !== w.model ? ` · served ${w.servedModel}` : "") +
+            ` · ${w.turns} turn(s) · ${w.tokens.inputTokens + w.tokens.outputTokens} tokens`,
+        );
+        if (w.doing) lines.push(`          ${w.doing}`);
+      } else {
+        lines.push("Worker    none running");
+      }
+      if (st?.history?.length) {
+        lines.push("");
+        lines.push("Finished sessions (newest last):");
+        for (const h of st.history.slice(-6)) {
+          lines.push(`  ${h.name} · ${h.unitLabel} · ${h.servedModel ?? (h.model || "pi default")} · ${h.turns} turn(s)`);
+        }
+      }
+      lines.push("");
+      lines.push(log.length ? `Background log (last ${Math.min(rows, log.length)}):` : "Background log is empty.");
+      for (const l of log.slice(-rows)) {
+        const when = l.at.slice(11, 16);
+        lines.push(`  ${when} ${l.worker ? l.worker + " " : ""}${l.text}`);
+      }
+      pi.sendMessage(
+        { customType: "infinity:workers", content: lines.join("\n"), display: true, details: { engine } },
+        { triggerTurn: false },
+      );
+    },
+  });
+
   pi.registerCommand("infinity:approve", {
     description: "Approve the phase waiting for you — or send it back with a note",
     handler: async (args: string, ctx: ExtensionContext) => {
@@ -2306,14 +2595,32 @@ export default function (pi: ExtensionAPI): void {
         return;
       }
       armRun(dir, sessionId);
+      const engine = engineFor(dir);
       notify(
         ctx,
         `infinity-harness: continuous run armed. It stops on completion, on an exhausted retry budget, ` +
           `when no progress is detected, or when you create ${stopFilePath(dir)}. Use /infinity:halt to stop now.`,
         "info",
       );
-      const text = await briefText(dir);
-      pi.sendUserMessage(text, { deliverAs: "followUp" });
+      if (engine === "main-session") {
+        const text = await briefText(dir);
+        pi.sendUserMessage(text, { deliverAs: "followUp" });
+        return;
+      }
+      // The background engine: this session says nothing to its own model. It
+      // starts an orchestrator that spawns pi children on the routed models,
+      // and from here on it is a control panel.
+      const unit = currentUnit(dir, baseModelOf(ctx));
+      await startEngine(ctx, dir);
+      notify(
+        ctx,
+        unit
+          ? `infinity-harness: working in background sessions — ${describeUnit(unit, baseModelOf(ctx))}. ` +
+              `This session stays free; /infinity:workers shows what they are doing.`
+          : "infinity-harness: background engine started.",
+        "info",
+      );
+      refreshWidget(ctx);
     },
   });
 
@@ -2461,7 +2768,8 @@ export default function (pi: ExtensionAPI): void {
       }
       disarmRun(dir, "halted from /infinity:halt");
       clearHandoff(dir);
-      notify(ctx, "infinity-harness: continuous run stopped.", "info");
+      await stopEngine("halted from /infinity:halt");
+      notify(ctx, "infinity-harness: continuous run stopped, background sessions closed.", "info");
       refreshWidget(ctx);
     },
   });
@@ -2481,7 +2789,8 @@ export default function (pi: ExtensionAPI): void {
         return saveConfig(dir, config).ok;
       });
       disarmRun(dir, "paused from /infinity:pause");
-      notify(ctx, value ? "infinity-harness: paused." : "Could not pause — config unreadable.", value ? "info" : "error");
+      await stopEngine("paused from /infinity:pause");
+      notify(ctx, value ? "infinity-harness: paused, background sessions closed." : "Could not pause — config unreadable.", value ? "info" : "error");
       refreshWidget(ctx);
     },
   });
@@ -2500,6 +2809,9 @@ export default function (pi: ExtensionAPI): void {
         config.paused = false;
         return saveConfig(dir, config).ok;
       });
+      if (value && loadRunState(dir)?.armed === true && engineFor(dir) !== "main-session") {
+        await startEngine(ctx, dir);
+      }
       notify(ctx, value ? "infinity-harness: resumed." : "Could not resume — config unreadable.", value ? "info" : "error");
       refreshWidget(ctx);
     },
@@ -2706,6 +3018,67 @@ function describeCurrentWorkflow(dir: string): string {
     ? ""
     : "\n\nThese settings do not match any saved workflow. `/infinity:workflow` can save them as one.";
   return `${head}\n  ${rail}\n  (a phase in [brackets] stops for you)${drift}`;
+}
+
+/**
+ * What this session is, when the work is happening somewhere else.
+ *
+ * Deliberately a few lines rather than the brief. The brief is several
+ * kilobytes, it is re-read on every turn once it is in the transcript, and it
+ * is written to make a model start building — none of which belongs in a
+ * window whose job is to show a human what is going on.
+ */
+function controlPanelNote(dir: string, armed: boolean): string {
+  const { config } = loadConfig(dir);
+  const { list } = loadFeatureList(dir);
+  const p = computeProgress(list);
+  const L: string[] = [];
+  L.push("[infinity-harness] control panel");
+  L.push(
+    `${(config.currentPhase ?? "not started").toUpperCase()} · ${p.tasksDone}/${p.tasksTotal} tasks · ` +
+      `${p.featuresDone}/${p.featuresTotal} features · plan rev ${list.baseRevision}` +
+      (armed ? " · run armed" : ""),
+  );
+  L.push("");
+  L.push(
+    "The run works in separate background pi sessions, each on the model its difficulty tier " +
+      "names. This session does not do that work and should not start it.",
+  );
+  L.push("");
+  L.push("  /infinity:workers   what the background sessions are doing right now");
+  L.push("  /infinity:status    where the run is");
+  L.push(armed ? "  /infinity:halt      stop the run" : "  /infinity:run       start the run");
+  L.push("  /infinity:approve   sign a phase that is waiting for you");
+  return L.join("\n");
+}
+
+/**
+ * The contract for a control panel.
+ *
+ * The pipeline contract tells a model to work the plan. Told that in a
+ * session whose whole point is *not* to work the plan, a model helpfully
+ * starts building — on the human's own model, which is the bug this engine
+ * exists to fix. This says the opposite, in as few words.
+ */
+function controlPanelContract(dir: string): string | null {
+  const { config, ok } = loadConfig(dir);
+  if (!ok || !config.currentPhase) return null;
+  const { list } = loadFeatureList(dir);
+  const p = computeProgress(list);
+  return [
+    "## infinity-harness — you are the control panel",
+    "",
+    `This project runs an infinity-harness pipeline at **${config.currentPhase.toUpperCase()}**, ` +
+      `${p.tasksDone}/${p.tasksTotal} tasks done. The work is being done by separate background ` +
+      `pi sessions on their own models, not by you.`,
+    "",
+    "1. Do not implement plan tasks, advance phases, or edit `harness/` by hand. Answer the",
+    "   human's questions about the run, and use `/infinity:workers` and `infinity_status`",
+    "   to see what the background sessions are doing.",
+    "2. If the human asks you to build something, say that the harness is driving it and offer",
+    "   `/infinity:run`, `/infinity:halt`, or `/infinity:replan` instead.",
+    "3. The plan of record is `harness/features/feature-list.json`; your memory of it is not.",
+  ].join("\n");
 }
 
 /**

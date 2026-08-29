@@ -39,6 +39,8 @@ export class PiDriver {
    * @param {string[]} [opts.extensions] extension files to load
    * @param {string} [opts.sessionDir]   session storage
    * @param {number} [opts.contextWindow] declared context window of the mock model
+   * @param {Record<string,object>} [opts.extraProviders] extra providers in models.json,
+   *        so a scenario can prove work is routed to a *different* model
    * @param {object} [opts.env]           extra environment for the pi process
    */
   constructor(opts) {
@@ -73,6 +75,7 @@ export class PiDriver {
               compat: { supportsDeveloperRole: false, supportsReasoningEffort: false },
               models: [{ id: "mock-1", name: "Mock", contextWindow, maxTokens: 4096 }],
             },
+            ...(this.opts.extraProviders ?? {}),
           },
         },
         null,
@@ -120,6 +123,7 @@ export class PiDriver {
       stdio: ["pipe", "pipe", "pipe"],
     });
 
+    this.child.stdin.on("error", () => {});
     this.child.stdout.setEncoding("utf8");
     this.child.stdout.on("data", (chunk) => this.#ingest(chunk));
     this.child.stderr.setEncoding("utf8");
@@ -212,7 +216,14 @@ export class PiDriver {
 
   send(obj) {
     if (this.exited) return;
-    this.child.stdin.write(JSON.stringify(obj) + "\n");
+    // A pi that has already gone turns this into an async EPIPE on the socket,
+    // which with no listener is an unhandled 'error' that kills the suite —
+    // and hides whichever assertion actually failed first.
+    try {
+      this.child.stdin.write(JSON.stringify(obj) + "\n", () => {});
+    } catch {
+      /* the child is gone; callers time out, which is the real signal */
+    }
   }
 
   /** Send a command and wait for its response. */

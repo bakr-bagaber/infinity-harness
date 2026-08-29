@@ -87,6 +87,27 @@ export type WidgetState = {
    */
   display?: DisplayPolicy | null;
   /**
+   * Where the work is actually happening.
+   *
+   * `background` means the run is being driven by separate pi sessions and
+   * this one is a control panel. It is the single most important thing the
+   * widget can say, because it is the difference between "my model is being
+   * spent on this" and "it is not".
+   */
+  engine?: "background" | "main-session" | null;
+  /**
+   * The background sessions doing the work right now.
+   *
+   * This is the answer to "what is happening?" when the answer is no longer
+   * visible in the transcript — which, once the work moved out of this
+   * session, is always.
+   */
+  workers?: WorkerLine[] | null;
+  /** The tail of the background log: what the workers have been doing. */
+  activity?: ActivityLine[] | null;
+  /** Rows of background log to draw. 0 hides the section. */
+  activityRows?: number;
+  /**
    * What the human asked for, before a plan exists to hold a goal.
    *
    * Between init and the first `infinity_plan` call the widget had nothing to
@@ -94,6 +115,26 @@ export type WidgetState = {
    * someone wants to check that it understood them.
    */
   intake?: string | null;
+};
+
+/** One background pi session, as the widget draws it. */
+export type WorkerLine = {
+  name: string;
+  unit: string;
+  level: string;
+  model: string;
+  difficulty?: string | null;
+  state: "starting" | "working" | "idle" | "closed" | "failed";
+  doing?: string | null;
+  tokens?: number;
+  contextRatio?: number | null;
+};
+
+export type ActivityLine = {
+  at: string;
+  level: "info" | "work" | "warn" | "error" | "good";
+  worker: string | null;
+  text: string;
 };
 
 export type WidgetView = {
@@ -378,6 +419,78 @@ export function rowWindow(
  * Returns plain strings so the host can hand them straight to
  * `ctx.ui.setWidget`. Colour is embedded as ANSI when the styler is colouring.
  */
+
+/** Rows of background log drawn by default. Enough to see the shape of a minute. */
+export const ACTIVITY_ROWS = 5;
+
+const ACTIVITY_ROLE: Record<ActivityLine["level"], Role> = {
+  info: "muted",
+  work: "text",
+  warn: "rework",
+  error: "blocked",
+  good: "success",
+};
+
+const WORKER_ROLE: Record<WorkerLine["state"], Role> = {
+  starting: "active",
+  working: "active",
+  idle: "muted",
+  closed: "muted",
+  failed: "blocked",
+};
+
+/** `HH:MM` in local time — a full ISO stamp is six columns of nothing. */
+function clock(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "--:--";
+  return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+}
+
+/**
+ * The background sessions, one line each.
+ *
+ * The model is on the line on purpose. The whole point of routing work out of
+ * the human's session is that a different model does it, and a claim you
+ * cannot see is a claim nobody believes — least of all after the version
+ * where it silently did not happen.
+ */
+export function renderWorkers(workers: readonly WorkerLine[], inner: number, g: GlyphSet, s: Styler): string[] {
+  const out: string[] = [];
+  for (const w of workers) {
+    const role = WORKER_ROLE[w.state] ?? "muted";
+    const dot = s.fg(role, w.state === "working" || w.state === "starting" ? g.inProgress : g.pending);
+    const head =
+      dot +
+      " " +
+      s.bold(s.fg(role, w.name)) +
+      s.fg("rule", " · ") +
+      s.fg("text", w.unit) +
+      (w.difficulty ? s.fg("muted", " (" + w.difficulty + ")") : "");
+    const model = s.fg("accent", w.model || "pi default");
+    const ctx =
+      typeof w.contextRatio === "number" ? s.fg(w.contextRatio > 0.75 ? "rework" : "muted", " " + Math.round(w.contextRatio * 100) + "%") : "";
+    const right = model + ctx;
+    const gap = Math.max(1, inner - width(head) - width(right));
+    out.push(truncate(head + " ".repeat(gap) + right, inner));
+    if (w.doing) out.push(truncate("   " + s.fg("muted", g.arrow + " " + w.doing), inner));
+  }
+  return out;
+}
+
+/** The background log: the only place a human sees what the workers did. */
+export function renderActivity(lines: readonly ActivityLine[], rows: number, inner: number, s: Styler): string[] {
+  const tail = lines.slice(-Math.max(0, rows));
+  return tail.map((l) =>
+    truncate(
+      s.fg("rule", clock(l.at)) +
+        " " +
+        (l.worker ? s.fg("accent", l.worker) + " " : "") +
+        s.fg(ACTIVITY_ROLE[l.level] ?? "muted", l.text),
+      inner,
+    ),
+  );
+}
+
 export function renderWidget(state: WidgetState, options: WidgetOptions = {}): string[] {
   const total = options.width ?? DEFAULT_WIDTH;
   const s = options.styler ?? createStyler();
@@ -533,6 +646,27 @@ export function renderWidget(state: WidgetState, options: WidgetOptions = {}): s
       push();
       push(s.fg("muted", "  no plan yet"));
     }
+  }
+
+  // -- background sessions --------------------------------------------------
+  //
+  // Placed above the rail because, on a run driven by workers, this is the
+  // part of the widget that changes second by second. A human glancing at the
+  // terminal is checking that something is alive.
+  const workers = state.workers ?? [];
+  if (workers.length) {
+    push();
+    push(s.fg("rule", "background") + s.fg("rule", " " + g.rail.repeat(Math.max(1, inner - 12))));
+    for (const line of renderWorkers(workers, inner, g, s)) push(line);
+  } else if (state.engine === "background" && state.list.features.length > 0) {
+    push();
+    push(truncate(s.fg("muted", "background · no worker running — /infinity:run starts one"), inner));
+  }
+
+  const activityRows = state.activityRows ?? (state.activity?.length ? ACTIVITY_ROWS : 0);
+  if (activityRows > 0 && state.activity?.length) {
+    push();
+    for (const line of renderActivity(state.activity, view.expanded ? activityRows * 3 : activityRows, inner, s)) push(line);
   }
 
   // -- phase rail -----------------------------------------------------------

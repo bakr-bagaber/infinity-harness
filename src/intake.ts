@@ -56,6 +56,8 @@ export type IntakeAnswers = {
   /** Session handoff policy. Defaults to a fresh session per phase. */
   handoff?: SessionPolicy["handoff"];
   parallelAt?: import("./core/types.ts").HandoffGranularity;
+  /** Where the work runs. Defaults to background — its own pi session per unit. */
+  engine?: import("./core/types.ts").ExecutionEngine;
   maxWorkers?: number;
   /** What the surfaces should draw. Defaults to the `focus` template. */
   display?: DisplayPolicy;
@@ -126,6 +128,7 @@ export function planIntake(answers: IntakeAnswers): IntakePlan {
     carryNotes: true,
   };
   const parallelAt = answers.parallelAt ?? "task";
+  const engine = answers.engine ?? "background";
   const maxWorkers = Math.max(1, Math.min(16, Number.isFinite(answers.maxWorkers as number) ? Math.floor(answers.maxWorkers as number) : 3));
 
   const display = normalizeDisplay(answers.display ?? defaultDisplay());
@@ -174,7 +177,7 @@ export function planIntake(answers: IntakeAnswers): IntakePlan {
       plan: phaseModes.plan === "copilot",
     },
     session,
-    execution: { parallelAt, maxWorkers },
+    execution: { engine, parallelAt, maxWorkers },
     display,
     router: answers.router,
     summary: summarize(workflow, phases, phaseModes, session, display, brief, _researchDepth),

@@ -375,20 +375,27 @@ export const SETTINGS: SettingsGroup[] = [
   {
     id: "execution",
     label: "Execution",
-    help: "How many things run at once, and at which level. Main session only shows progress; workers do the real work.",
+    help: "Who does the work, how many at once, and at which level. The session you are typing in is a control panel; background workers do the real work.",
     settings: [
+      {
+        path: "execution.engine",
+        file: "config",
+        label: "Where work runs",
+        help: "background: every unit of work runs in its own pi session with its own model, and this session spends no tokens on it (recommended) · main-session: the old behaviour, everything runs here on your model.",
+        type: { kind: "choice", choices: ["background", "main-session"] },
+      },
       {
         path: "execution.parallelAt",
         file: "config",
         label: "Parallel at",
-        help: "off: one at a time · goal: goals in parallel · phase: phases · sprint/feature/task/subtask. Pick one. Finer implies coarser.",
+        help: "Legacy engine only. The background engine runs one unit at a time, in its own session, at the level you chose for session handoff.",
         type: { kind: "choice", choices: ["off", "goal", "phase", "sprint", "feature", "task", "subtask"] },
       },
       {
         path: "execution.maxWorkers",
         file: "config",
         label: "Max workers",
-        help: "How many workers run at once (1-16)._deps must be satisfied; parallelAt limits breadth.",
+        help: "Legacy engine only. The background engine runs one worker; parallel background workers are not wired up yet.",
         type: { kind: "number", min: 1, max: 16 },
       },
     ],

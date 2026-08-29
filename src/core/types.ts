@@ -168,11 +168,27 @@ export type RetryLevel = (typeof RETRY_LEVELS)[number];
 export type HandoffGranularity = "off" | "goal" | "phase" | "sprint" | "feature" | "task" | "subtask";
 
 export type ExecutionPolicy = {
+  /**
+   * Who actually does the work.
+   *
+   * `background` — the default, and the reason this harness exists. Each unit
+   * of work runs in its own `pi` process with its own model and its own
+   * context window; the session the human is typing into stays a control
+   * panel and spends no tokens on the run.
+   *
+   * `main-session` — the pre-2.7 behaviour, kept because a run on a machine
+   * that cannot spawn a second pi still has to be able to work. Everything
+   * happens in the human's session, on the human's model.
+   */
+  engine: ExecutionEngine;
   /** Level at which parallel work is allowed. `off` = one task at a time. */
   parallelAt: HandoffGranularity;
   /** Max parallel workers (1..16). Guarded by lock and budget. */
   maxWorkers: number;
 };
+
+export type ExecutionEngine = "background" | "main-session";
+export const EXECUTION_ENGINES: readonly ExecutionEngine[] = ["background", "main-session"] as const;
 
 export type SessionPolicy = {
   /**

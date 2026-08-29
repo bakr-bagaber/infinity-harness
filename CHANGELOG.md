@@ -4,6 +4,72 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.0] — 2026-08-29
+
+The work leaves your session. A run is driven by background pi processes on the models you
+routed them to, and the session you started it from becomes a control panel.
+
+### Fixed
+
+- **The run used your own session, your own model and your own tokens.** The loop pushed the brief
+  back into the session the human was typing in (`pi.sendUserMessage`), so that session's model did
+  every task whatever the router said, its context window carried the whole run, and a "session
+  handoff" replaced the human's terminal. Difficulty tiers had nowhere to be applied, because a
+  session has one model and it was yours. Work now runs in **separate `pi --mode rpc` child
+  processes**, one per unit, each started with `--model` from its tier. `src/supervisor.ts` drives
+  them from the extension's own process — plain JavaScript, no LLM, zero tokens in your session.
+
+- **Model routing did nothing.** `applyRouting` called `ctx.setModel` on the *live* session, which
+  is only ever right when that session is the worker. It now applies only under the legacy engine;
+  under the default engine the model is chosen when the worker is spawned, and the model that
+  actually answered is recorded (`servedModel`) and shown, so a reference that silently fell back
+  to pi's default is visible instead of invisible.
+
+- **Session handoff was not a handoff.** It replaced the human's session via `ctx.newSession`. The
+  handoff level now names the *unit* — goal, phase, sprint, feature, task, subtask — and one worker
+  owns one unit from start to finish. Crossing a unit boundary closes that worker and starts a new
+  one; because the model is chosen at spawn, **the session boundary and the model boundary are the
+  same boundary by construction.** A feature-level handoff really is one session for the whole
+  feature, and its tasks share that feature's hardest tier — which the wizard now says out loud in
+  the question that sets it.
+
+- **A fire-and-forget `spawnWorkers` in `decideNext` created empty attempt directories on every
+  failing gate** — litter in the project tree, an unawaited promise outliving its caller, and no
+  work done. Removed; background execution belongs to the supervisor.
+
+### Added
+
+- **`execution.engine`** — `background` (default) or `main-session` (the pre-2.7 behaviour, for a
+  machine that cannot spawn a second pi). Configurable from `/infinity:config`.
+- **`/infinity:workers`** — which background sessions exist, which unit and model each has, what it
+  is doing, and the recent log. Prints; never costs a turn.
+- **A background section in the widget and a Background panel on the dashboard** — a live worker
+  rail with unit, tier, model and context pressure, over a reverse-chronological log.
+- **`harness/supervisor.json` and `harness/activity.json`** — what is running and what has happened,
+  on disk, so a run that spans days outlives every terminal that watched part of it.
+- **Worker sessions are real sessions.** They are stored under `tmp/infinity-harness/sessions/`, so
+  `/resume` opens any of them, and each worker's prompt, event stream and output are kept beside it.
+
+### Reliability
+
+- **One driver per project.** A second pi window on the same project is refused the wheel and stays
+  a viewer — two supervisors would put two workers in one working tree.
+- **Orphaned workers are reaped.** A `SIGKILL`ed pi cannot close its child; the next session finds
+  the recorded pid and ends it.
+- **`stop()` is bounded.** Halting races every long await against a stop signal, so a wedged worker
+  cannot make the run unstoppable.
+- **A worker that did not discover the harness is restarted with it loaded**, so it can never edit
+  code it has no way to record.
+- **Windows**: the `pi.cmd` shim is resolved to the script it wraps and run with node directly;
+  a shell is used only when there is no alternative.
+
+### Verified
+
+`tsc --noEmit` clean · 36 unit test files · 16/17 e2e scenarios (live skipped), including a new
+**`background`** scenario that drives real `pi` and proves a child process is spawned on the routed
+model, that a unit boundary swaps both, that a coarser level does not, and that the main session's
+own model is asked for nothing the whole time.
+
 ## [2.6.6] — 2026-08-28
 
 Every phase shows its tracked work, tabs isolate it, and autopilot actually drives.

@@ -89,6 +89,8 @@ const { renderWidget, renderStatusLine, scrollView, defaultView, SCROLL_STEP, TA
 const { renderDashboard } = await src("ui/dashboard.ts");
 const { buildPlanRows, groupPlan } = await src("ui/planTree.ts");
 const { initHarness } = await src("core/init.ts");
+const { saveRouterConfig, DEFAULT_ROUTER } = await src("modelRouter.ts");
+const { loadSupervisorState, loadActivity, currentUnit } = await src("supervisor.ts");
 const { createStyler, detectGlyphs, UNICODE_GLYPHS, ASCII_GLYPHS, width, stripAnsi } = await src("ui/theme.ts");
 
 const assert = (await import("node:assert/strict")).default;
@@ -2526,9 +2528,14 @@ async function scenarioExtension() {
     assert.match(ctx.statuses["infinity"], /build 0\/1/);
     assert.equal(pi.sent.length, 1);
     assert.equal(pi.sent[0].msg.customType, "infinity:brief");
-    assert.match(pi.sent[0].msg.content, /NEXT STEP · BUILD/);
-    assert.match(pi.sent[0].msg.content, /feature-001\/task-001/);
-    assert.equal(pi.sent[0].opts.triggerTurn, false, "the brief must not start a turn on its own");
+    // The default engine runs the work in background sessions, so what lands
+    // in *this* transcript is a short control-panel note, not the brief: the
+    // brief is kilobytes, is re-read every turn, and tells a model to build.
+    assert.match(pi.sent[0].msg.content, /control panel/);
+    assert.match(pi.sent[0].msg.content, /BUILD · 0\/1 tasks/);
+    assert.match(pi.sent[0].msg.content, /infinity:workers/);
+    assert.ok(pi.sent[0].msg.content.length < 800, "the control panel note stays small");
+    assert.equal(pi.sent[0].opts.triggerTurn, false, "the note must not start a turn on its own");
     assert.ok(pi.entries.some((e) => e.kind === "infinity:session"));
 
     // A directory with no harness is left completely alone.
@@ -2705,11 +2712,30 @@ async function scenarioExtension() {
     assert.match(restated.msg.content, /NEXT STEP ·/);
   });
 
+  await step("the default engine never asks this session to do the work", async () => {
+    // The bug this engine exists for: arming a run used to push the brief
+    // into the human's own session, so the human's model did every task, on
+    // the human's tokens, whatever the router said.
+    editConfig(dir, (c) => {
+      c.session = { handoff: "off", contextThreshold: 0, carryNotes: true };
+      c.execution = { engine: "background", parallelAt: "task", maxWorkers: 1 };
+    });
+    const before = pi.userMessages.length;
+    await pi.command("infinity:run", "", ctx);
+    assert.equal(pi.userMessages.length, before, "arming a run says nothing to this session's model");
+    await pi.emit("agent_settled", {}, ctx);
+    assert.equal(pi.userMessages.length, before, "and a settled agent is not handed the next task either");
+    await pi.command("infinity:halt", "", ctx);
+  });
+
   await step("/infinity:run arms the loop, agent_settled drives it, /infinity:halt takes the wheel back", async () => {
     // Handoff off: this step is about the loop, and a loop that replaces its
     // own session mid-assertion is a different test.
+    // `main-session` is the legacy engine, where this session *is* the worker.
+    // It is what the next few steps are about; the default is proved above.
     editConfig(dir, (c) => {
       c.session = { handoff: "off", contextThreshold: 0, carryNotes: true };
+      c.execution = { engine: "main-session", parallelAt: "task", maxWorkers: 1 };
     });
 
     const idle = pi.userMessages.length;
@@ -2734,6 +2760,7 @@ async function scenarioExtension() {
   await step("an armed run survives the session that armed it", async () => {
     editConfig(dir, (c) => {
       c.session = { handoff: "off", contextThreshold: 0, carryNotes: true };
+      c.execution = { engine: "main-session", parallelAt: "task", maxWorkers: 1 };
     });
     await pi.command("infinity:run", "", ctx);
 
@@ -2760,6 +2787,7 @@ async function scenarioExtension() {
       c.currentPhase = "define";
       c.currentRole = "planner";
       c.session = { handoff: "phase", contextThreshold: 0, carryNotes: true };
+      c.execution = { engine: "main-session", parallelAt: "task", maxWorkers: 1 };
     });
 
     const newSessions = [];
@@ -3973,8 +4001,16 @@ async function scenarioRealPi() {
   let seq = 0;
   const drivers = [];
 
-  /** A fresh pi process on a fresh project, with the harness already made. */
-  const launch = (name, { initOptions = {}, plan = null, settings = {}, contextWindow = 40000 } = {}) => {
+  /**
+   * A fresh pi process on a fresh project, with the harness already made.
+   *
+   * These legs drive the *main-session* engine on purpose: the brief landing
+   * in the transcript, the loop driving from `agent_settled`, `ctx.newSession`
+   * handoffs and the compaction re-brief are all behaviours of the session
+   * that is itself the worker. The background engine — the default — is
+   * proved end to end in its own scenario.
+   */
+  const launch = (name, { initOptions = {}, plan = null, settings = {}, contextWindow = 40000, engine = "main-session" } = {}) => {
     const dir = mkTempDir(`realpi-${name}`);
     gitInit(dir);
     writeFileSync(
@@ -3989,6 +4025,9 @@ async function scenarioRealPi() {
       const r = initHarness(dir, initOptions);
       assert.equal(r.ok, true, r.error ?? "initHarness failed");
       if (plan) writePlanFile(dir, plan);
+      const c = loadConfig(dir).config;
+      c.execution = { ...c.execution, engine };
+      saveConfig(dir, c);
     }
     const driver = new PiDriver({
       cwd: dir,
@@ -4589,6 +4628,304 @@ async function scenarioRealPi() {
   }
 }
 
+
+/**
+ * The background engine — the run's work happens in other pi processes, on
+ * other models, and the human's session pays for none of it.
+ *
+ * This is the scenario that would have caught the bug it exists for. Every
+ * assertion here is about a *real* second pi process: that it was started,
+ * that the model it asked the provider for is the one the difficulty tier
+ * names, that crossing a unit boundary starts a different process on a
+ * different model, and — the part no unit test can see — that the session the
+ * human is typing into makes no model calls of its own the whole time.
+ */
+async function scenarioBackground() {
+  const rig = pathToFileURL(join(REPO_ROOT, "scripts", "rig", "pi-driver.mjs")).href;
+  const { PiDriver, startMockModel } = await import(rig);
+
+  const piBin = join(REPO_ROOT, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "cli.js");
+  if (!existsSync(piBin)) throw new SkipLeg("pi is not installed (npm ci first)");
+
+  const EXT = join(REPO_ROOT, "extensions", "infinity-harness", "index.ts");
+  const workdir = mkTempDir("background");
+  const scriptPath = join(workdir, "model.json");
+  const reqLog = join(workdir, "requests.jsonl");
+  // Workers answer with a sentence and stop. The gate keeps failing, which is
+  // exactly what we want: the loop keeps going and we can watch it choose.
+  writeFileSync(scriptPath, JSON.stringify({ default: { content: "Looked at it. Nothing to change yet." } }));
+
+  const mock = await startMockModel(scriptPath, reqLog);
+  const drivers = [];
+  let seq = 0;
+
+  /** Every model id the provider was actually asked for, in order. */
+  const modelsAsked = () => {
+    if (!existsSync(reqLog)) return [];
+    return readFileSync(reqLog, "utf-8")
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => {
+        try {
+          return JSON.parse(l)?.body?.model ?? null;
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean);
+  };
+
+  const TIERS = {
+    tierB: { models: [{ id: "easy-model", name: "B", contextWindow: 40000, maxTokens: 4096 }] },
+    tierC: { models: [{ id: "moderate-model", name: "C", contextWindow: 40000, maxTokens: 4096 }] },
+    tierD: { models: [{ id: "difficult-model", name: "D", contextWindow: 40000, maxTokens: 4096 }] },
+    tierX: { models: [{ id: "master-model", name: "X", contextWindow: 40000, maxTokens: 4096 }] },
+    tierA: { models: [{ id: "default-model", name: "A", contextWindow: 40000, maxTokens: 4096 }] },
+  };
+  const providers = Object.fromEntries(
+    Object.entries(TIERS).map(([name, v]) => [
+      name,
+      {
+        baseUrl: `http://127.0.0.1:${mock.port}`,
+        api: "openai-completions",
+        apiKey: "mock",
+        compat: { supportsDeveloperRole: false, supportsReasoningEffort: false },
+        ...v,
+      },
+    ]),
+  );
+
+  const plan = (over = {}) => ({
+    version: "2.0",
+    baseRevision: 1,
+    goals: [{ id: "goal-1", title: "ship the demo" }],
+    sprints: [{ id: "sprint-1", goalId: "goal-1", name: "Foundations" }],
+    features: [
+      {
+        id: "feature-1",
+        name: "Auth",
+        sprintId: "sprint-1",
+        goalId: "goal-1",
+        criteria: ["it works"],
+        tasks: [
+          { id: "task-1", key: "feature-1/task-1", description: "an easy one", status: "pending", difficulty: "easy" },
+          { id: "task-2", key: "feature-1/task-2", description: "a hard one", status: "pending", difficulty: "difficult" },
+        ],
+      },
+    ],
+    ...over,
+  });
+
+  const launch = (name, { handoff = "task", engine = "background", routing = true } = {}) => {
+    const dir = mkTempDir(`background-${name}`);
+    gitInit(dir);
+    writeFileSync(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "demo", version: "1.0.0", scripts: { test: "node -e 0", lint: "node -e 0" } }),
+    );
+    gitCommitAll(dir, "chore: initial commit");
+    const r = initHarness(dir, { mode: "autopilot", brief: "a demo project" });
+    assert.equal(r.ok, true, r.error ?? "initHarness failed");
+    writePlanFile(dir, plan());
+
+    const c = loadConfig(dir).config;
+    c.currentPhase = "build";
+    c.phases = { enabled: ["build", "verify"] };
+    c.session = { handoff, contextThreshold: 0, carryNotes: true };
+    c.execution = { engine, parallelAt: "task", maxWorkers: 1 };
+    saveConfig(dir, c);
+
+    saveRouterConfig(dir, {
+      ...DEFAULT_ROUTER,
+      enabled: routing,
+      default: "tierA/default-model",
+      byDifficulty: { easy: "tierB/easy-model", moderate: "tierC/moderate-model", difficult: "tierD/difficult-model" },
+      master: "tierX/master-model",
+    });
+
+    const driver = new PiDriver({
+      cwd: dir,
+      configDir: join(workdir, `pi-${++seq}`),
+      sessionDir: join(workdir, `sessions-${seq}`),
+      port: mock.port,
+      extensions: [EXT],
+      extraProviders: providers,
+    }).start();
+    drivers.push(driver);
+    return { dir, driver };
+  };
+
+  const waitUntil = async (fn, ms, what) => {
+    const deadline = Date.now() + ms;
+    let last = null;
+    while (Date.now() < deadline) {
+      try {
+        if (await fn()) return true;
+      } catch (e) {
+        last = e;
+      }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    assert.fail(`timed out waiting for ${what}${last ? ` (${last.message})` : ""}`);
+  };
+
+  try {
+    await step("the work leaves the main session: a real pi child runs the easy task on the easy model", async () => {
+      const { dir, driver } = launch("routes");
+      await driver.waitForUi((r) => r.method === "setWidget", 40_000, "the plan widget");
+      const before = modelsAsked().length;
+
+      await driver.prompt("/infinity:run");
+
+      await waitUntil(() => modelsAsked().slice(before).includes("easy-model"), 90_000, "a worker to call the easy-tier model");
+
+      const asked = modelsAsked().slice(before);
+      assert.ok(
+        asked.every((m) => m !== "mock-1"),
+        `the main session's own model was used for the run: ${asked.join(", ")}`,
+      );
+
+      const st = loadSupervisorState(dir);
+      assert.ok(st, "the supervisor wrote its state");
+      assert.equal(st.status, "running");
+      assert.equal(st.unit.key, "task:feature-1/task-1", "the unit is the task, because handoff is per task");
+      assert.equal(st.unit.difficulty, "easy");
+      assert.equal(st.unit.model, "tierB/easy-model", "and the easy tier picked the model");
+      assert.ok(st.worker, "a worker is on it");
+      assert.equal(st.worker.model, "tierB/easy-model");
+      await waitUntil(
+        () => (loadSupervisorState(dir)?.worker?.servedModel ?? null) === "tierB/easy-model",
+        30_000,
+        "the worker's model to be confirmed by the provider",
+      );
+
+      const log = loadActivity(dir).map((l) => l.text).join("\n");
+      assert.match(log, /supervisor started/);
+      assert.match(log, /W1 starting .*task feature-1\/task-1/);
+      assert.match(log, /on tierB\/easy-model \(easy\)/, "the log names the tier and the model it chose");
+
+      // And the human can see it without asking the model anything.
+      await waitUntil(
+        () => driver.widget().join("\n").includes("tierB/easy-model"),
+        30_000,
+        "the widget to name the worker's model",
+      );
+      const widget = driver.widget().join("\n");
+      assert.match(widget, /background/, "the widget says where the work is");
+      assert.match(widget, /W1/, "and names the session doing it");
+
+      await driver.prompt("/infinity:halt");
+      await waitUntil(() => loadSupervisorState(dir)?.status === "stopped", 30_000, "the supervisor to stop");
+      assert.equal(loadSupervisorState(dir).worker, null, "halting closes the background session");
+    });
+
+    await step("crossing a unit boundary starts a different session on a different model", async () => {
+      const { dir, driver } = launch("handoff");
+      await driver.waitForUi((r) => r.method === "setWidget", 40_000, "the plan widget");
+      const before = modelsAsked().length;
+      await driver.prompt("/infinity:run");
+      await waitUntil(() => modelsAsked().slice(before).includes("easy-model"), 90_000, "the easy task to start");
+
+      // Finish the easy task the way a worker would, so the next actionable
+      // task — and therefore the unit, and therefore the model — changes.
+      const list = planOf(dir);
+      list.features[0].tasks[0].status = "complete";
+      list.baseRevision += 1;
+      writePlanFile(dir, list);
+
+      await waitUntil(
+        () => modelsAsked().slice(before).includes("difficult-model"),
+        90_000,
+        "the difficult task to be picked up by a second worker on the difficult model",
+      );
+      const st = loadSupervisorState(dir);
+      assert.equal(st.unit.key, "task:feature-1/task-2");
+      assert.equal(st.worker.model, "tierD/difficult-model", "the new session runs the harder tier");
+      assert.ok(st.sessions >= 2, "that is a second background session, not the same one");
+      assert.ok(st.history.length >= 1, "and the first one is in the history");
+      const log = loadActivity(dir).map((l) => l.text).join("\n");
+      assert.match(log, /handoff/, "the background log records the handoff");
+      assert.ok(
+        modelsAsked().slice(before).every((m) => m !== "mock-1"),
+        "still nothing on the human's model",
+      );
+
+      await driver.prompt("/infinity:halt");
+      await waitUntil(() => loadSupervisorState(dir)?.status === "stopped", 30_000, "the supervisor to stop");
+    });
+
+    await step("a coarser handoff level keeps one session across the tasks inside it", async () => {
+      const { dir, driver } = launch("feature-level", { handoff: "feature" });
+      await driver.waitForUi((r) => r.method === "setWidget", 40_000, "the plan widget");
+      const before = modelsAsked().length;
+      await driver.prompt("/infinity:run");
+      // Both tasks live in feature-1, whose hardest task is difficult: the
+      // whole feature runs on tier D, in one session.
+      await waitUntil(() => modelsAsked().slice(before).includes("difficult-model"), 90_000, "the feature worker to start");
+      const st = loadSupervisorState(dir);
+      assert.equal(st.unit.key, "feature:feature-1");
+      assert.equal(st.unit.model, "tierD/difficult-model", "a feature takes its hardest task's model");
+
+      const list = planOf(dir);
+      list.features[0].tasks[0].status = "complete";
+      list.baseRevision += 1;
+      writePlanFile(dir, list);
+      await new Promise((r) => setTimeout(r, 4000));
+
+      const after = loadSupervisorState(dir);
+      assert.equal(after.unit.key, "feature:feature-1", "still the same unit");
+      assert.equal(after.sessions, 1, "so no handoff happened between the two tasks");
+      assert.equal(after.worker.name, "W1", "it is the same background session");
+      assert.ok(after.worker.turns >= 2, "which was given more than one instruction");
+
+      await driver.prompt("/infinity:halt");
+      await waitUntil(() => loadSupervisorState(dir)?.status === "stopped", 30_000, "the supervisor to stop");
+    });
+
+    await step("a worker is a real pi session a human can open, and it does not drive a loop of its own", async () => {
+      const { dir, driver } = launch("sessions");
+      await driver.waitForUi((r) => r.method === "setWidget", 40_000, "the plan widget");
+      await driver.prompt("/infinity:run");
+      await waitUntil(() => loadSupervisorState(dir)?.worker?.sessionId, 90_000, "a worker session id");
+
+      const st = loadSupervisorState(dir);
+      const sessionRoot = join(dir, "tmp", "infinity-harness", "sessions");
+      assert.ok(existsSync(sessionRoot), "worker sessions are stored where /resume can find them");
+      assert.ok(existsSync(st.worker.attemptDir), "and its transcript is on disk");
+      assert.ok(
+        existsSync(join(st.worker.attemptDir, "prompt.md")),
+        "including the exact brief it was given",
+      );
+      const events = join(st.worker.attemptDir, "events.jsonl");
+      assert.ok(existsSync(events), "and everything it did");
+      const spawned = readFileSync(events, "utf-8");
+      assert.match(spawned, /"kind":"spawn"/, "the argv it was started with is recorded");
+      assert.match(spawned, /--model/, "including the model it was routed to");
+
+      // /infinity:workers must answer without asking the model anything.
+      const asked = modelsAsked().length;
+      await driver.prompt("/infinity:workers");
+      await new Promise((r) => setTimeout(r, 1500));
+      const printed = driver.transcript().map((m) => m.text).join("\n");
+      assert.match(printed, /background pi sessions/, "the command prints the log");
+      assert.match(printed, /tierB\/easy-model/, "with the model each worker is on");
+
+      await driver.prompt("/infinity:halt");
+      await waitUntil(() => loadSupervisorState(dir)?.status === "stopped", 30_000, "the supervisor to stop");
+      void asked;
+    });
+  } finally {
+    for (const d of drivers) {
+      try {
+        await d.stop();
+      } catch {
+        /* a driver that is already gone is fine */
+      }
+    }
+    mock.stop();
+  }
+}
+
 const SCENARIOS = [
   ["pipeline", "the full walkthrough: define → plan → build → verify → review → ship", scenarioPipeline],
   ["convergence", "a continuous run drives itself to complete", scenarioConvergence],
@@ -4604,6 +4941,7 @@ const SCENARIOS = [
   ["escalation", "what a stuck run does before it gives up", scenarioEscalation],
   ["goal", "the outer loop: is the thing that was asked for actually done?", scenarioGoal],
   ["realpi", "a real pi process, driven like a human: dialogs, widget, compaction, handoff", scenarioRealPi],
+  ["background", "work runs in separate pi sessions, on the routed models, off the human's model", scenarioBackground],
   ["package", "what npm actually ships, unpacked and inspected", scenarioPackage],
   ["live", "one real model call (skipped when the endpoint is unreachable)", scenarioLive],
 ];

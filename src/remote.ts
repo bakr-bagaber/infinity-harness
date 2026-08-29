@@ -25,6 +25,7 @@ import { modelRouterPath, reworkPath } from "./core/paths.ts";
 import { readJsonSafe } from "./core/fsx.ts";
 import { loadRunState } from "./runState.ts";
 import { normalizeDisplay } from "./ui/display.ts";
+import { supervisorStatePath, activityPath } from "./supervisor.ts";
 import { renderDashboard, escapeHtml, type DashboardState } from "./ui/dashboard.ts";
 
 export { escapeHtml };
@@ -58,7 +59,13 @@ export interface RemoteState {
   /** What the reader has asked the dashboard to draw. */
   display: DisplayPolicy;
   execution: unknown;
+  /** Where the work runs: background pi sessions, or this session. */
+  engine: "background" | "main-session" | null;
+  /** The supervisor's state file, verbatim. Opaque here. */
+  supervisor: unknown;
   workers: unknown;
+  /** Tail of the background log. */
+  activity: unknown;
 }
 
 export interface RemoteServer {
@@ -119,13 +126,20 @@ export function buildRemoteState(projectDir?: string): RemoteState {
     awaitingApproval: config.awaitingApproval ?? null,
     sessions: loadRunState(dir)?.sessions ?? null,
     execution: (() => { try { const { executionPolicyOf } = require("./scheduler.ts"); return executionPolicyOf(config); } catch { return null; } })(),
+    engine: (() => { try { const { executionPolicyOf } = require("./scheduler.ts"); return executionPolicyOf(config).engine as "background" | "main-session"; } catch { return null; } })(),
+    // The supervisor's own state is the truth about what is running. This used
+    // to scan the attempt-directory tree, which reported every attempt ever
+    // made as a live worker.
+    supervisor: readJsonSafe<unknown>(supervisorStatePath(dir), null),
     workers: (() => {
-      try {
-        const { listWorkers } = require("./scheduler.ts");
-        const runId = (() => { try { return (require("./runState.ts") as { runIdFor: (d:string,f:string)=>string }).runIdFor(dir, ""); } catch { return undefined; } })();
-        const ws = listWorkers(dir, runId || undefined) as unknown[];
-        return Array.isArray(ws) ? ws.slice(0, 6) : [];
-      } catch { return []; }
+      const sup = readJsonSafe<{ worker?: unknown; history?: unknown[] } | null>(supervisorStatePath(dir), null);
+      const live = sup?.worker ? [sup.worker] : [];
+      const past = Array.isArray(sup?.history) ? sup!.history!.slice(-3).reverse() : [];
+      return [...live, ...past];
+    })(),
+    activity: (() => {
+      const raw = readJsonSafe<{ lines?: unknown[] } | null>(activityPath(dir), null);
+      return Array.isArray(raw?.lines) ? raw!.lines!.slice(-60) : [];
     })(),
     goalPass:
       typeof config.goalPass === "number" && typeof config.goalMaxPasses === "number"
@@ -152,6 +166,9 @@ function toDashboardState(s: RemoteState): DashboardState {
     sessions: s.sessions,
     goalPass: s.goalPass,
     display: s.display,
+    engine: s.engine,
+    workers: (s.workers as import("./ui/dashboard.ts").DashWorker[] | null) ?? [],
+    activity: (s.activity as import("./ui/dashboard.ts").DashActivity[] | null) ?? [],
   };
 }
 
@@ -173,6 +190,9 @@ export function buildApiPayload(state: RemoteState & { dashboardUrl?: string | n
     rework: state.rework,
     awaitingApproval: state.awaitingApproval,
     sessions: state.sessions,
+    engine: state.engine,
+    workers: state.workers,
+    activity: state.activity,
     goalPass: state.goalPass,
     sprints: state.sprints,
     display: state.display,

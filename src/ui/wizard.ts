@@ -109,14 +109,49 @@ async function pickThinkingLevel(prompt: Prompter, title: string): Promise<Think
   return picked as ThinkingLevel;
 }
 
-async function pickModelsStep(prompt: Prompter, modelsFn?: WizardOptions["models"]): Promise<{ router: NonNullable<IntakeAnswers["router"]> } | undefined> {
+/**
+ * What a difficulty tier actually buys, at the level the human just chose.
+ *
+ * Difficulty is scored per task, but the *model* changes only where the
+ * session changes — that is what makes it a model boundary at all. So at
+ * feature-level handoff a feature runs on its hardest task's model and the
+ * easy tasks inside it get the hard model too. Saying that here, in the
+ * question, is the difference between a setting that behaves surprisingly and
+ * one the human chose with their eyes open.
+ */
+export function tierScopeNote(handoff: string): string {
+  switch (handoff) {
+    case "off":
+    case "goal":
+      return "one session for the whole run, so the run takes the hardest tier in the plan";
+    case "phase":
+      return "one session per phase, so every task in a phase takes that phase's hardest tier";
+    case "sprint":
+      return "one session per sprint, so every task in a sprint takes that sprint's hardest tier";
+    case "feature":
+      return "one session per feature, so every task in a feature takes that feature's hardest tier";
+    case "subtask":
+      return "one session per subtask, so each subtask can take its own tier";
+    default:
+      return "one session per task, so each task takes its own tier";
+  }
+}
+
+async function pickModelsStep(
+  prompt: Prompter,
+  modelsFn?: WizardOptions["models"],
+  handoff: string = "task",
+): Promise<{ router: NonNullable<IntakeAnswers["router"]> } | undefined> {
   const models = modelsFn ? (await modelsFn()) ?? [] : [];
   // First ask whether routing is even wanted — most runs don't need it, and
   // skipping the 8 follow-up questions keeps the wizard short. Old tests that
   // don't know about this step get routing off by default so they keep passing.
   const ROUTE_ON = "yes — pick models per tier";
   const ROUTE_OFF = "no — use pi's current model for everything";
-  const enablePick = await prompt.select("Route work by difficulty to different models?", [ROUTE_ON, ROUTE_OFF]);
+  const enablePick = await prompt.select(
+    `Route work by difficulty to different models? (${tierScopeNote(handoff)})`,
+    [ROUTE_ON, ROUTE_OFF],
+  );
   if (enablePick === undefined) {
     // No answer scripted (e.g. an older test) → treat as "off" so the
     // wizard doesn't look cancelled to callers that only scripted four steps.
@@ -178,10 +213,11 @@ export async function runIntakeWizard(options: WizardOptions): Promise<WizardRes
     const handoffLabels = handoffOptions.map((o) => line(o.label, o.help));
     const handoffPick = await prompt.select(HANDOFF_QUESTION.title, handoffLabels);
     if (handoffPick === undefined) return { cancelled: true };
-    const handoff = (handoffOptions[handoffLabels.indexOf(handoffPick)]?.value ?? "phase") as
-      | "off"
-      | "phase"
-      | "task";
+    // Every level the question offers, not the three this cast used to allow:
+    // picking "every feature" and getting the task-level narrowing is how a
+    // setting silently becomes a different setting.
+    const handoff = (handoffOptions[handoffLabels.indexOf(handoffPick)]?.value ??
+      "phase") as import("../core/types.ts").HandoffGranularity;
 
     // -- 3b. research depth (only when research is in the pipeline) ----------
     let researchDepth: import("../intake.ts").ResearchDepth | undefined;
@@ -201,7 +237,7 @@ export async function runIntakeWizard(options: WizardOptions): Promise<WizardRes
     }
 
     // -- 4. models ----------------------------------------------------------
-    const modelsAnswer = await pickModelsStep(prompt, options.models);
+    const modelsAnswer = await pickModelsStep(prompt, options.models, handoff);
     if (modelsAnswer === undefined) return { cancelled: true };
 
     // -- 5. execution (parallelism) -----------------------------------------

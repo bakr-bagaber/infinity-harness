@@ -255,4 +255,54 @@ function baseState(overrides: Partial<DashboardState> = {}): DashboardState {
   console.log("✓ the progress numbers agree across the page");
 }
 
+// ── the background panel ───────────────────────────────────────────────────
+//
+// Same reason as the widget: once the work left the human's terminal this is
+// the only place it is visible, so it has to name the session, the unit and
+// the model — and it must escape everything, because a worker's "doing" line
+// is a tool call with a path in it, which is attacker-adjacent input.
+{
+  const html = renderDashboard(
+    baseState({
+      engine: "background",
+      workers: [
+        {
+          name: "W2",
+          unitLabel: "feature-002 · Checkout",
+          level: "feature",
+          model: "openrouter/big-model",
+          servedModel: "openrouter/big-model",
+          difficulty: "difficult",
+          state: "working",
+          doing: "edit src/<script>alert(1)</script>.ts",
+          turns: 3,
+          tokens: { inputTokens: 40000, outputTokens: 1200 },
+          contextRatio: 0.42,
+        },
+      ],
+      activity: [
+        { at: "2026-08-29T09:14:00.000Z", level: "info", worker: null, text: "supervisor started" },
+        { at: "2026-08-29T09:14:30.000Z", level: "warn", worker: "W2", text: "gate failed: tests" },
+      ],
+    }),
+  );
+  assert.match(html, /class="card background"/);
+  assert.match(html, /background pi sessions/);
+  assert.match(html, /W2/);
+  assert.match(html, /feature-002 · Checkout/);
+  assert.match(html, /openrouter\/big-model/, "the model is on the card");
+  assert.match(html, /41,200 tokens/, "and what it has spent");
+  assert.match(html, /42% ctx/);
+  assert.match(html, /is-working/, "a live session is marked live");
+  assert.match(html, /gate failed: tests/, "the log is there");
+  assert.ok(!html.includes("<script>alert(1)</script>"), "worker output is escaped");
+
+  const idle = renderDashboard(baseState({ engine: "background" }));
+  assert.match(idle, /no background session running/);
+
+  const legacy = renderDashboard(baseState({ engine: "main-session" }));
+  assert.match(legacy, /Work runs in the pi session you started the harness from/);
+  console.log("✓ the background panel names the session, the unit and the model");
+}
+
 console.log("All dashboard tests PASS");

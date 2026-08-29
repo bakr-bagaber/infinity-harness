@@ -186,6 +186,35 @@ A rejection is pinned to the state of the project when you made it, so the run w
 same question again until the agent has actually changed something in response. If it never does,
 the run stops and says so instead of nagging forever.
 
+## Your session is a control panel
+
+The work does not happen in the pi session you start the harness from. That session shows you the
+plan, the background log and the commands; the run itself happens in **separate `pi` processes**,
+each with its own model, its own context window and its own session file.
+
+```
+  your pi session ──── widget · background log · /infinity:*      (no tokens spent on the run)
+        │
+        └── supervisor  plain JavaScript in the extension, no LLM
+              │
+              └── worker   pi --mode rpc --model <the tier's model>   ← the work happens here
+```
+
+That is what makes the difficulty tiers mean anything. A session has exactly one model, so if the
+run happens in *your* session, your model does every task however carefully you routed them — which
+is precisely what used to happen. Now the model is chosen when a worker is started.
+
+Set it with `/infinity:config` → **Execution** → *Where work runs*:
+
+| `execution.engine` | |
+|---|---|
+| `background` *(default)* | one background pi session per unit of work, on that unit's model |
+| `main-session` | the pre-2.7 behaviour — everything runs in your session, on your model |
+
+`/infinity:workers` prints which sessions exist, which unit and model each has, what it is doing and
+the recent log. It reads files; it never costs a turn. Workers keep their session files under
+`tmp/infinity-harness/sessions/`, so you can `/resume` any of them and read the whole transcript.
+
 ## One run, many sessions
 
 A harness that never starts a new pi session is a harness whose context window only ever grows.
@@ -197,18 +226,27 @@ Nothing the harness knows lives in the conversation. The plan, the phase, the ga
 retry budgets and the escalation ladder are all files under `harness/`, so a session boundary
 costs one thing: the brief — which is what the agent should have been working from anyway.
 
-So the run hands itself to a fresh session at each boundary, and the replacement picks up
-exactly where the last one stopped:
+`session.handoff` names one level of the plan, and that level is the **unit**: one worker owns one
+unit from start to finish, in one session, on one model. Crossing a unit boundary closes that
+worker and starts a new one — that is the handoff.
 
-| Setting | Fresh session when |
+| Setting | A fresh session, and a fresh model choice, when |
 |---|---|
-| `phase` *(default)* | the pipeline advances a phase, or a goal pass finishes |
-| `task` | that, plus every time the run moves to a different task |
-| `off` | never — one session for the whole run |
+| `off` / `goal` | never — one session for the whole run |
+| `phase` | the pipeline advances a phase |
+| `sprint` | the active sprint changes (or coarser) |
+| `feature` | the active feature changes (or coarser) |
+| `task` *(default)* | the active task changes (or coarser) |
+| `subtask` | the active subtask changes (or coarser) |
 
-Any of them also hands off early once the context passes `session.contextThreshold` (0.7 by
-default), because a handoff that arrives after compaction has arrived too late to be the thing
-that prevented it.
+**The model boundary is the session boundary.** Because a worker's model is chosen when it starts,
+whatever you pick here is also how often the model can change — so the difficulty that matters is
+the difficulty of the *unit*, not of the task. At `feature`, a feature runs on its hardest task's
+model and the easy tasks inside it get that model too. At `task`, each task gets its own tier. The
+wizard says which of those you are choosing in the question that sets the models.
+
+Any level also replaces the worker early once its context passes `session.contextThreshold`, because
+a handoff that arrives after compaction has arrived too late to be the thing that prevented it.
 
 The run itself — its id, its wall-clock budget, its iteration ceiling, its no-progress strikes
 and its position on the escalation ladder — lives in `harness/run.json` and is the same run
@@ -474,7 +512,14 @@ task.modelHint → byTask → byDifficulty → byFeature → bySprint → byPhas
 ```
 
 `master` is never assigned directly; it's reachable only through one-step consultation after the
-normal ladder is exhausted.
+normal ladder is exhausted. An escalation that names a stronger model is also a session boundary —
+the worker is replaced rather than switched, because putting a stronger model in front of the weaker
+one's failed reasoning is the context the escalation exists to get away from.
+
+An empty slot means "whatever model pi is on", and a background worker cannot inherit that by magic:
+the harness reads the model your session is on and passes it to the child explicitly. The widget and
+`/infinity:workers` show both what was asked for and what actually answered, so a reference that
+quietly fell back to a default is visible rather than invisible.
 
 **Reasoning models need headroom.** A reasoning model emits nothing on the content channel until it
 has finished thinking — measured at ~370 reasoning tokens to answer "reply with one word". If you
@@ -497,6 +542,10 @@ that looks like a broken endpoint but is only a small cap.
 | `infinity_spawn_worker` | Attempt one task in a clean-room worker |
 | `infinity_goal` | State a goal, review it, or check which pass it is on |
 
+Commands worth knowing: `/infinity:run` starts the run, `/infinity:workers` shows the background
+sessions and their log, `/infinity:halt` stops everything and closes them, `/infinity:approve` signs
+a phase that is waiting for you, and `/infinity:dashboard` opens the web view.
+
 ## Layout
 
 ```
@@ -509,6 +558,8 @@ infinity-harness/
 │   ├── ui/                        theme · planTree (the five levels, once)
 │   │                              · display (what to draw, and the templates)
 │   │                              · widget (terminal) · dashboard (web) · wizard · config
+│   ├── supervisor.ts              the orchestrator: which unit, which model, which session
+│   ├── exec/piWorker.ts           one background pi process, driven over RPC
 │   ├── loop.ts                    the continuous-run driver and its stop conditions
 │   ├── runState.ts                is a run armed, and which run is it — on disk, across sessions
 │   ├── handoff.ts                 when to continue in a fresh session, and what to tell it
@@ -526,16 +577,18 @@ infinity-harness/
 │   ├── features/feature-list.json the plan
 │   ├── config.json                pipeline state and settings
 │   ├── run.json                   the armed run — survives every session it spans
+│   ├── supervisor.json            which unit and which worker, right now
+│   ├── activity.json              the background log the widget and dashboard read
 │   ├── model-router.json          optional routing
 │   ├── docs/                      architecture · decisions · phase and role docs
 │   └── skills/                    28 craft skills the brief points at
 │
 │   ~/.pi/agent/infinity-harness/  the workflows and display templates you saved —
 │                                  they belong to you, not to a project
-├── tests/                         33 files, plain node:assert
+├── tests/                         36 files, plain node:assert
 └── scripts/
     ├── run-tests.mjs
-    ├── e2e.mjs                    16 scenarios, including one against a real pi process
+    ├── e2e.mjs                    17 scenarios, two of them against real pi processes
     └── rig/                       the real-pi driver: a scripted model + the RPC protocol
 ```
 
@@ -547,8 +600,8 @@ there is one implementation, and the adapter calls it.
 ```bash
 npm install
 npm run check                    # tsc --noEmit, strict
-npm test                         # 33 test files
-npm run e2e                      # 16 end-to-end scenarios
+npm test                         # 36 test files
+npm run e2e                      # 17 end-to-end scenarios
 npm run e2e -- --only realpi     # just the ones that drive a real pi process
 npm run e2e -- --list            # what the scenarios are
 ```
