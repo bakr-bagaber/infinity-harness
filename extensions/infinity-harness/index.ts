@@ -1826,15 +1826,73 @@ export default function (pi: ExtensionAPI): void {
       notify(ctx, lines.join("\n"), plan.warnings.length ? "warning" : "info");
       refreshWidget(ctx);
 
-      // Hand the model the brief straight away, so the session that created
-      // the harness is also the session that starts using it. Without a goal
-      // the first thing it must do is ask for one — never guess one.
-      const brief = await briefText(dir);
-      const opener = plan.brief
-        ? brief
-        : `The human has not said what they want built yet. Ask them, in one short question, ` +
-          `and do not start any work or invent a scope until they answer.\n\n${brief}`;
-      pi.sendUserMessage(opener, { deliverAs: "followUp" });
+      // Show the next step, but do NOT auto-start the run.
+      // After /infinity:init the harness is initialized and parked.
+      // The agent can answer questions in this session, but the pipeline
+      // only runs after the human says so: /infinity:run (or "yes" to the
+      // last wizard question). Auto-starting here is the bug that made
+      // full-auto research steal the session that just created the harness.
+      if ((wizard as { launchNow?: boolean }).launchNow) {
+        // Opt-in: wizard asked "Start the run now?" and the human said yes.
+        armRun(dir, sessionId);
+        // Capture baseModel for daemon (same as /infinity:run does)
+        try {
+          const bm = baseModelOf(ctx);
+          if (bm) {
+            const { loadRunState: _ld, saveRunState: _sv, runIdFor: _rf } = await import("../../src/core/runState.ts");
+            const rid = _rf(dir, sessionId);
+            const rs = _ld(dir);
+            const parts = bm.split("/");
+            const baseModel = parts.length >= 2 ? { provider: parts[0]!, id: parts.slice(1).join("/") } : { provider: "anthropic", id: bm };
+            if (rs) { (rs as unknown as { baseModel: unknown }).baseModel = baseModel; _sv(dir, rs); }
+            else { const { newRunState } = await import("../../src/core/runState.ts"); const ns = newRunState(rid); (ns as unknown as { baseModel: unknown }).baseModel = baseModel; _sv(dir, ns); }
+          }
+        } catch {}
+        // Try detached daemon, fall back to supervisor in this pi session.
+        const tryDaemonSpawn = async (): Promise<{ spawned: boolean }> => {
+          try {
+            const { spawn: _sp } = await import("node:child_process");
+            const { existsSync: _ex, openSync: _op, closeSync: _cl } = await import("node:fs");
+            const { resolve: _re } = await import("node:path");
+            const cands = [_re(dir, "dist/daemon/index.js"), _re(dir, "src/daemon/index.ts")];
+            let entry: string | null = null;
+            for (const c of cands) if (_ex(c)) { entry = c; break; }
+            if (!entry) return { spawned: false };
+            try { const { loadDaemon: _ld, isDaemonAlive: _al } = await import("../../src/daemon/guard.ts"); const live = _ld(dir); if (live && _al(live)) return { spawned: true }; } catch {}
+            const fd = _op(_re(dir, "harness/daemon.log"), "a");
+            const a: string[] = [];
+            if (entry.endsWith(".ts")) a.push("--experimental-strip-types", "--no-warnings=ExperimentalWarning");
+            a.push(entry, dir);
+            const ch = _sp(process.execPath, a, { detached: true, stdio: ["ignore", fd as unknown as number, fd as unknown as number], windowsHide: true, env: { ...process.env, INFINITY_HARNESS_WORKER: "1" } } as unknown as Parameters<typeof _sp>[2]);
+            try { ch.unref(); } catch {}
+            try { _cl(fd); } catch {}
+            for (let i = 0; i < 40; i++) { await new Promise(r=>setTimeout(r,250)); try { const { loadDaemon: l2, isDaemonAlive: a2 } = await import("../../src/daemon/guard.ts"); const v = l2(dir); if (v && a2(v)) return { spawned: true }; } catch {}
+            }
+            return { spawned: true };
+          } catch { return { spawned: false }; }
+        };
+        const dr = await tryDaemonSpawn();
+        if (!dr.spawned) await startEngine(ctx, dir);
+        notify(ctx, "infinity-harness: run armed — background run started. /infinity:halt stops it.", "info");
+      } else {
+        const brief = await briefText(dir);
+        if (!plan.brief) {
+          pi.sendUserMessage(
+            `The human has not said what they want built yet. Ask them, in one short question, and do not start any work or invent a scope until they answer. The harness is NOT running — "/infinity:run" starts it.\n\n${brief}`,
+            { deliverAs: "followUp" },
+          );
+        } else if (plan.phases[0] === "research") {
+          pi.sendUserMessage(
+            `${brief}\n\nThis is RESEARCH — survey constraints and options first, then validate (infinity_validate) to advance. The harness is NOT running yet. Run "/infinity:run" when you are ready, or answer "yes — start the run now" next time you init.`,
+            { deliverAs: "followUp" },
+          );
+        } else {
+          pi.sendUserMessage(
+            `${brief}\n\nThe harness is ready but NOT running. Run "/infinity:run" to start, or answer "yes — start the run now" in the wizard next time.`,
+            { deliverAs: "followUp" },
+          );
+        }
+      }
     },
   });
 

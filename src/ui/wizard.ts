@@ -66,7 +66,7 @@ export type WizardOptions = {
 
 export type WizardResult =
   | { cancelled: true }
-  | { cancelled: false; plan: IntakePlan; answers: IntakeAnswers };
+  | { cancelled: false; plan: IntakePlan; answers: IntakeAnswers; launchNow?: boolean };
 
 const CONFIRM = "start with these settings";
 const RESTART = "change something";
@@ -267,7 +267,7 @@ export async function runIntakeWizard(options: WizardOptions): Promise<WizardRes
     const answers: IntakeAnswers = { workflow, researchDepth, brief, handoff, display, router: modelsAnswer.router, parallelAt, maxWorkers };
     const plan = planIntake(answers);
 
-    if (options.skipConfirm) return { cancelled: false, plan, answers };
+    if (options.skipConfirm) return { cancelled: false, plan, answers, launchNow: false };
 
     const body = [plan.summary, ...(plan.warnings.length ? ["", ...plan.warnings.map((w) => `! ${w}`)] : [])].join(
       "\n",
@@ -277,7 +277,16 @@ export async function runIntakeWizard(options: WizardOptions): Promise<WizardRes
     const confirm = await prompt.select("Ready?", [CONFIRM, RESTART, CANCEL]);
     if (confirm === undefined || confirm === CANCEL) return { cancelled: true };
     if (confirm === RESTART) continue;
-    return { cancelled: false, plan, answers };
+    // Last step: ask whether to arm and start immediately (opt-in).
+    // After init the harness is never auto-started — only /infinity:run (or
+    // "yes" here) arms it. Older tests/E2E scripts that do not answer this
+    // are treated as "later" so they keep passing.
+    const LAUNCH_NOW = "yes — start the run now";
+    const LAUNCH_LATER = "no — I'll run /infinity:run when ready";
+    const launchPick = await prompt.select("Start the run now?", [LAUNCH_NOW, LAUNCH_LATER]);
+    let launchNow = false;
+    if (launchPick !== undefined) launchNow = launchPick === LAUNCH_NOW;
+    return { cancelled: false, plan, answers, launchNow };
   }
 }
 

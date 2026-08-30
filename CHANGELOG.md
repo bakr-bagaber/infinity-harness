@@ -4,6 +4,20 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.1] — 2026-08-30
+
+Init no longer steals your session. The harness only runs when you say so.
+
+### Fixed
+
+- **"/infinity:init" auto-started research in your session.** After the wizard, the extension sent the RESEARCH brief as followUp, so FullAuto began doing RESEARCH in the same session that just created the harness — before you could decide to walk away. The harness is now parked after init. The opener says "harness is NOT running — /infinity:run starts it" and the agent is idle in control-panel mode, regardless of workflow or phase.
+
+- **No way to go straight from init to running.** The wizard now asks a final question "Start the run now?" ("yes — start the run now" / "no — I will run /infinity:run when ready"). Saying yes arms harness/run.json, captures baseModel for the daemon, and spawns the detached daemon (or the in-process supervisor fallback) — the same path as "/infinity:run". Saying no (or an unattended init or old scripted harness with no answer) stays parked.
+
+### Changed
+
+- Opener after init always names the next command. With a goal it shows the RESEARCH or DEFINE brief plus "NOT running — /infinity:run"; without a goal it asks for the goal first, then the same tagline.
+
 ## [2.8.0] — 2026-08-30
 
 The harness stops shipping its own run. The repo is the driver, not the project.
