@@ -4,6 +4,14 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.2] — 2026-08-30
+
+Republishes 2.8.1. The 2.8.1 tarball on disk and on the registry was built from 2.8.0 content while `package.json` already said 2.8.1, so `/infinity:init` still auto-started RESEARCH in your session and the wizard never asked `Start the run now?`. No code changes since `v2.8.1` (`81d16590`).
+
+### Fixed
+
+- **Stale 2.8.1 artifact.** Rebuilt from `HEAD` so the `launchNow` wizard step, the parked-by-default `NOT running — /infinity:run` opener, and the `controlPanelContract` are in the published package.
+
 ## [2.8.1] — 2026-08-30
 
 Init no longer steals your session. The harness only runs when you say so.
