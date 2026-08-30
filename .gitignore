@@ -1,13 +1,29 @@
-# Harness runtime state (regenerated)
+# Harness runtime state (regenerated) — never commit self-driving data
+# The harness is the driver; its own repo stays clean. Run /infinity:init to create one.
 harness/config.json
+harness/plan.json
 harness/features/feature-list.json
 harness/progress.md
 harness/session-handoff.md
+harness/sprint-contract.md
 harness/lessons-decisions.md
 harness/capability/index.json
+harness/run.json
+harness/daemon.json
+harness/supervisor.json
+harness/activity.json
+harness/rework.json
+harness/replan.json
+harness/loop-state.json
+harness/next-session.json
+harness/daemon.log
 harness/.run-prompt.md
 harness/.preflight
 harness/run-journal.jsonl
+harness/**/*.bak
+harness/**/*.lock
+harness/**/*.ilock
+harness/worktrees/
 
 # Node
 node_modules/
