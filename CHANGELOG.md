@@ -4,6 +4,20 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.0] — 2026-08-30
+
+The harness stops shipping its own run. The repo is the driver, not the project.
+
+### Changed
+
+- **`harness/` is now driver-only.** Runtime state (`harness/config.json`, `harness/plan.json`, `harness/features/feature-list.json`, `harness/progress.md`, `harness/session-handoff.md`, `harness/sprint-contract.md`, `harness/lessons-decisions.md`, `harness/capability/index.json`, `harness/run.json`, `harness/daemon.json`, `harness/supervisor.json`, `harness/activity.json`, `harness/rework.json`, `harness/replan.json`, `harness/loop-state.json`, `harness/next-session.json`, `harness/daemon.log`, `harness/.run-prompt.md`, `harness/.preflight`, `harness/run-journal.jsonl`, `harness/**/*.bak`, `harness/**/*.lock`, `harness/**/*.ilock`, `harness/worktrees/`) is git-ignored and deleted. Fresh clone shows no `SHIP 37/37` widget until `/infinity:init` creates a local (ignored) harness. Templates (`harness/docs`, `harness/skills`, `harness/features/feature-list.schema.json`, `harness/model-router.json`, `harness/ci`, `harness/scripts`) stay tracked. Fixes the dogfooding leak where every clone rendered its builder's SHIP bar.
+
+- **Refactored and simplified without changing behaviour.** Removed dead helpers (`migrateModelRouterTiers`, `tiersFromLegacyModelRouter`, `writeCanonicalWithLockSync`), replaced 11 inline `require()` calls with static imports, extracted `scheduler.ts` helpers (`isBudgetFull`, `hasSerializeTask`, `pickSerializeTask`, `isSerializeBlocked`, `eligibleTasks`, `groupKeyFor`, `roundRobin`), removed unused `WorkerSnapshot`/`tailWorkerOutput`/`listWorkers`/`nextModelForTask` exports, cleaned `goalState.ts`/`core/config.ts`/`modelRouter.ts` dead imports and empty blocks. Net −115 lines. `tsc --noEmit` clean and 35/35 tests pass.
+
+### Verified
+
+- `tsc --noEmit` clean · 35 unit tests pass · `harness/` on disk equals `harness/` tracked · fresh clone renders no legacy `SHIP 37/37`
+
 ## [2.7.0] — 2026-08-29
 
 The work leaves your session. A run is driven by background pi processes on the models you
