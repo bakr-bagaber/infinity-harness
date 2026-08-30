@@ -12,6 +12,7 @@ import { DEFAULT_ENABLED_PHASES, PHASE_ROLE } from "./types.ts";
 import { defaultDisplay, normalizeDisplay } from "../ui/display.ts";
 import { configPath } from "./paths.ts";
 import { readJson, writeJsonAtomic, backupOnce, fileExists } from "./fsx.ts";
+import { existsSync, readFileSync } from "node:fs";
 
 export const DEFAULT_MAX_RETRIES = 10;
 export const DEFAULT_FEATURE_RETRIES = 2;
@@ -41,38 +42,6 @@ function normalizeTiers(raw: unknown): Record<string, { provider: string; id: st
     out[k] = { provider: String(vv.provider), id: String(vv.id), ...(typeof vv.thinkingLevel === "string" ? { thinkingLevel: vv.thinkingLevel } : {}) };
   }
   return out;
-}
-
-function migrateModelRouterTiers(targetDir: string, tiers: Record<string, unknown>): Record<string, { provider: string; id: string }> {
-  // One-time migration from harness/model-router.json "byDifficulty" strings.
-  // "anthropic/claude-x" → {provider:"anthropic", id:"claude-x"}
-  try {
-    const p = `${targetDir}/harness/model-router.json`;
-    // Lazy import to avoid circular dep.
-    const { existsSync, readFileSync } = require("node:fs") as typeof import("node:fs");
-    if (!existsSync(p)) return tiers as Record<string, { provider: string; id: string }>;
-    const raw = JSON.parse(readFileSync(p, "utf-8"));
-    const bd: Record<string, string> = raw?.byDifficulty ?? {};
-    const labels: Record<string, string> = { easy: "B", moderate: "C", difficult: "D" };
-    for (const [diff, label] of Object.entries(labels)) {
-      const v = bd[diff];
-      if (typeof v === "string" && v.trim() && !tiers[label]) {
-        const parts = v.split("/");
-        if (parts.length >= 2) {
-          const id = parts.slice(1).join("/");
-          tiers[label] = { provider: parts[0]!, id };
-        } else {
-          tiers[label] = { provider: "anthropic", id: v.trim() };
-        }
-      }
-    }
-    if (typeof raw.master === "string" && raw.master.trim() && !tiers.X) {
-      const v = raw.master as string;
-      const parts = v.split("/");
-      tiers.X = parts.length >= 2 ? { provider: parts[0]!, id: parts.slice(1).join("/") } : { provider: "anthropic", id: v.trim() };
-    }
-  } catch { /* ignore */ }
-  return tiers as Record<string, { provider: string; id: string }>;
 }
 
 /** Cap on gateHistory length. Unbounded growth is a real problem on multi-day runs. */

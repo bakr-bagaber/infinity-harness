@@ -10,7 +10,7 @@
  */
 
 import { createServer, type Server } from "node:http";
-import { daemonPath } from "../core/paths.ts";
+import { daemonPath, runStatePath, supervisorPath, activityPath } from "../core/paths.ts";
 import { readJsonSafe } from "../core/fsx.ts";
 import { isDaemonAlive, loadDaemon } from "./guard.ts";
 
@@ -56,9 +56,9 @@ export function startServer(opts: ServerOpts): Promise<{ server: Server; port: n
     if (req.method === "GET" && (path === "/status" || path === "/api/status")) {
       const daemon = loadDaemon(targetDir);
       const alive = isDaemonAlive(daemon);
-      const run = readJsonSafe<unknown>(require("../core/paths.ts").runStatePath(targetDir), null);
-      const supervisor = readJsonSafe<unknown>(require("../core/paths.ts").supervisorPath(targetDir), null);
-      const activity = readJsonSafe<unknown>(require("../core/paths.ts").activityPath(targetDir), null);
+      const run = readJsonSafe<unknown>(runStatePath(targetDir), null);
+      const supervisor = readJsonSafe<unknown>(supervisorPath(targetDir), null);
+      const activity = readJsonSafe<unknown>(activityPath(targetDir), null);
       writeJson(200, { ok: true, alive, daemon, run, supervisor, activity: Array.isArray(activity) ? (activity as unknown[]).slice(-20) : [] });
       return;
     }
@@ -81,9 +81,9 @@ export function startServer(opts: ServerOpts): Promise<{ server: Server; port: n
         const cfg = loadConfig(targetDir).config;
         const daemon = loadDaemon(targetDir);
         // dashboard derives viewState same way widget does, but via server data
-        const run = rjs<Record<string,unknown>|null>(require("../core/paths.ts").runStatePath(targetDir), null);
-        const sup = rjs<Record<string,unknown>|null>(require("../core/paths.ts").supervisorPath(targetDir), null);
-        const act = rjs<unknown[]>(require("../core/paths.ts").activityPath(targetDir), []);
+        const run = rjs<Record<string,unknown>|null>(runStatePath(targetDir), null);
+        const sup = rjs<Record<string,unknown>|null>(supervisorPath(targetDir), null);
+        const act = rjs<unknown[]>(activityPath(targetDir), []);
         const html = renderDashboard({
           list,
           phase: (cfg.currentPhase as unknown as import("../core/types.ts").Phase) ?? null,

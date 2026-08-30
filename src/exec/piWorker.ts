@@ -26,7 +26,7 @@
  * pi and a stream of events. It has no idea what a phase is.
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
 import { existsSync, mkdirSync, writeFileSync, appendFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
@@ -137,7 +137,6 @@ export function resolvePiCli(env: NodeJS.ProcessEnv = process.env, argv: string[
 /** Where a command lives, or null. Sync on purpose: it runs once per worker. */
 function whichSync(name: string): string | null {
   try {
-    const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
     const cmd = process.platform === "win32" ? "where" : "which";
     const out = String(execFileSync(cmd, [name], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }));
     const first = out.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)[0];

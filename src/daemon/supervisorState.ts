@@ -9,7 +9,8 @@
  */
 
 import { supervisorPath, activityPath } from "../core/paths.ts";
-import { readJsonSafe, writeJsonAtomic, fileExists, ensureDir } from "../core/fsx.ts";
+import { readJsonSafe, writeJsonAtomic, ensureDir } from "../core/fsx.ts";
+import { existsSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 
 export const ACTIVITY_LIMIT = 400;
@@ -76,7 +77,6 @@ export function appendActivity(targetDir: string, line: Omit<ActivityLine, "at">
 
 export function clearSupervisor(targetDir: string): void {
   try {
-    const { unlinkSync, existsSync } = require("node:fs") as typeof import("node:fs");
     const p = supervisorPath(targetDir);
     if (existsSync(p)) unlinkSync(p);
   } catch {}

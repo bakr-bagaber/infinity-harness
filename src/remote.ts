@@ -27,6 +27,7 @@ import { loadRunState } from "./runState.ts";
 import { normalizeDisplay } from "./ui/display.ts";
 import { supervisorStatePath, activityPath } from "./supervisor.ts";
 import { renderDashboard, escapeHtml, type DashboardState } from "./ui/dashboard.ts";
+import { executionPolicyOf } from "./scheduler.ts";
 
 export { escapeHtml };
 
@@ -125,8 +126,8 @@ export function buildRemoteState(projectDir?: string): RemoteState {
     rework: readJsonSafe<unknown>(reworkPath(dir), null),
     awaitingApproval: config.awaitingApproval ?? null,
     sessions: loadRunState(dir)?.sessions ?? null,
-    execution: (() => { try { const { executionPolicyOf } = require("./scheduler.ts"); return executionPolicyOf(config); } catch { return null; } })(),
-    engine: (() => { try { const { executionPolicyOf } = require("./scheduler.ts"); return executionPolicyOf(config).engine as "background" | "main-session"; } catch { return null; } })(),
+    execution: (() => { try { return executionPolicyOf(config); } catch { return null; } })(),
+    engine: (() => { try { return executionPolicyOf(config).engine as "background" | "main-session"; } catch { return null; } })(),
     // The supervisor's own state is the truth about what is running. This used
     // to scan the attempt-directory tree, which reported every attempt ever
     // made as a live worker.

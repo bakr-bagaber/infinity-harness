@@ -9,7 +9,6 @@
  */
 
 import type { TierMap, TierSpec, HarnessConfig, FeatureList, Phase, Difficulty } from "./types.ts";
-import { loadConfig } from "./config.ts";
 
 export type ThinkingLevel = import("./types.ts").ThinkingLevel;
 export type TierId = import("./types.ts").TierId;
@@ -148,31 +147,3 @@ export function effectiveDifficultyForTask(
   return effectiveDifficultyForUnitFromTasks(bucket) ?? own;
 }
 
-/**
- * Legacy helper: migrate harness/model-router.json into tiers.
- * Kept for one release; logs when it runs.
- */
-export function tiersFromLegacyModelRouter(projectDir: string): TierMap | null {
-  try {
-    const { existsSync, readFileSync } = require("node:fs") as typeof import("node:fs");
-    const p = `${projectDir}/harness/model-router.json`;
-    if (!existsSync(p)) return null;
-    const raw = JSON.parse(readFileSync(p, "utf-8"));
-    const bd: Record<string, string> = raw?.byDifficulty ?? {};
-    const tiers: TierMap = {};
-    const labels: Record<string, TierId> = { easy: "B", moderate: "C", difficult: "D" };
-    for (const [diff, tier] of Object.entries(labels)) {
-      const v = bd[diff];
-      if (typeof v === "string" && v.trim()) {
-        const parts = v.split("/");
-        tiers[tier] = parts.length >= 2 ? { provider: parts[0]!, id: parts.slice(1).join("/") } : { provider: "anthropic", id: v.trim() };
-      }
-    }
-    if (typeof raw.master === "string" && raw.master.trim()) {
-      const v = raw.master as string;
-      const parts = v.split("/");
-      tiers.X = parts.length >= 2 ? { provider: parts[0]!, id: parts.slice(1).join("/") } : { provider: "anthropic", id: v.trim() };
-    }
-    return tiers;
-  } catch { return null; }
-}

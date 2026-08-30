@@ -9,9 +9,8 @@ import {
   validateGoalLoopState,
 } from "./goalLoop.ts";
 import { type GoalSpecification, validateGoalSpecification } from "./goalSpec.ts";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-declare const require: any;
 
 export const GOAL_STATE_FILE = "GOAL_STATE.json";
 export const GOAL_TRACE_FILE = "GOAL_TRACE.jsonl";
@@ -25,26 +24,7 @@ export function canonicalGoalSpecPath(projectDir = process.cwd()): string {
   return resolve(projectDir, CANONICAL_GOAL_SPEC_DIR, CANONICAL_GOAL_SPEC_FILE);
 }
 
-function writeCanonicalWithLockSync(projectDir: string, content: string): void {
-  const target = canonicalGoalSpecPath(projectDir);
-  // try proper-lockfile sync-ish via dynamic import fallback to plain write
-  try {
-    mkdirSync(dirname(target), { recursive: true });
-    // use proper-lockfile if available (async variant would need async; use sync file write with lock attempt)
-    // For sync canonical we rely on atomic tmp+rename and ignore lock if unavailable — async wrapper below handles lock
-    const tmp = `${target}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    writeFileSync(tmp, content, "utf8");
-    // rename via node:fs renameSync equivalent (import already has rename async, but we use writeFileSync+rename via fs)
-    const { renameSync } = require("node:fs");
-    renameSync(tmp, target);
-  } catch {
-    // fallback simple write
-    try {
-      mkdirSync(dirname(target), { recursive: true });
-      writeFileSync(target, content, "utf8");
-    } catch {}
-  }
-}
+
 
 
 export interface GoalStateStoreOptions {

@@ -20,7 +20,7 @@
  * implementation of each now, in `core/`.
  */
 
-import { unlinkSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import type { Feature, FeatureList, Subtask, Task, TaskStatus } from "./core/types.ts";
 import { TASK_STATUSES } from "./core/types.ts";
 import { detectCycle, flattenTasks, loadFeatureList, saveFeatureList } from "./core/featureList.ts";
@@ -163,7 +163,7 @@ function readMaxReplans(projectDir: string): number {
   const { config } = loadConfig(projectDir);
   const lim = (config as unknown as { limits?: { maxReplansPerPhase?: unknown } }).limits as { maxReplansPerPhase?: unknown } | undefined;
   let hasLimitsFile = false;
-  try { const { readFileSync, existsSync } = require("node:fs") as typeof import("node:fs"); const p = `${projectDir}/harness/config.json`; if (existsSync(p)) { const raw = JSON.parse(readFileSync(p,"utf-8")); if (raw && typeof raw.limits === "object") hasLimitsFile = true; } } catch {}
+  try { const p = `${projectDir}/harness/config.json`; if (existsSync(p)) { const raw = JSON.parse(readFileSync(p,"utf-8")); if (raw && typeof raw.limits === "object") hasLimitsFile = true; } } catch {}
   const replan = config.replan as { maxReplans?: unknown; maxReplansPerRun?: unknown } | undefined;
   const budgets = config.budgets as { maxReplansPerRun?: unknown } | undefined;
   if (hasLimitsFile && typeof lim?.maxReplansPerPhase === "number") return lim.maxReplansPerPhase;

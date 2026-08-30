@@ -17,7 +17,7 @@
  * other. One implementation of each now, in `core/`.
  */
 
-import { unlinkSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import type { FeatureList, Task } from "./core/types.ts";
 import { flattenTasks, loadFeatureList, saveFeatureList } from "./core/featureList.ts";
 import { fileExists, readJsonSafe, writeJsonAtomic } from "./core/fsx.ts";
@@ -169,7 +169,7 @@ function readMaxReworks(projectDir: string): number {
   // limits.maxReworkPerUnit wins only when writable: config actually has a limits file with it.
   // Test configs write { rework: {maxReworks: 3} } onto a partial config that still has DEFAULT_LIMITS via merge — without this guard every test would see 2.
   let hasLimitsFile = false;
-  try { const { readFileSync, existsSync } = require("node:fs") as typeof import("node:fs"); const p = `${projectDir}/harness/config.json`; if (existsSync(p)) { const raw = JSON.parse(readFileSync(p,"utf-8")); if (raw && typeof raw.limits === "object") hasLimitsFile = true; } } catch {}
+  try { const p = `${projectDir}/harness/config.json`; if (existsSync(p)) { const raw = JSON.parse(readFileSync(p,"utf-8")); if (raw && typeof raw.limits === "object") hasLimitsFile = true; } } catch {}
   const rework = config.rework as { maxReworks?: unknown } | undefined;
   const budgets = config.budgets as { maxReworksPerRun?: unknown } | undefined;
   if (hasLimitsFile && typeof lim?.maxReworkPerUnit === "number") return lim.maxReworkPerUnit;
