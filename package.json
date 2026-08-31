@@ -1,6 +1,6 @@
 {
   "name": "infinity-harness",
-  "version": "2.8.5",
+  "version": "2.8.6",
   "description": "A pi agent extension that runs a gated build pipeline unattended — enforces phases, validates with deterministic gates, and keeps working for hours or days without losing the plan.",
   "type": "module",
   "keywords": [

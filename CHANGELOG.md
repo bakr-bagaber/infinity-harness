@@ -4,6 +4,14 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.6] — 2026-08-31
+
+Parked stays parked.
+
+### Fixed
+
+- **Main session started harness work without a widget after declining the final wizard prompt.** The post-wizard "parked" note was sent as `sendUserMessage(..., { deliverAs: "followUp" })`, which intentionally wakes the agent on the main-session model. Changed to `sendMessage(..., { triggerTurn: false })` (visible `infinity:brief` with `parked: true` but no turn) and hardened the control-panel system prompt to explicitly say "PARKED — do NOT start building/researching/validating; only answer questions; only `/infinity:run` starts the harness; background uses default/tiered models, not the main session model" when not armed. Session now simply does nothing until `/infinity:run`.
+
 ## [2.8.5] — 2026-08-31
 
 Richer top widget, one panel.

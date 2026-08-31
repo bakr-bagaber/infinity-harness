@@ -1933,22 +1933,23 @@ export default function (pi: ExtensionAPI): void {
         if (!dr.spawned) await startEngine(ctx, dir);
         notify(ctx, "infinity-harness: run armed — background run started. /infinity:halt stops it.", "info");
       } else {
+        // The harness is parked — do NOT trigger an agent turn. The
+        // control-panel contract (before_agent_start) already stops
+        // autonomous work, but a `followUp` brief starts one anyway.
+        // `triggerTurn: false` keeps it visible without waking the model.
         const brief = await briefText(dir);
-        if (!plan.brief) {
-          pi.sendUserMessage(
-            `The human has not said what they want built yet. Ask them, in one short question, and do not start any work or invent a scope until they answer. The harness is NOT running — "/infinity:run" starts it.\n\n${brief}`,
-            { deliverAs: "followUp" },
+        const parkedNote = !plan.brief
+          ? `The human has not said what they want built yet. Ask them, in one short question, and do not start any work or invent a scope until they answer. The harness is NOT running — "/infinity:run" starts it.\n\n${brief}`
+          : plan.phases[0] === "research"
+            ? `${brief}\n\nThis is RESEARCH — survey constraints and options first, then validate (infinity_validate) to advance. The harness is NOT running yet. Run "/infinity:run" when you are ready, or answer "yes — start the run now" next time you init.`
+            : `${brief}\n\nThe harness is ready but NOT running. Run "/infinity:run" to start, or answer "yes — start the run now" in the wizard next time.`;
+        try {
+          pi.sendMessage(
+            { customType: "infinity:brief", content: parkedNote, display: true, details: { parked: true, phase: plan.phases[0] ?? null } },
+            { triggerTurn: false },
           );
-        } else if (plan.phases[0] === "research") {
-          pi.sendUserMessage(
-            `${brief}\n\nThis is RESEARCH — survey constraints and options first, then validate (infinity_validate) to advance. The harness is NOT running yet. Run "/infinity:run" when you are ready, or answer "yes — start the run now" next time you init.`,
-            { deliverAs: "followUp" },
-          );
-        } else {
-          pi.sendUserMessage(
-            `${brief}\n\nThe harness is ready but NOT running. Run "/infinity:run" to start, or answer "yes — start the run now" in the wizard next time.`,
-            { deliverAs: "followUp" },
-          );
+        } catch (e) {
+          notify(ctx, `infinity-harness: ${errMsg(e as Error)}`, "warning");
         }
       }
     },
@@ -3394,19 +3395,47 @@ function controlPanelContract(dir: string): string | null {
   if (!ok || !config.currentPhase) return null;
   const { list } = loadFeatureList(dir);
   const p = computeProgress(list);
+  let armed = false;
+  try {
+    const r = readJsonSafe<{ armed?: boolean } | null>(runStatePathSync(dir), null);
+    armed = r?.armed === true;
+  } catch {}
+  // When parked, the harness does NO work anywhere — not in this session and
+  // not in background sessions. When armed, background sessions do the work
+  // and this session is idle by design (it never spends the human's model).
+  const workLine = armed
+    ? "The work is being done by separate background pi sessions on their own models, not by you."
+    : "The harness is NOT running — nothing is happening in background. Only `/infinity:run` starts it.";
+  const rule1 = armed
+    ? "1. Do not implement plan tasks, advance phases, or edit `harness/` by hand. Answer the"
+    : "1. Do NOT start building, researching, or validating. The harness is parked. If the human";
+  const rule1b = armed
+    ? "   human's questions about the run, and use `/infinity:workers` and `infinity_status`"
+    : "   asks you to do harness work anyway, tell them it is parked and needs `/infinity:run`,";
+  const rule1c = armed
+    ? "   to see what the background sessions are doing."
+    : "   then stop. Do not touch `harness/` files.";
+  const rule2 = armed
+    ? "2. If the human asks you to build something, say that the harness is driving it and offer"
+    : "2. While parked, you may ONLY answer questions about the project — its stack, commands,";
+  const rule2b = armed
+    ? "   `/infinity:run`, `/infinity:halt`, or `/infinity:replan` instead."
+    : "   files, and how the harness would run. Do not write code, docs, plans, or validation.";
+  const rule3 = "3. The plan of record is `harness/features/feature-list.json`; your memory of it is not.";
+  const extra = armed ? [] : ["", "Parked means parked. No tool calls that mutate the project while parked."];
   return [
-    "## infinity-harness — you are the control panel",
+    "## infinity-harness — you are the control panel" + (armed ? "" : " (PARKED)"),
     "",
     `This project runs an infinity-harness pipeline at **${config.currentPhase.toUpperCase()}**, ` +
-      `${p.tasksDone}/${p.tasksTotal} tasks done. The work is being done by separate background ` +
-      `pi sessions on their own models, not by you.`,
+      `${p.tasksDone}/${p.tasksTotal} tasks done. ` + workLine,
     "",
-    "1. Do not implement plan tasks, advance phases, or edit `harness/` by hand. Answer the",
-    "   human's questions about the run, and use `/infinity:workers` and `infinity_status`",
-    "   to see what the background sessions are doing.",
-    "2. If the human asks you to build something, say that the harness is driving it and offer",
-    "   `/infinity:run`, `/infinity:halt`, or `/infinity:replan` instead.",
-    "3. The plan of record is `harness/features/feature-list.json`; your memory of it is not.",
+    rule1,
+    rule1b,
+    rule1c,
+    rule2,
+    rule2b,
+    rule3,
+    ...extra,
   ].join("\n");
 }
 
