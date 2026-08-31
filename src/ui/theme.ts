@@ -15,9 +15,10 @@ import stringWidth from "string-width";
 const ESC = "\u001b";
 const RESET = ESC + "[0m";
 const ANSI_RE = /\u001b\[[0-9;]*m/g;
+const OSC8_RE = /\u001b\]8;;[^\u0007]*\u0007/g;
 
 export function stripAnsi(s: string): string {
-  return s.replace(ANSI_RE, "");
+  return s.replace(OSC8_RE, "").replace(ANSI_RE, "");
 }
 
 /** Display width in terminal columns, ignoring ANSI and honouring wide chars. */
@@ -49,6 +50,14 @@ export function truncate(s: string, max: number, ellipsis = "…"): string {
 
   while (i < s.length) {
     if (s[i] === ESC) {
+      // OSC 8 hyperlink: ESC ] 8 ;; URL BEL — zero-width wrapper
+      if (s[i + 1] === "]") {
+        const bel = s.indexOf("\u0007", i);
+        if (bel === -1) break;
+        out += s.slice(i, bel + 1);
+        i = bel + 1;
+        continue;
+      }
       const end = s.indexOf("m", i);
       if (end === -1) break;
       const seq = s.slice(i, end + 1);

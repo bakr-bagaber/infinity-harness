@@ -288,7 +288,15 @@ export default function (pi: ExtensionAPI): void {
           worker: l.worker,
           text: l.text,
         })),
-        dashboardUrl: remoteServer?.url ?? null,
+        dashboardUrl: (() => {
+          if (remoteServer?.url) return remoteServer.url;
+          try {
+            const d = readJsonSafe<{ port?: number; token?: string } | null>(resolvePath(dir, "harness/daemon.json"), null);
+            const port = d?.port;
+            if (typeof port === "number" && port > 0) return `http://127.0.0.1:${port}/dashboard`;
+          } catch {}
+          return null;
+        })(),
         handoffModelNote,
         sessions: run?.sessions ?? null,
         intake: typeof config.intake?.brief === "string" ? config.intake.brief : null,
@@ -296,6 +304,7 @@ export default function (pi: ExtensionAPI): void {
         display: normalizeDisplay(config.display),
         phase: config.currentPhase,
         enabledPhases: config.phases?.enabled,
+        gateHistory: Array.isArray((config as { gateHistory?: unknown }).gateHistory) ? (config as { gateHistory: import("../../src/core/types.ts").GateHistoryEntry[] }).gateHistory : null,
         paused: Boolean(config.paused),
         revision: list.baseRevision,
         retries: { task: config.taskRetryCount ?? 0, max: config.maxRetries ?? 10 },

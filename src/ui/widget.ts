@@ -54,6 +54,8 @@ export type WidgetState = {
   replanDiff?: string | null;
   /** Dashboard URL to show near the top, clickable. Meaningful host:port, not just numbers. */
   dashboardUrl?: string | null;
+  /** Gate history for phase rail failure highlighting. */
+  gateHistory?: import("../core/types.ts").GateHistoryEntry[] | null;
   /** Model routing note: e.g. "Model per task — subtasks share parent". Shown once. */
   handoffModelNote?: string | null;
   /** Shown in the header rule, e.g. "rev 42". */
@@ -257,14 +259,26 @@ export function phaseRail(
   max: number,
   g: GlyphSet,
   s: Styler,
+  gateHistory?: readonly import("../core/types.ts").GateHistoryEntry[] | null,
 ): string {
   const order = getPhaseOrder(enabled);
   const idx = current ? order.indexOf(current) : -1;
+  // Last verdict per phase — failed phases show as blocked (red).
+  const lastByPhase = new Map<string, "pass" | "fail">();
+  if (gateHistory) {
+    for (let i = gateHistory.length - 1; i >= 0; i--) {
+      const e = gateHistory[i] as { phase?: string; result?: string } | null;
+      if (!e?.phase || !e?.result) continue;
+      if (!lastByPhase.has(e.phase)) lastByPhase.set(e.phase, e.result as "pass" | "fail");
+    }
+  }
 
   const render = (phases: Phase[], elideLeft: boolean, elideRight: boolean): string => {
     const parts = phases.map((p) => {
       const i = order.indexOf(p);
+      const last = lastByPhase.get(p);
       if (p === current) return s.bold(s.fg("accent", g.phaseCurrent + " " + p.toUpperCase()));
+      if (last === "fail") return s.bold(s.fg("blocked", g.blocked + " " + p));
       if (idx >= 0 && i < idx) return s.fg("success", g.phaseDone + " " + p);
       return s.fg("muted", g.phaseTodo + " " + p);
     });
@@ -566,8 +580,11 @@ export function renderWidget(state: WidgetState, options: WidgetOptions = {}): s
   }
   if ((state as WidgetState).replanDiff) push(truncate(s.fg("muted", "Replan: ") + s.fg("text", String((state as WidgetState).replanDiff).slice(0, 80)), inner));
 
-  // -- header ---------------------------------------------------------------
-  const brand = s.bold(s.fg("brand", "∞ INFINITY"));
+  // -- header + dashboard --------------------------------------------
+  // Every band has its own colour so the top scans as sections, not one grey block.
+  // Muted separators make it legible even with NO_COLOR.
+  const sep = (): void => { push(s.fg("rule", g.rail.repeat(Math.max(1, inner)))); };
+  const brand = s.bold(s.fg("brand", "\u221e INFINITY"));
   const phaseTag = state.paused
     ? s.fg("blocked", "PAUSED")
     : state.phase
@@ -578,48 +595,119 @@ export function renderWidget(state: WidgetState, options: WidgetOptions = {}): s
   const headRight = phaseTag + revTag;
   const gapW = inner - width(headLeft) - width(headRight);
   push(headLeft + (gapW > 1 ? s.fg("rule", " " + g.rail.repeat(gapW - 2) + " ") : " ") + headRight);
-  // Dashboard URL: always visible (user never has to type /infinity:dashboard to discover it).
+  // Dashboard URL with a real port — :PORT is never correct for an ephemeral port.
   {
-    const url = state.dashboardUrl as string | null | undefined;
+    const url = (state.dashboardUrl as string | null | undefined) ?? null;
     if (url) {
       const label = s.fg("accent", url);
-      const link = `\u001b]8;;${url}\u0007${label}\u001b]8;;\u0007`;
-      push(truncate(s.fg("muted", "Dashboard: ") + link, inner));
+      const link = "\u001b]8;;" + url + "\u0007" + label + "\u001b]8;;\u0007";
+      push(truncate(s.fg("accent", "Dashboard \u2192 ") + link, inner));
     } else {
-      push(truncate(s.fg("muted", "Dashboard: ") + s.fg("muted", "/infinity:dashboard → http://127.0.0.1:PORT"), inner));
+      push(truncate(s.fg("muted", "Dashboard \u2192 ") + s.fg("muted", "/infinity:dashboard"), inner));
     }
   }
   if (state.handoffModelNote) {
     push(truncate(s.fg("muted", state.handoffModelNote), inner));
   }
+  // Goal count sits right under the header; the old widget hid goals entirely.
+  {
+    const goals = state.list.goals ?? [];
+    if (goals.length === 0 && state.intake) {
+      push(truncate(s.fg("rule", "Goal \u00b7 ") + s.fg("text", state.intake.slice(0, 90)), inner));
+    } else if (goals.length > 0) {
+      const n = goals.length;
+      const countLine = s.fg("brand", "\u25C8 Goals: " + String(n) + " " + (n === 1 ? "goal" : "goals"));
+      push(truncate(countLine, inner));
+    }
+  }
+  sep();
 
-  // -- goal -----------------------------------------------------------------
-  //
-  // A single goal is the run's headline and belongs at the top, not buried in
-  // the tree — `buildPlanRows` collapses it there for exactly this reason.
-  // Several goals are structure, and structure belongs in the tree.
-  const _goals = state.list.goals ?? [];
-  const _headline = !display.levels.goal
-    ? null
-    : _goals.length === 1
-      ? (_goals[0]?.title ?? null)
-      : _goals.length === 0
-        ? (state.intake ?? null)
-        : null;
-  if (_headline) {
-    const wrapped = wrap(_headline, inner - 2);
-    wrapped.forEach((line, i) => {
-      push((i === 0 ? s.fg("muted", g.goal + " ") : "  ") + s.fg("text", line));
-    });
+  // -- goal + phase rail ------------------------------------------------
+  // One goal section per your spec, each with its own colour:
+  //   [brand]  Goals: N
+  //   [text]   Active goal headline
+  //   [accent/muted/success/blocked] phase rail with active/passed/failed
+  //   [muted]  Active-phase breakdown: features/tasks
+  //   [rule]   dotted separator
+  //   [accent/text] progress bar (whole project)
+  //   [rule]   dotted separator
+  {
+    const goals = state.list.goals ?? [];
+    // Single-goal headline (the old headline logic) — now sits directly under
+    // the Goals count, inside the same band, before the rail. Multi-goal plans
+    // show the active goal instead (not buried in the lane tree).
+    let headline: string | null = null;
+    if (display.levels.goal) {
+      if (goals.length === 1) headline = goals[0]?.title ?? null;
+      else if (goals.length === 0) headline = state.intake ?? null;
+      else {
+        // Multi-goal: pick the goal owning the next actionable task, else the first.
+        const next = nextActionableTask(state.list);
+        if (next) {
+          const feat = state.list.features.find((f) => f.id === next.featureId) ?? null;
+          const spr = feat?.sprintId ? (state.list.sprints ?? []).find((s) => s.id === feat.sprintId) ?? null : null;
+          const gid = (feat as { goalId?: string } | null)?.goalId ?? spr?.goalId ?? null;
+          const g2 = gid ? goals.find((gg) => gg.id === gid) ?? goals[0] ?? null : goals[0] ?? null;
+          headline = g2?.title ?? null;
+        } else {
+          headline = goals[0]?.title ?? null;
+        }
+      }
+    }
+    if (headline) {
+      const wrapped = wrap(headline, inner - 2);
+      wrapped.forEach((line, i) => {
+        push((i === 0 ? s.fg("muted", g.goal + " ") : "  ") + s.fg("text", line));
+      });
+    }
+    if (display.rail) {
+      push(phaseRail(state.phase, state.enabledPhases, inner, g, s, state.gateHistory ?? null));
+    }
+    // Active-phase breakdown: features + tasks in the current phase (or whole project when no phase yet).
+    // Respects display.counts; when counts off we skip the line entirely.
+    if (display.counts) {
+      const phaseName = state.phase;
+      const allFeats = state.list.features ?? [];
+      const inPhase = (phaseName
+        ? allFeats.filter((f) => (f as { phase?: string }).phase === phaseName)
+        : allFeats);
+      const phaseTasks = phaseName
+        ? flattenTasks(state.list).filter((tt) => tt.effectivePhase === phaseName)
+        : flattenTasks(state.list);
+      const done = phaseTasks.filter((tt) => tt.status === "complete").length;
+      const total = phaseTasks.length;
+      const featCount = inPhase.length;
+      const label = phaseName ? phaseName.toUpperCase() : "PROJECT";
+      const featPart = s.fg("accent", String(featCount) + " " + (featCount === 1 ? "feature" : "features"));
+      const taskPart = s.fg("text", String(done) + "/" + String(total) + " tasks");
+      push(truncate(s.fg("muted", label + " \u00b7 ") + featPart + s.fg("rule", " \u00b7 ") + taskPart, inner));
+    }
+    sep();
+    if (display.progress) {
+      const full =
+        s.fg("brand", String(progress.tasksDone) + "/" + String(progress.tasksTotal) + " tasks") +
+        s.fg("rule", " \u00b7 ") +
+        s.fg("muted", String(progress.featuresDone) + "/" + String(progress.featuresTotal) + " features") +
+        s.fg("rule", " \u00b7 ") +
+        s.fg("accent", String((state.list.goals ?? []).length) + " " + ((state.list.goals ?? []).length === 1 ? "goal" : "goals"));
+      const compact = s.fg("brand", String(progress.tasksDone) + "/" + String(progress.tasksTotal));
+      const METER_MIN = 8 + 6;
+      let stats = full;
+      if (inner - width(full) < METER_MIN) stats = compact;
+      if (inner - width(stats) < METER_MIN) stats = "";
+      const statsW = width(stats);
+      const barCells = Math.max(8, Math.min(24, inner - statsW - 8));
+      const bar = progressBar(progress.percent, barCells, g, s);
+      const gap2 = inner - width(bar) - statsW;
+      push(truncate(bar + (gap2 > 0 ? " ".repeat(gap2) : " ") + stats, inner));
+      sep();
+    }
   }
 
-  // -- current chain: one line per lane: phase · task · feature (+ sprint) · subtask
-  // On an empty plan with no task yet, just show phase/goal.
-
-  // Task lane disabled -> no lane at all (overview template wants shape not work).
-  // Otherwise show active + pending first lane.
+  // -- task lanes -------------------------------------------------------
+  // Aggregate task-window size respected; lane count capped; elision markers show hidden work.
+  const taskWindow = view.expanded ? Math.max(28, display.taskWindow * 2) : display.taskWindow;
   if (!display.levels.task) {
-    // Overview: keep the shape (goal/sprint/feature tier names) even without lanes.
     const f = state.list.features[0];
     if (f) {
       const sname = (f as { sprintId?: string }).sprintId ? (state.list.sprints ?? []).find((s) => s.id === (f as { sprintId?: string }).sprintId)?.name : null;
@@ -631,15 +719,8 @@ export function renderWidget(state: WidgetState, options: WidgetOptions = {}): s
       if (shape.length) { push(); push(truncate(shape.join(s.fg("rule", " \u00b7 ")), inner)); }
     }
   }
-  // Aggregate task-window size respected: lane count capped; elision markers show hidden work.
-  // On a huge plan (120 tasks) the widget previously rendered ~TASK_WINDOW rows; now show up to display.taskWindow lanes.
-  // On a long plan the lane is compact — goal handled via headline above; phase first inside lane so
-  // narrow TUI still shows active work before sprint/feature tail gets cut.
-  const taskWindow = view.expanded ? Math.max(28, display.taskWindow * 2) : display.taskWindow;
   if (display.levels.task) {
     const allTasks = flattenTasks(state.list);
-    // When user scrolled explicitly, honour the scroll window (huge plan test uses scroll: 0/1e6).
-    // Otherwise show focus-centred window (active task plus pending tail).
     let lanes: Array<FlatTask & { subtasks?: { status: string; title: string }[] }> = [];
     if (view.scroll !== null) {
       const start = Math.max(0, Math.min(view.scroll as number, Math.max(0, allTasks.length - taskWindow)));
@@ -664,33 +745,24 @@ export function renderWidget(state: WidgetState, options: WidgetOptions = {}): s
     const formatChain = (t: FlatTask & { subtasks?: { status: string; title: string }[] }): string => {
       const curFeature = state.list.features.find((f) => f.id === t.featureId) ?? null;
       const curSprint = curFeature?.sprintId ? (state.list.sprints ?? []).find((s) => s.id === curFeature!.sprintId) ?? null : null;
-      const curGoal = (curFeature?.goalId ?? curSprint?.goalId ?? (state.list.goals ?? [])[0]?.id) ? (state.list.goals ?? []).find((gg) => gg.id === (curFeature?.goalId ?? curSprint?.goalId ?? (state.list.goals ?? [])[0]?.id)) ?? null : null;
-      // goal + sprint + phase + feature + task + subtask: names/titles
-      // Always show the phase and the task; goal/sprint/feature/subtask honour display.levels.
       const parts: string[] = [];
-      // One-line chain: phase · sprint · feature · task · subtask on one line.
-      // Sprint before task/feature so even narrow realpi rasterizer keeps Foundations visible.
       if (state.phase) parts.push(s.bold(s.fg("accent", state.phase.toUpperCase())));
       if (curSprint && display.levels.sprint) parts.push(s.fg("muted", "sprint " + (curSprint.name ?? curSprint.id).slice(0, 18)));
       if (curFeature && display.levels.feature) parts.push(s.fg("success", curFeature.name.slice(0, 24)));
       const descEarly = t.description ? t.description.slice(0, 44) : "";
       parts.push(s.fg("text", t.compositeKey + (descEarly ? " " + descEarly.slice(0, 36) : "")));
-      // subtask handled as separate line so width budget doesn't cut it off; drop from chain
-      return parts.join(s.fg("rule", " · "));
+      return parts.join(s.fg("rule", " \u00b7 "));
     };
     if (lanes.length) {
-      // Elision: lanes window + markers so huge plan still shows ... N above / ... N below
       const totalPendable = allTasks.length;
       const above = allTasks.findIndex((t) => t.compositeKey === lanes[0]!.compositeKey);
       const lastIdx = allTasks.findIndex((t) => t.compositeKey === lanes[lanes.length - 1]!.compositeKey);
       const below = Math.max(0, totalPendable - lastIdx - 1);
       const shownAbove = above > 0 ? above : 0;
       const shownBelow = below > 0 ? below : 0;
-      push();
       if (shownAbove > 0) push(s.fg("rule", "  " + g.more + " " + shownAbove + " above"));
       for (const task of lanes.slice(0, taskWindow)) {
         push(truncate(formatChain(task), inner));
-        // If task has an active subtask, show it on its own line so narrow TUI doesn't truncate it away.
         if (display.levels.subtask !== "none") {
           const cur = ((task as unknown as FlatTask & { subtasks?: Subtask[] }).subtasks ?? []).find((ss) => ss.status !== "complete") ?? null;
           if (cur) push(truncate("  " + s.fg("active", "> " + cur.title.slice(0, 56)), inner));
@@ -698,11 +770,9 @@ export function renderWidget(state: WidgetState, options: WidgetOptions = {}): s
       }
       if (shownBelow > 0) push(s.fg("rule", "  " + g.more + " " + shownBelow + " below"));
     } else if (state.list.features.length === 0) {
-      push();
       push(s.fg("muted", "  no plan yet"));
     }
   }
-
   // -- background sessions --------------------------------------------------
   //
   // Placed above the rail because, on a run driven by workers, this is the
@@ -724,36 +794,7 @@ export function renderWidget(state: WidgetState, options: WidgetOptions = {}): s
     for (const line of renderActivity(state.activity, view.expanded ? activityRows * 3 : activityRows, inner, s)) push(line);
   }
 
-  // -- phase rail -----------------------------------------------------------
-  if (display.rail) {
-    push();
-    push(phaseRail(state.phase, state.enabledPhases, inner, g, s));
-  }
-
-  // -- progress -------------------------------------------------------------
-  const full =
-    s.fg("muted", progress.tasksDone + "/" + progress.tasksTotal + " tasks") +
-    s.fg("rule", " · ") +
-    s.fg("muted", progress.featuresDone + "/" + progress.featuresTotal + " features");
-  const compact = s.fg("muted", progress.tasksDone + "/" + progress.tasksTotal);
-
-  // The meter has a floor of 8 cells plus "  NNN%" (6 columns). Below that the
-  // long stat cannot fit, and padding it out would push the row past the
-  // frame — so the row degrades to the task count alone, then to no stat.
-  const METER_MIN = 8 + 6;
-  let stats = full;
-  if (inner - width(full) < METER_MIN) stats = compact;
-  if (inner - width(stats) < METER_MIN) stats = "";
-
-  if (display.progress) {
-    const statsW = width(stats);
-    const barCells = Math.max(8, Math.min(24, inner - statsW - 8));
-    const bar = progressBar(progress.percent, barCells, g, s);
-    push();
-    const gap2 = inner - width(bar) - statsW;
-    push(truncate(bar + (gap2 > 0 ? " ".repeat(gap2) : " ") + stats, inner));
-  }
-
+  // phase rail + whole-project progress already rendered in the header band above.
   // -- alerts ---------------------------------------------------------------
   const alerts: string[] = [];
   if (progress.blocked > 0) alerts.push(s.fg("blocked", g.blocked + " " + progress.blocked + " blocked"));

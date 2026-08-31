@@ -4,6 +4,26 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.5] — 2026-08-31
+
+Richer top widget, one panel.
+
+### Changed
+
+- **Widget header is now coloured and sectioned.** ─── separators between bands; each band has its own colour (brand/accent/muted/rule) so the header reads as distinct sections even with NO\_COLOR.
+
+### Fixed
+
+- **Dashboard URL now shows the real port from the start.** Pulls the live `daemon.json:port` when no fallback remote is running, so ":PORT" never appears. The link is a clickable OSC 8 hyperlink and width/ANSI handling now accounts for it (no truncation at 76 cols).
+
+- **Widget now shows goal counts and the active goal on its own line.** "◈ Goals: N" sits right under the Dashboard line (brand colour); the active goal headline (the single goal or, for multi-goal plans, the goal owning the next task) appears before the phase rail rather than buried inside the task lanes.
+
+- **Phase rail sits with the active goal and highlights failures.** "● define ─ ⚠ plan ─ ◉ BUILD ─ ○ verify" — the current phase is bold accent, passed phases are success/green, failed phases (from `gateHistory`) are blocked/red with "⚠" so a gate failure is obvious from the rail. Narrow terminals still elide correctly.
+
+- **Active-phase breakdown under the rail.** One line per your spec: "BUILD · 2 features · 1/4 tasks" (phase name · accent feature count · text task progress). Shown when `display.counts` is on; respects the display preset.
+
+- **Whole-project progress bar with goal count.** "1/4 tasks · 0/2 features · 2 goals" alongside the "■30%" bar. Displayed when `display.progress` is on; the old duplicate rail+progress block that lived after the task lanes has been removed so there is no second copy.
+
 ## [2.8.4] — 2026-08-31
 
 Single scrollable widget.
