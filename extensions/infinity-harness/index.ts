@@ -326,6 +326,13 @@ export default function (pi: ExtensionAPI): void {
   const planRowCount = (dir: string): number => {
     try {
       const { list } = loadFeatureList(dir);
+      // Count the same domain the widget scrolls: the flattened task lanes.
+      // buildPlanRows includes grouping rows that the lane view does not, so
+      // using it made maxScroll disagree with what you see.
+      try {
+        const lanes = flattenTasks(list);
+        if (Array.isArray(lanes) && lanes.length > 0) return lanes.length;
+      } catch {}
       return buildPlanRows(list, null, { expandSubtasks: view.expanded }).length;
     } catch {
       return 0;
@@ -342,9 +349,28 @@ export default function (pi: ExtensionAPI): void {
   const moveView = (ctx: ExtensionContext, delta: number): void => {
     const dir = projectDir(ctx);
     const rows = planRowCount(dir);
-    const windowRows = view.expanded ? EXPANDED_WINDOW : TASK_WINDOW;
+    // Match widget.ts taskWindow so scroll limits agree with what you see.
+    let windowRows = view.expanded ? EXPANDED_WINDOW : TASK_WINDOW;
+    try {
+      const { config } = loadConfig(dir);
+      const disp = normalizeDisplay(config.display);
+      windowRows = view.expanded ? Math.max(EXPANDED_WINDOW, disp.taskWindow * 2) : disp.taskWindow;
+    } catch {}
+    const before = view.scroll;
     view = scrollView(view, delta, rows, windowRows);
+    // Null means "follow the run"; the first manual scroll leaves follow-mode.
+    // Pinning top with delta 0 must keep 0, not flick back to null.
+    if (before === null && view.scroll === 0 && delta === 0) view = { ...view, scroll: 0 };
     refreshWidget(ctx);
+    // Confirm it moved — otherwise the human thinks the keys do nothing.
+    try {
+      const state = widgetStateFor(dir);
+      const total = state ? flattenTasks(state.list).length : rows;
+      const atTop = (view.scroll ?? 0) <= 0;
+      const atBottom = (view.scroll ?? 0) >= Math.max(0, total - windowRows);
+      if (delta > 0 && atBottom) notify(ctx, "infinity-harness: already at the bottom \u00b7 /infinity:scroll expand for more rows", "info");
+      else if (delta < 0 && atTop && before !== null) notify(ctx, "infinity-harness: at the top \u00b7 /infinity:scroll follow to track the run", "info");
+    } catch {}
   };
 
   // -- brief ----------------------------------------------------------------
@@ -3082,38 +3108,50 @@ export default function (pi: ExtensionAPI): void {
     refreshWidget(ctx);
   };
 
+  // Widget scroll/expand shortcuts — registered via pi's KeyId ("alt+j") so
+  // they participate in keybinding resolution, plus a raw terminal fallback so
+  // they also work while a ctx.ui.select dialog owns focus (where the editor
+  // shortcut path is shadowed) and across Kitty/legacy ESC+j encodings.
   pi.registerShortcut("alt+j", { description: "infinity-harness: scroll the plan down", handler: scrollDown });
   pi.registerShortcut("alt+k", { description: "infinity-harness: scroll the plan up", handler: scrollUp });
   pi.registerShortcut("alt+o", { description: "infinity-harness: expand or collapse the plan widget", handler: toggleExpand });
-  // Uppercase handling covered by the raw terminal fallback below which
-  // lowercases data before matching; KeyId type only allows lowercase.
+  // Also bind the same actions without alt for terminals that swallow alt+j/k
+  // (notably Windows Terminal + WSLg). User can remap in ~/.pi/agent/keybindings.json.
+  pi.registerShortcut("ctrl+alt+j", { description: "infinity-harness: scroll the plan down", handler: scrollDown });
+  pi.registerShortcut("ctrl+alt+k", { description: "infinity-harness: scroll the plan up", handler: scrollUp });
+  pi.registerShortcut("ctrl+alt+o", { description: "infinity-harness: expand or collapse the plan widget", handler: toggleExpand });
 
-  // Fallback raw input handler — runs even when the editor is not the
-  // focused component (e.g. a selector is open). Must be installed per-
-  // session because onTerminalInput is a UI session thing, not a global.
+  // Fallback raw input handler — covers selectors/overlays and both legacy
+  // ESC+j and Kitty keyboard protocol encodings. Installed per-session because
+  // onTerminalInput is a UI session affordance, not a global.
   let removeTerminalShortcut: (() => void) | null = null;
+  const isAltWith = (data: string, letter: string): boolean => {
+    // Legacy: ESC + letter, case-insensitive
+    if (data === "\x1b" + letter.toLowerCase() || data === "\x1b" + letter.toUpperCase()) return true;
+    // Some terminals already expose the Kittywrapped form via pattern tests above
+    const lower = data.toLowerCase();
+    if (lower === "\x1b" + letter.toLowerCase()) return true;
+    // Kitty CSI-u: ESC[106;3u (alt+j), ESC[107;3u (alt+k), ESC[111;3u (alt+o)
+    // modifier 3 == alt (see pi-tui keys.ts MODIFIERS.alt = 2, value 3 == alt press)
+    const code = letter.toLowerCase().charCodeAt(0);
+    if (data.includes(`\x1b[${code};3u`) || data.includes(`\x1b[${code};3:1u`)) return true;
+    return false;
+  };
   const installTerminalShortcuts = (ctx: ExtensionContext): void => {
     try {
       removeTerminalShortcut?.();
     } catch {}
     try {
-      // matchesKey lives in pi-tui but re-exported by pi; use the extension
-      // input raw matcher via string compare for ESC-prefixed alt.
       removeTerminalShortcut = ctx.ui.onTerminalInput((data: string) => {
-        // Legacy alt+letter is ESC + lower letter. Kitty may send CSI-u; both
-        // are handled by normalising to lookahead then matching via the same
-        // strings registerShortcut uses.
-        const lower = data.toLowerCase();
-        // Fast path: alt+j/k/o as ESC + letter (\x1bj) or higher-plane.
-        if (data === "\x1bj" || data === "\x1bJ" || lower === "\x1bj") {
+        if (isAltWith(data, "j")) {
           void scrollDown(ctx);
           return { consume: true };
         }
-        if (data === "\x1bk" || data === "\x1bK" || lower === "\x1bk") {
+        if (isAltWith(data, "k")) {
           void scrollUp(ctx);
           return { consume: true };
         }
-        if (data === "\x1bo" || data === "\x1bO" || lower === "\x1bo") {
+        if (isAltWith(data, "o")) {
           void toggleExpand(ctx);
           return { consume: true };
         }

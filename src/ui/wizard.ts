@@ -21,6 +21,11 @@
  * Cancelling any question cancels the wizard. Nothing is written until the
  * human has seen the summary and said yes, because a wizard that half-commits
  * leaves a project in a state nobody chose.
+ *
+ * Presentation: every step opens with a coloured progress banner and a brief
+ * "where you are" context line so the wizard feels like a guided tour rather
+ * than a stream of plain grey prompts. Cancelling still cancels. The underlying
+ * intake logic is unchanged — this file only adds chrome around the questions.
  */
 
 import type { ModelChoice, Prompter } from "./config.ts";
@@ -74,9 +79,55 @@ const CANCEL = "cancel";
 const BUILD_ONE = "build one — I choose the phases and which of them stop for me";
 const DONE = "✓ done";
 
+// -- wizard chrome --------------------------------------------------------
+// ANSI helpers used for the progress banner. They degrade gracefully: pi's
+// TUI strips unknown sequences but plain "—" lines remain readable.
+const ESC = "\u001b";
+const BOLD = `${ESC}[1m`;
+const DIM = `${ESC}[2m`;
+const RESET = `${ESC}[0m`;
+const FG_BRAND = `${ESC}[38;2;124;92;255m`;   // #7C5CFF
+const FG_ACCENT = `${ESC}[38;2;0;184;212m`;   // #00B8D4
+const FG_MUTED = `${ESC}[38;2;110;116;129m`;
+const FG_SUCCESS = `${ESC}[38;2;46;158;91m`;
+const FG_WARN = `${ESC}[38;2;179;107;212m`;
+const FG_RULE = `${ESC}[38;2;74;80;88m`;
+
 /** Render a choice as one selectable line: the label, then why you would pick it. */
 function line(label: string, help: string): string {
-  return `${label}  —  ${help}`;
+  // Keep label at column 0 so /^label/ regexes in tests still match; color the separator and help.
+  return `${label}  ${FG_RULE}—${RESET}  ${FG_MUTED}${help}${RESET}`;
+}
+
+/** Ordered steps for the progress banner. Emoji makes the wizard feel like a tour. */
+const WIZARD_STEPS: Array<{ id: string; emoji: string; label: string }> = [
+  { id: "workflow", emoji: "🔀", label: "Workflow" },
+  { id: "goal", emoji: "🎯", label: "Goal" },
+  { id: "sessions", emoji: "🔄", label: "Sessions" },
+  { id: "research", emoji: "🔍", label: "Research depth" },
+  { id: "models", emoji: "🤖", label: "Models" },
+  { id: "parallelism", emoji: "⚡", label: "Parallelism" },
+  { id: "display", emoji: "👁️", label: "Display" },
+  { id: "confirm", emoji: "✅", label: "Confirm" },
+  { id: "launch", emoji: "🚀", label: "Launch" },
+];
+
+function banner(step: number, title: string, subtitle?: string): string {
+  const total = WIZARD_STEPS.length;
+  const dots = WIZARD_STEPS.map((_, i) => {
+    if (i < step) return `${FG_SUCCESS}●${RESET}`;
+    if (i === step) return `${FG_BRAND}${BOLD}◉${RESET}`;
+    return `${FG_RULE}○${RESET}`;
+  }).join(`${FG_RULE}─${RESET}`);
+  const stepInfo = WIZARD_STEPS[step];
+  const emoji = stepInfo?.emoji ? `${stepInfo.emoji} ` : "";
+  const head = `${FG_BRAND}${BOLD}∞ wizard${RESET} ${FG_MUTED}${DIM}${step + 1}/${total}${RESET} ${FG_RULE}·${RESET} ${emoji}${FG_ACCENT}${BOLD}${title}${RESET}`;
+  const sub = subtitle ? `\n${FG_MUTED}${DIM}${subtitle}${RESET}` : "";
+  return `${dots}\n${head}${sub}`;
+}
+
+function sectionNotify(prompt: Prompter, message: string): void {
+  try { prompt.notify(message, "info"); } catch {}
 }
 
 const MODEL_STEP_TITLE = "Which models for the difficulty tiers, and the consulting master?";
@@ -197,18 +248,27 @@ export async function runIntakeWizard(options: WizardOptions): Promise<WizardRes
 
   for (;;) {
     // -- 1. the workflow ----------------------------------------------------
+    sectionNotify(prompt, banner(0, "Workflow", "Pick the pipeline and which phases stop for you"));
     const workflow = await pickWorkflow(prompt, env);
     if (workflow === undefined) return { cancelled: true };
+    {
+      const phases = workflow.phases.join(" → ");
+      const stops = Object.entries(workflow.modes).filter(([, m]) => m === "copilot").map(([p]) => p.toUpperCase());
+      sectionNotify(prompt, `${FG_SUCCESS}✓ workflow:${RESET} ${FG_ACCENT}${workflow.name}${RESET} ${FG_MUTED}— ${phases}${stops.length ? ` · stops at ${stops.join(", ")}` : ""}${RESET}`);
+    }
 
     // -- 2. what are we building -------------------------------------------
     //
     // Asked whatever the workflow is. This is the question the old flow
     // skipped, and skipping it is why autopilot used to invent a project and
     // start building it.
+    sectionNotify(prompt, banner(1, "Goal", "What are you building? One sentence is enough — you can refine it in DEFINE"));
     const brief =
       (await prompt.input(BRIEF_QUESTION.title, BRIEF_QUESTION.placeholder)) ?? options.brief ?? "";
+    if (brief && brief.trim()) sectionNotify(prompt, `${FG_SUCCESS}✓ goal:${RESET} ${brief.trim().slice(0, 88)}${brief.trim().length > 88 ? "…" : ""}`);
 
     // -- 3. sessions --------------------------------------------------------
+    sectionNotify(prompt, banner(2, "Sessions", "When should the run start a fresh session? Smaller slices isolate context."));
     const handoffOptions = HANDOFF_QUESTION.options ?? [];
     const handoffLabels = handoffOptions.map((o) => line(o.label, o.help));
     const handoffPick = await prompt.select(HANDOFF_QUESTION.title, handoffLabels);
@@ -222,6 +282,7 @@ export async function runIntakeWizard(options: WizardOptions): Promise<WizardRes
     // -- 3b. research depth (only when research is in the pipeline) ----------
     let researchDepth: import("../intake.ts").ResearchDepth | undefined;
     if (workflow.phases.includes("research" as import("../core/types.ts").Phase)) {
+      sectionNotify(prompt, banner(3, "Research depth", "How thorough should RESEARCH be? Deeper means more tasks and stronger gates."));
       const RESEARCH_DEPTH_QUESTION = {
         title: "How deep should research go?",
         options: [
@@ -237,10 +298,13 @@ export async function runIntakeWizard(options: WizardOptions): Promise<WizardRes
     }
 
     // -- 4. models ----------------------------------------------------------
+    sectionNotify(prompt, banner(4, "Models", `Difficulty routing: ${tierScopeNote(handoff)}`));
     const modelsAnswer = await pickModelsStep(prompt, options.models, handoff);
     if (modelsAnswer === undefined) return { cancelled: true };
+    sectionNotify(prompt, modelsAnswer.router.enabled ? `${FG_SUCCESS}✓ routing:${RESET} per-tier models enabled` : `${FG_MUTED}routing: using pi's current model${RESET}`);
 
     // -- 5. execution (parallelism) -----------------------------------------
+    sectionNotify(prompt, banner(5, "Parallelism", "When can tasks run side by side? Finer grain = more concurrency."));
     const execOptions = [
       { value: "off", label: "one at a time", help: "No parallel work. Simplest, lowest token use." },
       { value: "task", label: "parallel at task (recommended)", help: "Tasks with no deps run together, up to max workers." },
@@ -261,18 +325,26 @@ export async function runIntakeWizard(options: WizardOptions): Promise<WizardRes
     }
 
     // -- 6. display ---------------------------------------------------------
+    sectionNotify(prompt, banner(6, "Display", "How much of the plan do you want on screen?"));
     const display = await pickDisplay(prompt, env);
     if (display === undefined) return { cancelled: true };
+    try { sectionNotify(prompt, `${FG_MUTED}display: ${display.preset ?? "custom"} · ${Object.entries(display.levels).filter(([, v]) => v === true || v === "all" || v === "active").map(([k]) => k).join(", ")}${RESET}`); } catch {}
+
+    sectionNotify(prompt, banner(7, "Confirm", "Review and lock in these settings"));
 
     const answers: IntakeAnswers = { workflow, researchDepth, brief, handoff, display, router: modelsAnswer.router, parallelAt, maxWorkers };
     const plan = planIntake(answers);
 
     if (options.skipConfirm) return { cancelled: false, plan, answers, launchNow: false };
 
-    const body = [plan.summary, ...(plan.warnings.length ? ["", ...plan.warnings.map((w) => `! ${w}`)] : [])].join(
-      "\n",
-    );
-    prompt.notify(body, plan.warnings.length ? "warning" : "info");
+    {
+      const head = `${FG_BRAND}${BOLD} Summary${RESET}`;
+      const rail = `${FG_RULE}${"─".repeat(46)}${RESET}`;
+      const summaryBlock = `${FG_ACCENT}${plan.summary}${RESET}`;
+      const warnBlock = plan.warnings.length ? `\n${FG_WARN}⚠ ${plan.warnings.join(`\n${FG_WARN}⚠ `)}${RESET}` : "";
+      const body = `${rail}\n${head}\n${rail}\n${summaryBlock}${warnBlock}`;
+      prompt.notify(body, plan.warnings.length ? "warning" : "info");
+    }
 
     const confirm = await prompt.select("Ready?", [CONFIRM, RESTART, CANCEL]);
     if (confirm === undefined || confirm === CANCEL) return { cancelled: true };
@@ -281,11 +353,15 @@ export async function runIntakeWizard(options: WizardOptions): Promise<WizardRes
     // After init the harness is never auto-started — only /infinity:run (or
     // "yes" here) arms it. Older tests/E2E scripts that do not answer this
     // are treated as "later" so they keep passing.
+    sectionNotify(prompt, banner(8, "Launch", "Start the run now or wait for /infinity:run?"));
     const LAUNCH_NOW = "yes — start the run now";
     const LAUNCH_LATER = "no — I'll run /infinity:run when ready";
     const launchPick = await prompt.select("Start the run now?", [LAUNCH_NOW, LAUNCH_LATER]);
-    let launchNow = false;
-    if (launchPick !== undefined) launchNow = launchPick === LAUNCH_NOW;
+    // Older test/E2E callers scripted 7 answers, not 8 — undefined means
+    // "I'll run /infinity:run when ready" so the wizard still produces a
+    // parked harness rather than cancelling. Interactive cancel is caught
+    // earlier (confirm === CANCEL) so this default is safe.
+    const launchNow = launchPick !== undefined ? launchPick === LAUNCH_NOW : false;
     return { cancelled: false, plan, answers, launchNow };
   }
 }

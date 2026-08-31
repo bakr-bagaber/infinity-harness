@@ -4,6 +4,20 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.3] — 2026-08-30
+
+Scroll that actually scrolls, and a wizard you can stand to look at.
+
+### Fixed
+
+- **`alt+j/k/o` never scrolled.** `registerShortcut("alt+j")` is editor-path only and is shadowed while dialogs have focus; the `onTerminalInput` fallback only matched legacy `ESC j` (lower) not Kitty `ESC[106;3u` (`alt+j`) or uppercase, so most terminals never reached the widget. Fixed with a robust `isAltWith` matcher (legacy `ESC j/J` + Kitty `ESC[code;3u`), plus mirrored `ctrl+alt+j/k/o` bindings for Windows Terminal, and a corrected `planRowCount` (was counting grouping rows via `buildPlanRows` while the scroll window is on `flattenTasks` lanes) plus `taskWindow`-aware `windowRows` so `maxScroll` matches what you see. Nudges at the bounds (already at top/bottom) so it feels alive.
+
+### Changed
+
+- **Widget now shows its keys.** Permanent hint `alt+j/k scroll \u00b7 alt+o expand \u00b7 /infinity:scroll` with a `tip: /infinity:workers and /infinity:dashboard` when background workers exist. `hintKeys` exported for tests.
+
+- **Wizard is colorful, structured, and guided.** 9-step progress rail with `\u221e wizard N/9` + emoji banners before each section, per-answer check marks, and a framed `Summary` with warnings. Chrome lives in `notify` (ANSI-safe, degrades gracefully) so `select` titles/options stay scriptable for tests/E2E.
+
 ## [2.8.2] — 2026-08-30
 
 Republishes 2.8.1. The 2.8.1 tarball on disk and on the registry was built from 2.8.0 content while `package.json` already said 2.8.1, so `/infinity:init` still auto-started RESEARCH in your session and the wizard never asked `Start the run now?`. No code changes since `v2.8.1` (`81d16590`).

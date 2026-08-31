@@ -784,6 +784,20 @@ export function renderWidget(state: WidgetState, options: WidgetOptions = {}): s
   }
   if (display.alerts && alerts.length) push(truncate(alerts.join(s.fg("rule", " · ")), inner));
 
+  // keyboard hint — always visible so scroll is discoverable without reading the README
+  {
+    const scrollable = flattenTasks(state.list).length > taskWindow;
+    const baseHint = hintKeys(g);
+    const followPart = view.scroll !== null ? s.fg("accent", " · following: /infinity:scroll follow") : "";
+    const hasWorker = (state.workers?.length ?? 0) > 0 || state.engine === "background";
+    // Keep hint one line in narrow terminals; otherwise add a second affordance line.
+    const hintLine = baseHint + followPart;
+    push(truncate(scrollable || view.scroll !== null ? s.fg("muted", hintLine) : s.fg("rule", hintLine), inner));
+    if (hasWorker) {
+      push(truncate(s.fg("muted", `  ${g.more} tip: ${s.fg("text", "/infinity:workers")} and ${s.fg("text", "/infinity:dashboard")} show live detail`), inner));
+    }
+  }
+
   // footer only — scroll tree removed to keep TUI readable on narrow term
   push(s.fg("rule", " " + g.rail.repeat(Math.max(1, inner - 2))));
   return frame(out, total, boxed, s, g);
@@ -795,8 +809,8 @@ export function renderWidget(state: WidgetState, options: WidgetOptions = {}): s
  * `alt+` rather than `ctrl+`: pi binds ctrl+j, ctrl+k and ctrl+o in the editor
  * already, and a widget is not worth shadowing an editor key for.
  */
-function hintKeys(_g: GlyphSet): string {
-  return "alt+j/k scroll · alt+o expand";
+export function hintKeys(_g: GlyphSet): string {
+  return "↕ alt+j/k scroll · alt+o expand · /infinity:scroll";
 }
 
 function frame(lines: string[], total: number, boxed: boolean, s: Styler, g: GlyphSet): string[] {
