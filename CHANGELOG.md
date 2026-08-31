@@ -4,6 +4,13 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.4] — 2026-08-31
+
+Single scrollable widget.
+
+### Fixed
+
+- **Two infinity widgets — only the top one scrolled.** Pi renders widgets as string arrays clamped at MAX_WIDGET_LINES=10 (\"... (widget truncated)\"), so the bottom panel was the same content stuck at 10 lines and unscrollable. Switched to the factory overload (no 10-line clamp) for the full scrollable view and explicitly cleared the stale belowEditor placement so only the single aboveEditor panel remains.
 ## [2.8.3] — 2026-08-30
 
 Scroll that actually scrolls, and a wizard you can stand to look at.
@@ -17,6 +24,7 @@ Scroll that actually scrolls, and a wizard you can stand to look at.
 - **Widget now shows its keys.** Permanent hint `alt+j/k scroll \u00b7 alt+o expand \u00b7 /infinity:scroll` with a `tip: /infinity:workers and /infinity:dashboard` when background workers exist. `hintKeys` exported for tests.
 
 - **Wizard is colorful, structured, and guided.** 9-step progress rail with `\u221e wizard N/9` + emoji banners before each section, per-answer check marks, and a framed `Summary` with warnings. Chrome lives in `notify` (ANSI-safe, degrades gracefully) so `select` titles/options stay scriptable for tests/E2E.
+
 
 ## [2.8.2] — 2026-08-30
 

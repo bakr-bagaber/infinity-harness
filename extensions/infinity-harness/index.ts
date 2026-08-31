@@ -160,6 +160,7 @@ function notify(ctx: unknown, message: string, level: "info" | "warning" | "erro
 }
 
 export default function (pi: ExtensionAPI): void {
+
   // -- session-scoped state -------------------------------------------------
   //
   // Everything a *run* needs outlives this session and lives in `harness/`.
@@ -309,19 +310,41 @@ export default function (pi: ExtensionAPI): void {
     }
   };
 
-  const refreshWidget = (ctx: ExtensionContext): void => {
+  let widgetCtx: ExtensionContext | null = null;
+  const refreshWidget = (ctx?: ExtensionContext): void => {
+    if (ctx) widgetCtx = ctx;
+    const useCtx = ctx ?? widgetCtx;
+    if (!useCtx) return;
     try {
-      const dir = projectDir(ctx);
+      const dir = projectDir(useCtx);
       const state = widgetStateFor(dir);
       if (!state) return;
       const lines = renderWidget(state, { width: 76, styler, glyphs });
-      ctx.ui.setWidget(WIDGET_KEY, lines);
-      ctx.ui.setStatus(STATUS_KEY, renderStatusLine(state, glyphs));
+      // Factory overload bypasses pi's string[] MAX_WIDGET_LINES=10 clamp
+      // ("... (widget truncated)") — needed for the full scrollable view.
+      // Single panel aboveEditor; belowEditor intentionally left empty so
+      // there is only one infinity panel on screen (the bottom one was the
+      // same widget rendered as belowEditor in a prior install and truncated).
+      type WidgetFactory = () => { render: () => string[]; invalidate(): void; handleInput(): void };
+      const factory: WidgetFactory = () => ({
+        render: () => lines,
+        invalidate() {},
+        handleInput() {},
+      });
+      (useCtx.ui.setWidget as unknown as (k: string, f: WidgetFactory) => void)(WIDGET_KEY, factory);
+      // Explicitly clear any stale belowEditor instance from a prior install.
+      try {
+        (useCtx.ui.setWidget as unknown as (k: string, v: undefined, opts: { placement: string }) => void)(
+          WIDGET_KEY,
+          undefined,
+          { placement: "belowEditor" },
+        );
+      } catch {}
+      useCtx.ui.setStatus(STATUS_KEY, renderStatusLine(state, glyphs));
     } catch {
       /* the widget is never worth breaking a turn over */
     }
   };
-
   /** How many rows the plan currently has — the bound for scrolling. */
   const planRowCount = (dir: string): number => {
     try {
